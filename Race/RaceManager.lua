@@ -1469,6 +1469,22 @@ end
 
 --- One fixed simulation slice. Never called with a variable dt.
 function Race:Step(race, dt)
+  -- Snapshot for render interpolation, before anything moves.
+  --
+  -- The simulation advances in fixed 1/120 slices and the display does not: a
+  -- 60fps frame usually consumes exactly two slices, but real frame times
+  -- jitter, so sometimes it consumes one and sometimes three. Drawing raw
+  -- simulation state therefore draws whichever slice happened to land last --
+  -- up to 8ms of travel either way, every frame. Since the camera is derived
+  -- from the player's distance, that is a permanent low-level judder on the
+  -- entire world scroll, and it is exactly the kind of thing that reads as
+  -- "clunky" without ever being visible as a discrete fault. See RaceUI:Lerped.
+  for _, vehicle in ipairs(race.vehicles) do
+    vehicle.prevDistance, vehicle.prevLateral = vehicle.distance, vehicle.lateral
+  end
+  for _, projectile in ipairs(race.projectiles or {}) do
+    projectile.prevDistance, projectile.prevLateral = projectile.distance, projectile.lateral
+  end
   race.delta = dt
   race.realElapsed = race.realElapsed + dt
   if race.state == AK.RACE_STATES.COUNTDOWN then
@@ -1521,6 +1537,10 @@ function Race:Update(elapsed)
   AK.FixedStep:Advance(race.clock, elapsed, function(dt)
     if self.current == race then self:Step(race, dt) end
   end)
+  -- How much of the CURRENT slice has not been simulated yet, 0..1. Rendering
+  -- draws between the last two simulated states by this much, which is what
+  -- decouples the picture from the simulation's tick boundaries.
+  race.alpha = AK.Math.Clamp(race.clock.accumulator / AK.FixedStep.RATE, 0, 1)
   -- Render with the real frame delta so visual easing stays smooth.
   race.renderDelta = math.min(elapsed, 0.1)
   AK.RaceUI:Render(race)

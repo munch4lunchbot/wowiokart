@@ -377,6 +377,25 @@ function RaceUI:DepthLevel(kind, dz)
 end
 
 --- Kick the camera. Impacts, boosts and rough ground all route through here.
+--- Draw value for a simulated quantity, between its last two simulated states.
+---
+--- Physics runs in fixed 1/120 slices; the display does not tick at 120Hz, so
+--- drawing the raw value draws whichever slice happened to land last. Racing
+--- games solve this by drawing BETWEEN the last two states using however much
+--- of the current slice has not been simulated yet (`race.alpha`), which is
+--- what makes 60fps look like 60fps instead of like 120Hz sampled unevenly.
+---
+--- `limit` is the largest change one slice can legitimately produce. Anything
+--- bigger is a DISCONTINUITY, not motion -- a lap rollover, or a fork setting
+--- distance back to zero -- and interpolating across it would fling the kart
+--- backwards through the whole track for one frame.
+function RaceUI:Lerped(previous, current, alpha, limit)
+  if previous == nil or alpha == nil then return current end
+  local delta = current - previous
+  if delta > limit or delta < -limit then return current end
+  return previous + delta * alpha
+end
+
 function RaceUI:Shake(amount)
   if AK.db.settings.reducedEffects then return end
   self.shake = math.max(self.shake or 0, amount)
@@ -462,6 +481,7 @@ function RaceUI:Build()
   self.frame = frame
   self.T = AK.db.tuning
   self.camDepth = self.T.camDepth
+  self.camLateralValue, self.camYawValue = nil, nil
   self.shake, self.shakeX, self.shakeY = 0, 0, 0
   self.previous = {}
 
@@ -1414,6 +1434,7 @@ function RaceUI:Show(race)
   self.halfWidth = self.frame:GetWidth() * .5
   self.halfHeight = self.frame:GetHeight() * .5
   self.camDepth = self.T.camDepth
+  self.camLateralValue, self.camYawValue = nil, nil
   self.shake, self.shakeX, self.shakeY = 0, 0, 0
   -- Every presentation deadline is stored in race time, so starting a race
   -- resets the clock underneath any beat still counting down from the last one
@@ -2613,6 +2634,18 @@ function RaceUI:RenderFork(race, player, camX, camZ)
       local span = math.min(branch.length, math.max(0, FAR_Z - entryDz))
       local light = (self.light or 1) * tuning.nightBoost
       local roadColor = track.road or { .34, .34, .38 }
+      -- The same aerial-perspective wash RenderRoad applies, so the shortcut
+      -- ribbon recedes with the tarmac it leaves rather than staying flat.
+      local skyLow = track.skyLow or { .8, .88, .96 }
+      local trackGlow = track.glow or { 1, .93, .72 }
+      local haze1 = (skyLow[1] * 0.58 + trackGlow[1] * 0.42) * light
+      local haze2 = (skyLow[2] * 0.58 + trackGlow[2] * 0.42) * light
+      local haze3 = (skyLow[3] * 0.58 + trackGlow[3] * 0.42) * light
+      local hazeCap = AK.Math.Clamp(0.62 * tuning.fogStrength, 0, 0.72)
+      local function aerial(r, g, b, lit, mix)
+        r, g, b = r * lit, g * lit, b * lit
+        return r + (haze1 - r) * mix, g + (haze2 - g) * mix, b + (haze3 - b) * mix, 1
+      end
       local previousX, previousY, previousW
 
       if span > 2 then
@@ -2638,26 +2671,37 @@ function RaceUI:RenderFork(race, player, camX, camZ)
               local midX = (x + previousX) * .5
               local midHalf = (halfWidthPixels + previousW) * .5
               local fog = AK.Math.Clamp(1 - (dz / FAR_Z) * tuning.fogStrength, 0.22, 1) * light
+              local mix = hazeCap * (AK.Math.Clamp(dz / FAR_Z, 0, 1) ^ 0.85)
               local uRoad = tuning.roadHalf / ROAD_TILE
               strip.road:SetTexCoord(-uRoad, uRoad, (bd - span / FORK_SEGMENTS) / ROAD_TILE, bd / ROAD_TILE)
               strip.road:ClearAllPoints()
               strip.road:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
               strip.road:SetSize(math.max(2, midHalf * 2), height)
-              strip.road:SetVertexColor(unpack(shade(roadColor, 0.94 * fog + (1 - fog) * 1.1)))
+              -- The same wash the main road gets. Fogging the ribbon by
+              -- brightness alone while the tarmac beside it recedes toward the
+              -- horizon made the shortcut read as a decal laid over the scene.
+              strip.road:SetVertexColor(aerial(roadColor[1], roadColor[2], roadColor[3], 0.94 * light, mix))
               strip.road:Show()
 
               -- Bright rails so the alternate line reads as a road and not as
               -- a shadow on the grass.
               local rail = AK.Math.Clamp(midHalf * 0.055, 1, 18)
               local glow = 0.6 + 0.4 * math.sin(race.elapsed * 6 - bd * 0.2)
-              for _, pair in ipairs({ { strip.edgeLeft, -1 }, { strip.edgeRight, 1 } }) do
-                local texture = pair[1]
-                texture:ClearAllPoints()
-                texture:SetPoint("BOTTOM", self.frame, "CENTER", midX + pair[2] * midHalf, previousY)
-                texture:SetSize(rail, height)
-                texture:SetVertexColor(0.35 * glow * fog, 1.0 * glow * fog, 0.45 * glow * fog)
-                texture:Show()
-              end
+              local rr, rg, rb = aerial(0.35 * glow, 1.0 * glow, 0.45 * glow, light, mix)
+              -- Unrolled. This was `ipairs({ { strip.edgeLeft, -1 }, ... })`,
+              -- which allocated three tables per strip per frame -- a hundred
+              -- and twenty pieces of garbage every frame a fork is on screen,
+              -- for a two-element loop.
+              strip.edgeLeft:ClearAllPoints()
+              strip.edgeLeft:SetPoint("BOTTOM", self.frame, "CENTER", midX - midHalf, previousY)
+              strip.edgeLeft:SetSize(rail, height)
+              strip.edgeLeft:SetVertexColor(rr, rg, rb)
+              strip.edgeLeft:Show()
+              strip.edgeRight:ClearAllPoints()
+              strip.edgeRight:SetPoint("BOTTOM", self.frame, "CENTER", midX + midHalf, previousY)
+              strip.edgeRight:SetSize(rail, height)
+              strip.edgeRight:SetVertexColor(rr, rg, rb)
+              strip.edgeRight:Show()
             end
             previousX, previousY, previousW = x, y, halfWidthPixels
           end
@@ -2712,7 +2756,9 @@ function RaceUI:RenderRoad(race, player)
   -- time and never stored back. `push` pulls the camera away from the kart on a
   -- boost; `dip` drops it on a landing.
   local feel = self.feel or {}
-  local camZ = player.distance - (tuning.camBack + (feel.push or 0))
+  local alpha = race.alpha
+  local camZ = self:Lerped(player.prevDistance, player.distance, alpha, 3)
+    - (tuning.camBack + (feel.push or 0))
   -- A BRANCH IS A LINE, NOT A LOOP.
   --
   -- Taking a fork sets `vehicle.distance = 0`, and the camera trails the kart
@@ -2732,7 +2778,27 @@ function RaceUI:RenderRoad(race, player)
   self:BuildBend(track, camZ)
   -- The bend is already measured from the kart, so the only lateral the camera
   -- still owns is how far across the road the player has moved.
-  local camX = player.lateral * roadHalf
+  -- The camera follows the kart ACROSS the road, but not instantly.
+  --
+  -- camX used to be exactly the player's lateral position, which pins the kart
+  -- to one column of pixels for the entire race: steer, get thrown wide by a
+  -- corner, get shoved by a rival -- the kart never moves, the world moves
+  -- under it. That is the OutRun read, and it is most of why being pushed
+  -- around by curvePush never felt like being pushed around by anything.
+  --
+  -- Letting the camera trail lets the kart slide toward the outside of a corner
+  -- and settle back on the exit, which is what a chase camera actually does and
+  -- what every kart racer since 1992 has done. The clamp is the safety rail:
+  -- the camera may lag, but the kart must not walk off toward the edge of the
+  -- screen where you cannot see what you are about to hit.
+  local targetLateral = self:Lerped(player.prevLateral, player.lateral, alpha, 0.5)
+  local followed = self.camLateralValue or targetLateral
+  followed = AK.Math.Lerp(followed, targetLateral,
+    math.min(1, (race.renderDelta or 0.016) * tuning.camFollow))
+  local lagLimit = tuning.camFollowMax
+  self.camLateralValue =
+    AK.Math.Clamp(followed, targetLateral - lagLimit, targetLateral + lagLimit)
+  local camX = self.camLateralValue * roadHalf
   -- The camera rides above the road beneath it, so it crests and dips with the
   -- terrain instead of flying level through hills.
   self.camWorldY = AK.Math.RoadHeight(track, camZ) + tuning.camHeight - (feel.dip or 0)
@@ -2982,7 +3048,14 @@ function RaceUI:RenderRoad(race, player)
         local railOut = math.max(1, pixelsPerMetre * 0.40)
         local flash = 0.70 + 0.30 * math.sin(race.elapsed * 12)
         local rr2, rg2, rb2 = 0.95 * flash * fog, 0.80 * flash * fog, 0.26 * flash * fog
-        for side, texture in pairs({ [-1] = strip.wallLeft, [1] = strip.wallRight }) do
+        -- Indexed rather than `pairs({ [-1] = ..., [1] = ... })`: that built a
+        -- fresh table for every strip of every frame -- a hundred and fifty
+        -- pieces of garbage per frame inside a tunnel, for a two-element loop --
+        -- and iterated it in an order Lua does not define, so which rail drew
+        -- first was luck.
+        for i = 1, 2 do
+          local side = i == 1 and -1 or 1
+          local texture = i == 1 and strip.wallLeft or strip.wallRight
           texture:SetTexCoord(0, 1, 0, 1)
           texture:ClearAllPoints()
           texture:SetPoint("BOTTOM", self.frame, "CENTER",
@@ -3435,14 +3508,18 @@ function RaceUI:RenderProjectiles(race, camX, camZ)
   local shown = 0
   for _, projectile in ipairs(race.projectiles) do
     if shown >= #self.projectileFrames then break end
+    -- A shell at full chat covers most of a metre per slice; without the same
+    -- interpolation the camera and the karts get, it strobes past you.
+    local drawZ = self:Lerped(projectile.prevDistance, projectile.distance, race.alpha, 3)
+    local drawLateral = self:Lerped(projectile.prevLateral, projectile.lateral, race.alpha, 0.5)
     local dz = AK.Math.SignedLoopDistance(camZ % (self.route or race.track).length,
-      projectile.distance % (self.route or race.track).length, (self.route or race.track).length)
+      drawZ % (self.route or race.track).length, (self.route or race.track).length)
     if dz > 1 and dz < FAR_Z then
       shown = shown + 1
       local shot = self.projectileFrames[shown]
       local item = projectile.item
-      local baseX, worldY = self:RoadAt(self.route or race.track, projectile.distance)
-      local x, y, pixelsPerMetre = self:Project(dz, baseX + projectile.lateral * tuning.roadHalf, camX, worldY)
+      local baseX, worldY = self:RoadAt(self.route or race.track, drawZ)
+      local x, y, pixelsPerMetre = self:Project(dz, baseX + drawLateral * tuning.roadHalf, camX, worldY)
       local size = self:ObjectSize(pixelsPerMetre, 1.5)
       local fog = self:FogAt(dz)
       -- Thrown items hop and spin along; a dropped banana sits still.
@@ -3551,10 +3628,14 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
   local tuning = self.T
   for index, vehicle in ipairs(race.vehicles) do
     local kart = self.karts[index]
-    local dz = AK.Math.SignedLoopDistance(camZ % (self.route or race.track).length, vehicle.distance % (self.route or race.track).length, (self.route or race.track).length)
+    -- Interpolated exactly as the camera is, or every other kart judders
+    -- against a world that does not.
+    local drawZ = self:Lerped(vehicle.prevDistance, vehicle.distance, race.alpha, 3)
+    local drawLateral = self:Lerped(vehicle.prevLateral, vehicle.lateral, race.alpha, 0.5)
+    local dz = AK.Math.SignedLoopDistance(camZ % (self.route or race.track).length, drawZ % (self.route or race.track).length, (self.route or race.track).length)
     if dz > 0.9 and dz < FAR_Z and not vehicle.finished and self:OnRoute(race, vehicle) then
-      local baseX, worldY = self:RoadAt(self.route or race.track, vehicle.distance)
-      local x, y, pixelsPerMetre = self:Project(dz, baseX + vehicle.lateral * tuning.roadHalf, camX, worldY)
+      local baseX, worldY = self:RoadAt(self.route or race.track, drawZ)
+      local x, y, pixelsPerMetre = self:Project(dz, baseX + drawLateral * tuning.roadHalf, camX, worldY)
       -- A kart is about 2.2m wide; scale the sprite by the same projection as
       -- the road so near racers loom and distant ones shrink correctly.
       -- Lightning leaves you tiny; flattening squashes you further still.
@@ -3722,7 +3803,9 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
         -- blue kart -- and since the player picks the kart colour, no tier hue
         -- is safe from that. Putting them beside the silhouette means they are
         -- always read against tarmac, whatever colour the kart is.
-        for side, spark in pairs({ [-1] = kart.sparkL, [1] = kart.sparkR }) do
+        for i = 1, 2 do
+          local side = i == 1 and -1 or 1
+          local spark = i == 1 and kart.sparkL or kart.sparkR
           spark:ClearAllPoints()
           spark:SetPoint("CENTER", kart, "BOTTOM", side * width * 0.46, height * 0.02)
           spark:SetSize(size, size)

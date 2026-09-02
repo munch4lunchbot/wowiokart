@@ -75,6 +75,10 @@ Tuning.defs = {
   { key = "boostFov", label = "Speed lens kick", default = 0.075, step = 0.01, min = 0, max = 0.3 },
   { key = "camYaw", label = "Turn into corners", default = 1.0, step = 0.1, min = 0, max = 3.0,
     hint = "How far the camera swings through a bend. 0 is the old flat slide." },
+  { key = "camFollow", label = "Chase lag", default = 6.0, rev = 16, step = 0.5, min = 1.0, max = 40.0,
+    hint = "How quickly the camera catches up with the kart ACROSS the road.\nLow is a loose chase camera: the kart visibly slides toward the outside of a corner and settles back on the exit.\n40 is rigidly locked, which pins your kart to one column of pixels and makes the world slide under you instead." },
+  { key = "camFollowMax", label = "Chase lag limit", default = 0.15, rev = 16, step = 0.01, min = 0, max = 0.6,
+    hint = "Ceiling on how far the camera is allowed to trail, as a fraction of the road's half-width.\nStops a long corner walking your kart off the side of the screen where you cannot see what you are about to hit." },
 
   { section = "CORNERS" },
   -- Stored as a 1-30 dial and divided by 1000 where it is used, because the
@@ -128,7 +132,7 @@ Tuning.defs = {
 -- Bumped whenever a default changes in a way players should actually receive.
 -- Saved settings win over defaults, so without this a corrected default only
 -- ever reached people who had never opened the tuning panel.
-local TUNING_REVISION = 15
+local TUNING_REVISION = 16
 
 function AK:InitTuning()
   self.db.tuning = self.db.tuning or {}
