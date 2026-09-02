@@ -10,6 +10,15 @@ local Physics = AK.Physics
 -- speed quickly and shrug off a hit fast, but get shoved around. A heavy racer
 -- takes an age to wind up and to recover, but holds speed and bullies.
 -- Collapsing these into one "weight" number is what made the classes cosmetic.
+-- How hard a drift bites, as a multiplier on the corner's centrifugal push.
+-- Below 1, because a drift is how you get ROUND a corner you cannot grip. See
+-- the note at the use site. verify-drift.js reads these three by name.
+local DRIFT_BITE = 0.92
+-- The share of the mini-turbo charge rate a drift earns off a corner, and the
+-- curvature at which it earns all of it. A straight banks almost nothing.
+local DRIFT_LOAD_FLOOR = 0.30
+local DRIFT_LOAD_FULL = 1.6
+
 AK.WEIGHT_CLASSES = {
   light  = { accel = 1.22, top = 0.94, handling = 1.14, recovery = 1.35, mass = 0.68 },
   medium = { accel = 1.00, top = 1.00, handling = 1.00, recovery = 1.00, mass = 1.00 },
@@ -398,6 +407,18 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
       local rate = (.30 + vehicle.driftStat * .05)      -- baseline, holding in
         + counter * (.22 + vehicle.driftStat * .04)     -- holding counter-steer
         + rocked * 0.55                                  -- the moment you rock it
+      -- A mini-turbo comes from LOADING THE KART IN A CORNER, not from holding
+      -- a button down. The drift engaged on any steering input at any time, so
+      -- rocking the stick along a dead straight banked a mega-turbo every 0.8
+      -- seconds for a 3%/s speed cost -- measured at 4.1% faster than simply
+      -- driving in a straight line. That makes weaving the correct input on
+      -- every straight in the game, and Elwynn has a 658m one. Off a corner the
+      -- charge trickles instead: enough that setting a drift up a moment before
+      -- turn-in still counts, nowhere near enough to farm.
+      local load = AK.Math.Clamp(
+        math.abs(AK.Math.RoadCurve(vehicle.route or race.track, vehicle.distance))
+          / DRIFT_LOAD_FULL, 0, 1)
+      rate = rate * (DRIFT_LOAD_FLOOR + (1 - DRIFT_LOAD_FLOOR) * load)
       -- The ladder cue fires from RaceUI's existing threshold-crossing check in
       -- VehicleEffects, which already tracks `previous.charge` and owns the
       -- matching spark pop. Detecting the same crossing here as well would
@@ -475,7 +496,18 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
       -- 0.81 of steering at top speed. Most of the wheel was being spent going
       -- straight ahead. 0.002 keeps the tuning knob a human-sized number.
       local curvature = AK.Math.RoadCurve(track, vehicle.distance) * 0.002
-      local grip = vehicle.drifting and 1.35 or 1
+      -- DRIFTING HAS TO BEAT THE CORNER. This was 1.35, under a local named
+      -- `grip` -- so a drift multiplied the centrifugal push by 1.35 while
+      -- multiplying steering by only 1.30, and the two cancelled almost exactly.
+      -- Measured (verify-drift.js), drifting bought 0.0% cornering speed at
+      -- every severity, and -12% on a gentle bend: it made the corner WIDER.
+      --
+      -- A variable called `grip` set to a number that reduces grip is a sign
+      -- error, not a design. In every kart racer the drift is how you get round
+      -- something you cannot grip -- and here the only reason to ever press the
+      -- button was to farm boosts on straights, which is exactly what the
+      -- fastest line turned out to be.
+      local grip = vehicle.drifting and DRIFT_BITE or 1
       -- Centrifugal force goes as v^2/r, not v. That distinction is the whole
       -- reason a corner is a decision.
       --
