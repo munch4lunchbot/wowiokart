@@ -1053,6 +1053,15 @@ function Workshop:Build()
   frame:SetScript("OnDragStart", frame.StartMoving)
   frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
   backdrop(frame, 0.03, 0.05, 0.09, 0.97, AK.COLORS.gold)
+  -- 1120x720 is wider than a 4:3 client's UIParent (1024) and within 48px of a
+  -- 16:9 one's height, so the panel hung off both edges on the first and had no
+  -- margin at all on the second. It is a fixed-size centred frame, so scaling
+  -- the frame itself is the whole fix -- no container needed. Re-run whenever
+  -- the client is resized or the master UI scale changes.
+  -- Refitted every time the panel is opened rather than hooked to UIParent:
+  -- the panel is only ever shown by an explicit action, so that is early enough
+  -- to catch a resolution or UI-scale change, and it keeps this addon out of a
+  -- Blizzard frame's script chain.
   frame:Hide()
   self.frame = frame
 
@@ -1142,11 +1151,22 @@ function Workshop:Build()
   self:SelectTab(order[1] and order[1].name or "SOUND")
 end
 
+--- Fit the panel to the client. It is a fixed-size centred frame, so scaling
+--- the frame itself is the whole fix.
+function Workshop:Fit()
+  if not self.frame then return end
+  local width, height = UIParent:GetWidth(), UIParent:GetHeight()
+  if not width or width <= 0 or not height or height <= 0 then return end
+  self.frame:SetScale(AK.Math.Clamp(
+    math.min(width / (WIDTH + 48), height / (HEIGHT + 48)), 0.50, 1.50))
+end
+
 function Workshop:Toggle()
   self:Build()
   if self.frame:IsShown() then
     self.frame:Hide()
   else
+    self:Fit()
     self.frame:Show()
     self:SelectTab(self.tab or "CAMERA")
   end

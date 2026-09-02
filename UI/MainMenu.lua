@@ -103,6 +103,24 @@ end
 AK.Menu = {}
 local Menu = AK.Menu
 
+-- The size the menu is authored at, and the size it therefore needs: a 960x520
+-- panel centred a little low, with the title stack above it and the exit button
+-- in the corner. That leaves the panel's top edge 215 units below the screen's
+-- centre, so anything under about 750 units tall prints the tagline across the
+-- top of the menu -- and on a client whose UIParent is much LARGER (a 4K screen
+-- with the UI scale set to 1) the whole menu shrank to a card in the middle.
+--
+-- Same fix as the race HUD and the results screen: author once, scale to fit.
+local MENU_W, MENU_H = 1120, 790
+
+--- Fit the menu to the client. One SetScale on one container.
+function Menu:Layout()
+  if not self.stage or not self.frame then return end
+  local width, height = self.frame:GetWidth(), self.frame:GetHeight()
+  if not width or width <= 0 or not height or height <= 0 then return end
+  self.stage:SetScale(AK.Math.Clamp(math.min(width / MENU_W, height / MENU_H), 0.50, 1.40))
+end
+
 function Menu:Build()
   if self.frame then return end
   local frame = CreateFrame("Frame", "AzerothKartMenu", UIParent)
@@ -134,11 +152,17 @@ function Menu:Build()
     if AK.PlaySfx then AK:PlaySfx("uiClose") end
   end)
 
-  local close = UI:NewButton(frame, "EXIT  (ESC)", 130, 32, function() self:Hide() end)
+  -- Everything but the full-screen scrim rides one scaled container.
+  local stage = CreateFrame("Frame", nil, frame)
+  stage:SetAllPoints()
+  self.stage = stage
+  frame:SetScript("OnSizeChanged", function() Menu:Layout() end)
+
+  local close = UI:NewButton(stage, "EXIT  (ESC)", 130, 32, function() self:Hide() end)
   close:SetPoint("TOPRIGHT", -30, -28)
   close:SetRestStyle({ .28, .09, .09, .95 }, AK.COLORS.danger)
 
-  local glow = frame:CreateTexture(nil, "BACKGROUND")
+  local glow = stage:CreateTexture(nil, "BACKGROUND")
   glow:SetTexture("Interface\\Buttons\\WHITE8x8")
   glow:SetVertexColor(0.08, 0.28, 0.45, 0.24)
   glow:SetSize(1200, 430)
@@ -152,29 +176,30 @@ function Menu:Build()
   glowAnimation:Play()
 
   -- Title treatment: glow behind, heavy shadow, rule beneath.
-  local titleGlow = frame:CreateTexture(nil, "ARTWORK")
+  local titleGlow = stage:CreateTexture(nil, "ARTWORK")
   titleGlow:SetTexture(ART .. "glow.tga")
   titleGlow:SetBlendMode("ADD")
   titleGlow:SetVertexColor(1, 0.72, 0.20, 1)
   titleGlow:SetPoint("TOP", 0, 20)
   titleGlow:SetSize(900, 300)
   titleGlow:SetAlpha(0.22)
-  local title = UI:NewText(frame, "AZEROTH KART", 54, AK.COLORS.gold, "CENTER")
+  local title = UI:NewText(stage, "AZEROTH KART", 54, AK.COLORS.gold, "CENTER")
   title:SetPoint("TOP", 0, -56)
   title:SetShadowColor(0, 0, 0, 1)
   title:SetShadowOffset(4, -4)
-  local titleRule = frame:CreateTexture(nil, "ARTWORK")
+  local titleRule = stage:CreateTexture(nil, "ARTWORK")
   titleRule:SetTexture(ART .. "hairline.tga")
   titleRule:SetPoint("TOP", title, "BOTTOM", 0, -2)
   titleRule:SetSize(560, 3)
   titleRule:SetVertexColor(1, 0.76, 0.20, 0.8)
-  local tag = UI:NewText(frame, "THE MOST QUESTIONABLY SANCTIONED RACE IN AZEROTH", 14, AK.COLORS.muted, "CENTER")
+  local tag = UI:NewText(stage, "THE MOST QUESTIONABLY SANCTIONED RACE IN AZEROTH", 14, AK.COLORS.muted, "CENTER")
   tag:SetPoint("TOP", titleRule, "BOTTOM", 0, -8)
 
-  local content = UI:NewPanel(frame, 960, 520, { 0.045, 0.075, 0.125, 0.95 })
+  local content = UI:NewPanel(stage, 960, 520, { 0.045, 0.075, 0.125, 0.95 })
   content:SetPoint("CENTER", 0, -45)
   self.content = content
   self.dynamic = {}
+  self:Layout()
   self:BuildHome()
 end
 

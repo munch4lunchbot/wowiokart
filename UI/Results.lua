@@ -8,6 +8,28 @@ local ART = "Interface\\AddOns\\kart\\Art\\"
 local ORDINALS = { "1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH" }
 local ROW_HEIGHT, ROW_GAP = 38, 4
 
+-- The size this screen is authored at, and the size it therefore needs.
+--
+-- The layout is a 300px podium beside a 760px table, anchored 120px from the
+-- left edge: 1222px of content before any right margin at all. UIParent is
+-- 1365x768 on a default 16:9 client, so that JUST fit -- and on 4:3 or 5:4,
+-- where UIParent is 1024 wide, the standings table ran clean off the screen.
+-- Vertically it was as tight, with the buttons pinned to the bottom edge and
+-- the stat strip growing down to meet them.
+--
+-- Same fix as the race HUD: author it once, scale the whole thing to fit, and
+-- centre the block rather than hanging it off the left edge.
+local DESIGN_W, DESIGN_H = 1340, 830
+local BLOCK = 300 + 22 + 760          -- podium + gap + table
+
+--- Fit the whole screen to the client. One SetScale on one container.
+function Results:Layout()
+  if not self.content or not self.frame then return end
+  local width, height = self.frame:GetWidth(), self.frame:GetHeight()
+  if not width or width <= 0 or not height or height <= 0 then return end
+  self.content:SetScale(AK.Math.Clamp(math.min(width / DESIGN_W, height / DESIGN_H), 0.50, 1.40))
+end
+
 function Results:Build()
   if self.frame then return end
   local frame = CreateFrame("Frame", "AzerothKartResults", UIParent)
@@ -37,22 +59,32 @@ function Results:Build()
   vignette:SetTexture(ART .. "vignette.tga")
   vignette:SetAllPoints()
 
+  -- Everything except the opaque ground lives on one scaled container, so the
+  -- screen is the same shape on a 1024-wide client and a 4K one.
+  local content = CreateFrame("Frame", nil, frame)
+  content:SetAllPoints()
+  self.content = content
+  frame:SetScript("OnSizeChanged", function() Results:Layout() end)
+
   -- Header.
-  self.title = UI:NewText(frame, "RACE RESULTS", 42, AK.COLORS.gold, "CENTER")
+  self.title = UI:NewText(content, "RACE RESULTS", 42, AK.COLORS.gold, "CENTER")
   self.title:SetPoint("TOP", 0, -46)
   self.title:SetShadowColor(0, 0, 0, 1)
   self.title:SetShadowOffset(3, -3)
-  local rule = frame:CreateTexture(nil, "ARTWORK")
+  local rule = content:CreateTexture(nil, "ARTWORK")
   rule:SetTexture(ART .. "hairline.tga")
   rule:SetPoint("TOP", self.title, "BOTTOM", 0, -6)
   rule:SetSize(520, 3)
   rule:SetVertexColor(1, 0.76, 0.20, 0.75)
-  self.subtitle = UI:NewText(frame, "", 16, AK.COLORS.muted, "CENTER")
+  self.subtitle = UI:NewText(content, "", 16, AK.COLORS.muted, "CENTER")
   self.subtitle:SetPoint("TOP", rule, "BOTTOM", 0, -8)
 
   -- Winner podium, left of the table.
-  self.podium = UI:NewPanel(frame, 300, 400, { .05, .08, .14, .96 })
-  self.podium:SetPoint("TOPLEFT", 120, -170)
+  self.podium = UI:NewPanel(content, 300, 400, { .05, .08, .14, .96 })
+  -- Centred as a block. Anchored 120px from the LEFT edge, the podium and table
+  -- together needed more width than a 4:3 client has, and on a wide one the
+  -- whole screen sat left with a hole beside it.
+  self.podium:SetPoint("TOPLEFT", content, "TOP", -BLOCK * 0.5, -170)
   self.winner = AK.Model:New(self.podium, 260, 260, -0.45, 1)
   self.winner:SetPoint("TOP", 0, -14)
   self.winnerName = UI:NewText(self.podium, "", 18, AK.COLORS.gold, "CENTER")
@@ -63,7 +95,7 @@ function Results:Build()
   self.winnerTag:SetPoint("BOTTOM", 0, 34)
 
   -- Standings table.
-  self.table = UI:NewPanel(frame, 760, 400, { .05, .08, .14, .96 })
+  self.table = UI:NewPanel(content, 760, 400, { .05, .08, .14, .96 })
   self.table:SetPoint("TOPLEFT", self.podium, "TOPRIGHT", 22, 0)
   self.rows = {}
   for i = 1, AK.MAX_RACERS do
@@ -93,17 +125,19 @@ function Results:Build()
   end
 
   -- Stat strip, inside the layout rather than dangling off the bottom.
-  self.statPanel = UI:NewPanel(frame, 1082, 62, { .04, .065, .11, .96 })
-  self.statPanel:SetPoint("TOP", self.table, "BOTTOM", -161, -14)
+  self.statPanel = UI:NewPanel(content, BLOCK, 62, { .04, .065, .11, .96 })
+  -- On the block's own centre line. It used to hang off the table with a -161
+  -- nudge to fake being centred under a pair of panels it was not anchored to.
+  self.statPanel:SetPoint("TOP", self.podium, "BOTTOM", BLOCK * 0.5 - 150, -14)
   self.stats = UI:NewText(self.statPanel, "", 14, { .88, .93, 1 }, "CENTER")
   self.stats:SetPoint("TOP", 0, -10)
   self.splits = UI:NewText(self.statPanel, "", 12, AK.COLORS.muted, "CENTER")
   self.splits:SetPoint("BOTTOM", 0, 10)
 
-  self.reward = UI:NewText(frame, "", 15, AK.COLORS.lime, "CENTER")
+  self.reward = UI:NewText(content, "", 15, AK.COLORS.lime, "CENTER")
   self.reward:SetPoint("TOP", self.statPanel, "BOTTOM", 0, -14)
 
-  self.primary = UI:NewButton(frame, "RACE AGAIN", 240, 44, function()
+  self.primary = UI:NewButton(content, "RACE AGAIN", 240, 44, function()
     local race = AK.Race.current
     if self.grandPrixComplete then AK.Race:Stop(true); self:Hide()
     elseif race and race.grandPrix then AK.Race:NextGrandPrix()
@@ -111,17 +145,19 @@ function Results:Build()
     else AK.Race:Start(race and race.mode or "quick") end
   end)
   self.primary:SetPoint("BOTTOM", -132, 40)
-  self.back = UI:NewButton(frame, "MAIN MENU", 240, 44, function()
+  self.back = UI:NewButton(content, "MAIN MENU", 240, 44, function()
     AK.Race:Stop(true); self:Hide()
   end)
   self.back:SetPoint("BOTTOM", 132, 40)
   -- This screen covers the whole display at frame level 900, so the chat
   -- window is behind it -- a slash command could never be typed OR read here.
   -- The telemetry needs a button and its own panel above this one.
-  self.aiReport = UI:NewButton(frame, "AI REPORT", 150, 24, function() AK.AI:Report() end)
+  self.aiReport = UI:NewButton(content, "AI REPORT", 150, 24, function() AK.AI:Report() end)
   self.aiReport:SetPoint("BOTTOM", 0, 10)
   self.aiReport:SetRestStyle({ .10, .16, .26, .95 }, { .38, .55, .78 })
   self.aiReport.tooltip = "What the AI field actually did: drifts completed, braking, mistakes and how much catch-up assistance they were given."
+
+  self:Layout()
 
   -- Rows fly in one at a time; the ticker drives that.
   self.ticker = CreateFrame("Frame", nil, frame)

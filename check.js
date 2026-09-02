@@ -380,6 +380,38 @@ const unorderedItems = [];
   }
 }
 
+// --- screens authored bigger than the screen ---------------------------------
+//
+// Every top-level UI in this addon was laid out in absolute pixels against one
+// developer's window, and none of them checked what happens on anyone else's.
+// UIParent is 1365x768 on a default 16:9 client and 1024x768 on a 4:3 one, so a
+// 1120-wide panel hangs off both edges of the second, and a client with the UI
+// scale set to 1 on a 4K monitor gets a 3840x2160 UIParent that shrinks the
+// same panel to a postage stamp in the middle.
+//
+// The fix in every case is the same one line -- fit the whole screen with a
+// SetScale -- so the rule is simply that a file laying out anything that big
+// must contain one. Files that only ever draw INTO a scaled container, or that
+// size things against the screen rather than in fixed pixels, are unaffected.
+const unscaled = [];
+{
+  for (const rel of ["UI/MainMenu.lua", "UI/Results.lua", "UI/Workshop.lua",
+                     "UI/RaceUI.lua", "UI/SoundEditor.lua"]) {
+    const file = path.join(ADDON, rel);
+    if (!fs.existsSync(file)) continue;
+    const src = fs.readFileSync(file, "utf8");
+    // The widest literal size or layout constant this file lays out with.
+    let widest = 0;
+    for (const m of src.matchAll(/SetSize\((\d{3,}),\s*(\d{2,})\)/g))
+      widest = Math.max(widest, +m[1]);
+    for (const m of src.matchAll(/^local \w*(?:WIDTH|_W)\w*,\s*\w+ = (\d{3,}),/gm))
+      widest = Math.max(widest, +m[1]);
+    if (widest >= 1000 && !/:SetScale\(/.test(src))
+      unscaled.push(rel + "  lays out " + widest + "px wide with no SetScale -- " +
+        "it will not fit a 4:3 client and will shrink to a card on a 4K one");
+  }
+}
+
 console.log("files: " + toc.length + " listed, " + onDisk.length + " on disk");
 if (missing.length) console.log("  MISSING (in toc, not on disk): " + missing.join(", "));
 if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted.join(", "));
@@ -403,10 +435,12 @@ console.log("items missing from ItemOrder: " + unorderedItems.length);
 for (const i of unorderedItems) console.log("  " + i);
 console.log("world renderers without an edge fade: " + unfaded.length);
 for (const u of unfaded) console.log("  " + u);
+console.log("screens that never fit themselves to the client: " + unscaled.length);
+for (const u of unscaled) console.log("  " + u);
 
 const bad = errors.length + leaks.size + missing.length + unlisted.length
   + tooNarrow.length + unanchored.length + clamped.length + tableCalls.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
-  + unfaded.length;
+  + unfaded.length + unscaled.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);
