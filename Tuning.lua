@@ -112,6 +112,10 @@ Tuning.defs = {
   { key = "specScale", label = "Crowd size", default = 3.4, step = 0.2, min = 0.5, max = 9.0 },
   { key = "specZoom", label = "Crowd zoom out", default = 2.0, step = 0.1, min = 0.4, max = 6.0 },
 
+  { section = "INTERFACE" },
+  { key = "hudScale", label = "HUD size", default = 100, step = 5, min = 50, max = 200,
+    hint = "Percentage. The HUD already fits itself to your resolution; this nudges that up or down.\nTakes effect immediately -- open this panel during a race and watch it move." },
+
   { section = "EFFECTS" },
   { key = "particleScale", label = "Spark size", default = 1.0, step = 0.1, min = 0, max = 3.0 },
   { key = "speedLines", label = "Speed streaks", default = 1.0, step = 0.1, min = 0, max = 2.5 },

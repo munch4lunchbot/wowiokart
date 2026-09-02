@@ -186,7 +186,10 @@ const tunnelDepth = d => {
 };
 const TUNNEL_HEIGHT = 7.5, TUNNEL_TILE = 5.0;
 const shade = (c, f) => [c[0] * f, c[1] * f, c[2] * f];
-const verge = [track.color[0]*2.3+.06, track.color[1]*2.1+.07, track.color[2]*1.9+.05];
+// Mirrors RaceUI:RenderRoad -- lift the verge toward its own luminance rather
+// than by a per-channel multiply, which brightens by saturating.
+const grassLum = track.color[0]*0.30 + track.color[1]*0.59 + track.color[2]*0.11;
+const verge = track.color.map(c => (c * 0.58 + grassLum * 0.42) * 2.15 + .05);
 
 // Addon anchors from frame CENTRE with +y up; the framebuffer is +y down.
 const SX = x => HW + x, SY = y => HH - y;
@@ -370,17 +373,30 @@ const skyArt = track.style === "oribos" ? tex.spire : (skyline.treeArt && tex[sk
 if (skyArt) {
   const tt = skyline.treeTint || [.80, 1, .86];
   const spread = HW * 2.4, slice = spread / TREES, drift = -camX * 3.4;
+  const jit = (i, a, b) => { const v = Math.sin(i * a) * b; return v - Math.floor(v); };
+  // Mirrors RaceUI:RenderSky's treeline: per-slot jitter, continuous depth, and
+  // an aerial-perspective wash toward the horizon rather than a darker back row.
+  const wash = [
+    (track.skyLow[0] * 0.6 + track.glow[0] * 0.4) * light,
+    (track.skyLow[1] * 0.6 + track.glow[1] * 0.4) * light,
+    (track.skyLow[2] * 0.6 + track.glow[2] * 0.4) * light,
+  ];
   for (let i = 1; i <= TREES; i++) {
-    const x = ((i * slice + drift) % spread + spread) % spread - spread / 2;
-    let n = Math.sin(i * 12.9898) * 43758.5453; n -= Math.floor(n);
-    const back = i % 3 === 0;
-    const h0 = (spirey ? (0.10 + n * 0.20) : (0.042 + n * 0.075)) * H * T.treeHeight;
-    const w = h0 * (spirey ? 0.26 : 0.5);
-    const h = h0 * (back ? (spirey ? .72 : .82) : 1);
-    const tone = (back ? (spirey ? .42 : .62) : (spirey ? .66 : .92)) * light;
-    const tint = track.style === "oribos" ? [tone * .80, tone * .70, tone * 1.15]
+    const jx = jit(i, 12.9898, 43758.5453) - 0.5;
+    const jh = jit(i, 78.2330, 24634.6345);
+    const jw = jit(i, 45.1640, 15731.7430);
+    const depth = jit(i, 94.6730, 39871.2930);
+    const px = i * slice + jx * slice * 0.9 + drift;
+    const x = ((px % spread) + spread) % spread - spread / 2;
+    const h = (spirey ? (0.085 + jh * 0.240) : (0.034 + jh * 0.105))
+      * H * T.treeHeight * (1 - depth * 0.34);
+    const w = h * (spirey ? 0.26 : 0.5) * (0.80 + jw * 0.44);
+    const tone = (spirey ? .68 : .92) * (1 - depth * 0.12) * light;
+    const base = track.style === "oribos" ? [tone * .80, tone * .70, tone * 1.15]
       : [tone * tt[0], tone * tt[1], tone * tt[2]];
-    blit(skyArt, SX(x - w / 2), SY(T.horizon - (back ? H * .019 : H * .006)) - h, w, h, 0, 1, 0, 1, tint, 1);
+    const haze = depth * 0.40;
+    const tint = base.map((c, k) => c + (wash[k] - c) * haze);
+    blit(skyArt, SX(x - w / 2), SY(T.horizon - H * (0.004 + depth * 0.017)) - h, w, h, 0, 1, 0, 1, tint, 1);
   }
 }
 
@@ -419,6 +435,23 @@ if (skyArt) {
 }
 
 // ---------- road ----------
+// Mirrors RaceUI:RenderRoad: under cover the whole scene loses its daylight,
+// and every ground surface washes toward the horizon as it recedes rather than
+// merely dimming. `fog` alone put no depth cue on the two surfaces that fill
+// most of the screen.
+const roadCamDepth = tunnelDepth(camZ);
+const roadLight = light * (1 - roadCamDepth * 0.48);
+const roadHaze = [
+  (track.skyLow[0] * 0.58 + track.glow[0] * 0.42) * roadLight,
+  (track.skyLow[1] * 0.58 + track.glow[1] * 0.42) * roadLight,
+  (track.skyLow[2] * 0.58 + track.glow[2] * 0.42) * roadLight,
+];
+const hazeCap = clamp(0.62 * T.fogStrength, 0, 0.72) * (1 - roadCamDepth);
+const aerial = (c, lit, mix) => c.map((v, k) => {
+  const s = v * lit;
+  return s + (roadHaze[k] - s) * mix;
+});
+
 const lift = T.camDepth * T.camHeight * HH;
 const nearZ = Math.max(1.2, lift / (T.horizon + HH + 60));
 const nu = 1 / nearZ, fu = 1 / FAR_Z, step = (nu - fu) / (SEGMENTS - 1);
@@ -439,7 +472,8 @@ for (let i = 0; i < SEGMENTS; i++) {
 // far to near, so crests occlude
 for (let r = rows.length - 1; r >= 0; r--) {
   const row = rows[r];
-  const fog = clamp(1 - (row.dz / FAR_Z) * T.fogStrength, .22, 1) * light;
+  const fog = clamp(1 - (row.dz / FAR_Z) * T.fogStrength, .22, 1) * roadLight;
+  const mix = hazeCap * Math.pow(clamp(row.dz / FAR_Z, 0, 1), 0.85);
   const idx = Math.floor(row.segZ / STRIPE), dark = idx % 2 === 0;
   const rz=((row.segZ%track.length)+track.length)%track.length;
   const onRamp = track._ramps.some(r=>rz>=r[0]&&rz<=r[1]);
@@ -447,19 +481,21 @@ for (let r = rows.length - 1; r >= 0; r--) {
   const v0 = row.prevZ, v1 = row.segZ;
 
   if (tex.grass) {
-    const f = (dark ? T.grassContrast : 1) * fog;
     const uG = (HW / Math.max(1, row.ppm)) / GRASS_TILE;
     blit(tex.grass, 0, yTop, W, hpx, -uG, uG, v0 / GRASS_TILE, v1 / GRASS_TILE,
-      shade(verge, f), 1);
+      aerial(verge, (dark ? T.grassContrast : 1) * roadLight, mix), 1);
   }
   if (tex.road) {
-    const f = (dark ? .96 : 1) * fog;
     const uR = T.roadHalf / ROAD_TILE;
+    const band = Math.floor(row.segZ / 2.2) % 2 === 0;
+    const tint = onRamp
+      ? aerial([1.0, 0.74, 0.16], (band ? 1.0 : 0.55) * roadLight, mix)
+      : aerial(track.road, (dark ? .96 : 1) * roadLight, mix);
     blit(tex.road, SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx,
-      -uR, uR, v0 / ROAD_TILE, v1 / ROAD_TILE, onRamp ? (()=>{const band=Math.floor(row.segZ/2.2)%2===0,hot=band?1.0:0.55;return [Math.min(1,1.0*fog*hot),Math.min(1,0.74*fog*hot),Math.min(1,0.16*fog*hot)];})() : shade(track.road, f), 1);
+      -uR, uR, v0 / ROAD_TILE, v1 / ROAD_TILE, tint, 1);
     if (tex.roadshade)
       blit(tex.roadshade, SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx,
-        0, 1, 0, 1, [0, 0, 0], 0.85 * fog);
+        0, 1, 0, 1, [0, 0, 0], 0.85 * (1 - mix));
   }
   const rw = clamp(row.midHalf * (track.style === "oribos" ? .055 : .05), 1, 20);
   let rr, rg, rb;
@@ -468,11 +504,13 @@ for (let r = rows.length - 1; r >= 0; r--) {
     [rr, rg, rb] = dark ? [1 * pulse, .72 * pulse, .28 * pulse] : [.30 * pulse, .82 * pulse, 1 * pulse];
   } else [rr, rg, rb] = dark ? [.95,.95,.96] : [.82,.22,.18];
   if(onRamp){ const fl=0.8; rr=1.0*fl; rg=0.85*fl; rb=0.25*fl; }
-  rect(SX(row.midX - row.midHalf - rw), yTop, rw, hpx, rr * fog, rg * fog, rb * fog, 1);
-  rect(SX(row.midX + row.midHalf), yTop, rw, hpx, rr * fog, rg * fog, rb * fog, 1);
+  const rc = aerial([rr, rg, rb], roadLight, mix);
+  rect(SX(row.midX - row.midHalf - rw), yTop, rw, hpx, rc[0], rc[1], rc[2], 1);
+  rect(SX(row.midX + row.midHalf), yTop, rw, hpx, rc[0], rc[1], rc[2], 1);
   if (idx % 4 < 2 && row.midHalf > 6) {
     const lw = clamp(row.midHalf * .04, 1, 14);
-    rect(SX(row.midX - lw / 2), yTop, lw, hpx, .96 * fog, .95 * fog, .82 * fog, .75);
+    const lc = aerial([.96, .95, .82], roadLight, mix);
+    rect(SX(row.midX - lw / 2), yTop, lw, hpx, lc[0], lc[1], lc[2], .75);
   }
 
   if (row.cover > 0 && row.prevCeilY !== null && tex.rock) {
@@ -688,17 +726,74 @@ for (const v of field) {
 }
 
 // ---------- vignette + HUD ----------
+//
+// The HUD used to be four unlabelled grey rectangles at hard-coded pixel
+// offsets: it could not answer a single question about the interface, and it
+// went stale the moment the Lua moved. This reads the layout table straight out
+// of UI/RaceUI.lua and renders the real thing, text included, at the same scale
+// the addon would pick for a window this size.
 if (tex.vignette) blit(tex.vignette, 0, 0, W, H, 0, 1, 0, 1, [0, 0, 0], 1);
-function panel(x, y, w, h) {
-  if (tex.panel) blit(tex.panel, x, y, w, h, 0, 1, 0, 1, [1, 1, 1], 1);
-  else rect(x, y, w, h, .04, .06, .10, .9);
-  rect(x, y, w, 1, 1, .76, .20, .85); rect(x, y + h - 1, w, 1, 1, .76, .20, .85);
-  rect(x, y, 1, h, 1, .76, .20, .85); rect(x + w - 1, y, 1, h, 1, .76, .20, .85);
+const { drawText } = require("./hud-font.js");
+const LAYOUT = require("./hud-layout.js");
+
+// Drawn straight from Art/hud-layout.js, which is the same list verify-hud.js
+// checks and which parses its geometry out of UI/RaceUI.lua. Two mirrors of one
+// layout is how a preview ends up disagreeing with both the game and the test.
+const HS = LAYOUT.scale(W, H);
+const u = n => n * HS;
+const R = {};
+for (const r of LAYOUT.rects(W, H)) R[r.name] = r;
+const GOLD = LAYOUT.COLORS.GOLD;
+
+function panel(r, alpha = 1) {
+  if (tex.panel) blit(tex.panel, r.x, r.y, r.w, r.h, 0, 1, 0, 1, [1, 1, 1], alpha);
+  else rect(r.x, r.y, r.w, r.h, .04, .06, .10, .9 * alpha);
+  rect(r.x, r.y, r.w, 1, 1, .76, .20, .34 * alpha);
 }
-panel(HW - 310, 20, 620, 73);
-panel(30, 28, 128, 128);
-panel(W - 150, 28, 120, 106);
-panel(HW - 130, H - 67, 260, 32);
+const put = (qx, qy, r, g, b, a) => blend(qx, qy, r, g, b, a);
+
+// Panels and buttons first, then every text row on top of them.
+for (const r of LAYOUT.rects(W, H)) {
+  if (r.kind === "panel") panel(r);
+  else if (r.kind === "glow" && tex.glow)
+    blit(tex.glow, r.x, r.y, r.w, r.h, 0, 1, 0, 1, [0, 0, 0], 0.55);
+  else if (r.kind === "button") {
+    const col = r.text === "BRAKE" ? [.26, .10, .10] : r.text === "GAS" ? [.10, .24, .12]
+      : r.text === "QUIT" ? [.28, .09, .09] : [.10, .19, .31];
+    rect(r.x, r.y, r.w, r.h, col[0], col[1], col[2], .96);
+    rect(r.x, r.y, r.w, 1, .38, .65, .92, .9);
+  } else if (r.kind === "pips") {
+    for (let i = 0; i < 3; i++)
+      rect(r.x + i * r.pitch, r.y, r.each, r.h, ...(i < 2 ? GOLD : [.25, .32, .42]), 1);
+  } else if (r.kind === "icon" && tex.mushroom) {
+    blit(tex.mushroom, r.x, r.y, r.w, r.h, 0, 1, 0, 1, [1, 1, 1], 1);
+  }
+}
+{ // route and racer dots, which have no rect of their own
+  const m = R["map.panel"], rad = u(LAYOUT.HUD.map.w * 0.36);
+  for (let i = 0; i < 48; i++) {
+    const a = i / 48 * Math.PI * 2 - Math.PI / 2;
+    rect(m.x + m.w / 2 + Math.cos(a) * rad - u(2.5), m.y + m.h / 2 - Math.sin(a) * rad * 0.71 - u(2.5),
+      u(5), u(5), .32, .44, .58, .95);
+  }
+  for (let i = 0; i < 4; i++) {
+    const a = (i * 0.13 + 0.4) * Math.PI * 2 - Math.PI / 2;
+    rect(m.x + m.w / 2 + Math.cos(a) * rad - u(4), m.y + m.h / 2 - Math.sin(a) * rad * 0.71 - u(4),
+      u(8), u(8), i ? .9 : 1, i ? .4 : .82, i ? .3 : .25, 1);
+  }
+}
+{ // drift charge fill and its tier ticks
+  const d = R["drift.panel"], track = d.w - u(8);
+  rect(d.x + u(4), d.y + u(4), track * (1.30 / LAYOUT.DRIFT_MAX), d.h - u(8), 1, .58, .10, 1);
+  for (const t of [0.35, 0.90, 1.80])
+    rect(d.x + u(4) + track * (t / LAYOUT.DRIFT_MAX), d.y + u(4), Math.max(1, u(2)), d.h - u(8), .08, .13, .20, 1);
+}
+for (const r of LAYOUT.rects(W, H)) {
+  if (r.kind === "text") drawText(put, r.text, r.x, r.y, r.size, r.color, 1);
+  else if (r.kind === "button")
+    drawText(put, r.text, r.x + (r.w - r.text.length * 6 * u(13) / 9.7) / 2,
+      r.y + (r.h - u(13) * 7 / 9.7) / 2, u(13), GOLD, 1);
+}
 
 // ---------- encode ----------
 function crc32(buf) { let c, t = []; for (let n = 0; n < 256; n++) { c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } let crc = 0xffffffff; for (const b of buf) crc = t[(crc ^ b) & 0xff] ^ (crc >>> 8); return (crc ^ 0xffffffff) >>> 0; }

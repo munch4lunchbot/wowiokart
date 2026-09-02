@@ -63,6 +63,55 @@ local DRIFT_STAGES = {
   { threshold = 0.00, color = { 0.92, 0.94, 1.00 }, tier = 0 },   -- nothing banked
 }
 
+-- --------------------------------------------------------------------------
+-- HUD layout
+-- --------------------------------------------------------------------------
+--
+-- Every HUD offset used to be an absolute pixel figure authored against a
+-- 1280-wide window: a 620x73 header, a 128px map, a control row spanning 816px
+-- of a screen that may only be 800 wide. On a 1440p client the whole interface
+-- shrivelled into the corners at half its intended size; on a small one it ran
+-- off both edges. The SKYLINE was fixed for exactly this reason -- there is a
+-- comment about it forty lines up -- and the HUD, which the player actually
+-- reads, never was.
+--
+-- So: the HUD is authored once at a design resolution and the whole thing is
+-- scaled as one frame to fit whatever the player has (RaceUI:LayoutHud). One
+-- SetScale on one container handles every child, so the offsets below stay
+-- readable numbers rather than becoming screen fractions.
+--
+-- The arrangement is Mario Kart's grammar, not a settings panel's. The three
+-- things you need without looking are WHICH LAP, WHAT ITEM and WHAT PLACE, so
+-- those get the corners, the centre and the size. The clock and the map are
+-- reference material you consult between corners, so they get the far corners.
+-- Everything used to live in one 620x73 strip of eight readouts across the top.
+local HUD_DESIGN_W, HUD_DESIGN_H = 1600, 900
+local HUD = {
+  lap      = { point = "TOPLEFT",     x =   26, y =  -22, w = 196, h =  74 },
+  item     = { point = "TOP",         x =    0, y =  -22, w = 124, h = 124 },
+  clock    = { point = "TOPRIGHT",    x =  -26, y =  -22, w = 236, h =  84 },
+  place    = { point = "BOTTOMLEFT",  x =   30, y =  116, w = 210, h = 132 },
+  map      = { point = "BOTTOMRIGHT", x =  -26, y =  110, w = 168, h = 168 },
+  drift    = { point = "BOTTOM",      x =    0, y =  112, w = 320, h =  18 },
+  controls = { point = "BOTTOM",      x =    0, y =   26, w = 872, h =  44 },
+  quit     = { point = "TOPRIGHT",    x =  -26, y = -116, w =   76, h = 26 },
+}
+local HUD_PANEL = { .025, .05, .10, .88 }
+local ITEM_ICON = 74
+-- Drift tick positions as a FRACTION of the meter, derived from the ladder
+-- above rather than from three hand-placed pixel offsets that had drifted out
+-- of step with it: the ticks used to sit at even thirds while the tiers turned
+-- at 0.35, 0.90 and 1.80 of a 2.5 scale, so the bar's rungs marked nothing.
+local DRIFT_MAX = 2.5
+-- Named rungs. The colour tells you which tier you are on in peripheral vision;
+-- the name confirms it when you have a moment to look.
+local DRIFT_TIER_NAMES = { [1] = "MINI", [2] = "SUPER", [3] = "MEGA" }
+local DRIFT_TRACK = HUD.drift.w - 8
+local DRIFT_TICKS = {}
+for i = #DRIFT_STAGES - 1, 1, -1 do
+  DRIFT_TICKS[#DRIFT_TICKS + 1] = DRIFT_STAGES[i].threshold / DRIFT_MAX
+end
+
 local ART_PREFIX = "Interface\\AddOns\\kart\\Art\\"
 local OBJECT_STYLE = {
   -- Item cubes float and bob; dash panels lie flat on the tarmac.
@@ -457,9 +506,26 @@ function RaceUI:Build()
   self.hillLine:Hide()
 
   -- Treeline built from actual conifer silhouettes.
+  --
+  -- Evenly spaced, near-identical trees read as a picket fence -- which is
+  -- exactly what the offline renders showed: a row of clones at one pitch with
+  -- every third one shorter. So each slot gets a fixed personality: its own
+  -- horizontal offset, height, width and depth. It is drawn once, here, rather
+  -- than re-derived from sin() every frame, because none of it ever changes.
+  local function jitter(i, a, b)
+    local v = math.sin(i * a) * b
+    return v - math.floor(v)
+  end
   self.trees = {}
+  self.treeSeed = {}
   for i = 1, TREES do
     self.trees[i] = makeTexture(frame, "BACKGROUND", { 1, 1, 1, 1 }, 3, "tree.tga")
+    self.treeSeed[i] = {
+      x = jitter(i, 12.9898, 43758.5453) - 0.5,   -- offset within its own slot
+      h = jitter(i, 78.2330, 24634.6345),         -- height
+      w = jitter(i, 45.1640, 15731.7430),         -- width
+      d = jitter(i, 94.6730, 39871.2930),         -- depth: 0 near, 1 far
+    }
   end
 
   self.ground = makeTexture(frame, "BACKGROUND", { .16, .40, .18, 1 }, 4)
@@ -633,105 +699,168 @@ function RaceUI:Build()
     self.checker[i]:Hide()
   end
 
-  local header = UI:NewPanel(frame, 620, 73, { .025, .05, .10, .88 })
-  header:SetPoint("TOP", 0, -20)
-  self.headerPanel = header
-  self.position = UI:NewText(header, "1ST", 30, AK.COLORS.gold, "LEFT")
-  self.position:SetPoint("LEFT", 22, 10)
-  self.positionOf = UI:NewText(header, "/ 8", 12, AK.COLORS.muted, "LEFT")
-  self.positionOf:SetPoint("LEFT", 92, 4)
-  self.lap = UI:NewText(header, "LAP 1 / 3", 15, { .85, .92, 1 }, "LEFT")
-  self.lap:SetPoint("LEFT", 154, 14)
+  -- ---- HUD ---------------------------------------------------------------
+  --
+  -- Everything below hangs off self.hud, which is scaled as one piece by
+  -- RaceUI:LayoutHud(). See the HUD table at the top of the file for why.
+  self.hud = CreateFrame("Frame", nil, frame)
+  self.hud:SetAllPoints()
+  local hud = self.hud
+
+  -- WHICH LAP -- top left. The lap you are on is the thing you glance at most
+  -- and it used to be 15pt text buried in the middle of a bar of eight
+  -- readouts, which is why nobody could find it.
+  local lapPanel = UI:NewPanel(hud, HUD.lap.w, HUD.lap.h, HUD_PANEL)
+  lapPanel:SetPoint(HUD.lap.point, HUD.lap.x, HUD.lap.y)
+  self.headerPanel = lapPanel
+  UI:NewText(lapPanel, "LAP", 12, AK.COLORS.gold, "LEFT"):SetPoint("TOPLEFT", 14, -9)
+  self.lap = UI:NewText(lapPanel, "1 / 3", 27, { .95, .96, 1 }, "LEFT")
+  self.lap:SetPoint("TOPLEFT", 52, -4)
+  -- One pip per lap, filling as you complete them: the count in the abstract is
+  -- a number to read, the pips are a progress bar you take in without reading.
   self.lapPips = {}
   for i = 1, 5 do
-    local pip = makeTexture(header, "OVERLAY", { .25, .32, .42, 1 })
-    pip:SetSize(18, 4)
-    pip:SetPoint("LEFT", 154 + (i - 1) * 22, -2)
+    local pip = makeTexture(lapPanel, "OVERLAY", { .25, .32, .42, 1 })
+    pip:SetSize(30, 5)
+    pip:SetPoint("BOTTOMLEFT", 14 + (i - 1) * 34, 11)
     self.lapPips[i] = pip
   end
-  self.timer = UI:NewText(header, "00:00.000", 20, { .95, .96, 1 }, "CENTER")
-  self.timer:SetPoint("CENTER", 0, 16)
-  self.lapTime = UI:NewText(header, "", 11, AK.COLORS.muted, "CENTER")
-  self.lapTime:SetPoint("CENTER", 0, 0)
-  self.speed = UI:NewText(header, "0 km/h", 15, AK.COLORS.lime, "RIGHT")
-  self.speed:SetPoint("RIGHT", -22, 12)
-  self.status = UI:NewText(header, "", 11, AK.COLORS.muted, "CENTER")
-  self.status:SetPoint("BOTTOM", 0, 7)
 
-  self.minimapPanel = UI:NewPanel(frame, 128, 128, { .025, .05, .10, .88 })
-  self.minimap = self.minimapPanel
-  self.minimap:SetPoint("TOPLEFT", 30, -28)
-  local mapTitle = UI:NewText(self.minimap, "TRACK MAP", 10, AK.COLORS.gold, "CENTER")
-  mapTitle:SetPoint("TOP", 0, -8)
-  self.mapRoute = {}
-  for i = 1, 48 do
-    local node = self.minimap:CreateTexture(nil, "ARTWORK")
-    node:SetTexture("Interface\\Buttons\\WHITE8x8")
-    node:SetVertexColor(.32, .44, .58, .95)
-    node:SetSize(4, 4)
-    self.mapRoute[i] = node
-  end
-  self.mapDots = {}
-  for i = 1, AK.MAX_RACERS do
-    local dot = self.minimap:CreateTexture(nil, "OVERLAY")
-    dot:SetTexture("Interface\\Buttons\\WHITE8x8")
-    dot:SetSize(7, 7)
-    self.mapDots[i] = dot
-  end
-
-  local itemPanel = UI:NewPanel(frame, 120, 106, { .025, .05, .10, .88 })
-  itemPanel:SetPoint("TOPRIGHT", -30, -28)
+  -- WHAT ITEM -- top centre, where Mario Kart has always put it, and big enough
+  -- to read the icon in peripheral vision. It used to be a 120px box in the
+  -- corner with the words "NO ITEM" printed in it, which is a form field.
+  local itemPanel = UI:NewPanel(hud, HUD.item.w, HUD.item.h, HUD_PANEL)
+  itemPanel:SetPoint(HUD.item.point, HUD.item.x, HUD.item.y)
   self.itemPanel = itemPanel
   self.itemGlow = makeWash(itemPanel, "BACKGROUND", { 1, .82, .25, 1 })
   self.itemGlow:SetPoint("TOPLEFT", 3, -3)
   self.itemGlow:SetPoint("BOTTOMRIGHT", -3, 3)
   self.itemGlow:SetAlpha(0)
   self.itemIcon = itemPanel:CreateTexture(nil, "ARTWORK")
-  self.itemIcon:SetSize(46, 46)
-  self.itemIcon:SetPoint("TOP", 0, -9)
-  self.itemLabel = UI:NewText(itemPanel, "NO ITEM", 11, AK.COLORS.muted, "CENTER")
-  self.itemLabel:SetPoint("BOTTOMLEFT", 6, 8)
-  self.itemLabel:SetPoint("BOTTOMRIGHT", -6, 8)
+  self.itemIcon:SetSize(ITEM_ICON, ITEM_ICON)
+  self.itemIcon:SetPoint("CENTER", 0, 7)
+  -- An empty slot is a dim empty frame, not a caption. The label carries the
+  -- one thing an icon cannot: how many are left, and "FIRE!" when one is armed.
+  self.itemLabel = UI:NewText(itemPanel, "", 12, AK.COLORS.muted, "CENTER")
+  self.itemLabel:SetPoint("BOTTOMLEFT", 5, 9)
+  self.itemLabel:SetPoint("BOTTOMRIGHT", -5, 9)
 
-  local driftPanel = UI:NewPanel(frame, 260, 32, { .025, .05, .10, .88 })
-  driftPanel:SetPoint("BOTTOM", 0, 35)
+  -- THE CLOCK -- top right. Reference material: you look at it between corners,
+  -- never during one, so it gets the corner furthest from the racing line.
+  local clockPanel = UI:NewPanel(hud, HUD.clock.w, HUD.clock.h, HUD_PANEL)
+  clockPanel:SetPoint(HUD.clock.point, HUD.clock.x, HUD.clock.y)
+  self.clockPanel = clockPanel
+  -- Three rows, all right-aligned off the same edge. Sharing one row between a
+  -- left-aligned speed and a right-aligned split meant the two grew toward each
+  -- other and, on a long lap time, straight through each other.
+  self.timer = UI:NewText(clockPanel, "00:00.000", 22, { .95, .96, 1 }, "RIGHT")
+  self.timer:SetPoint("TOPRIGHT", -14, -8)
+  self.lapTime = UI:NewText(clockPanel, "", 11, AK.COLORS.muted, "RIGHT")
+  self.lapTime:SetPoint("TOPRIGHT", -14, -38)
+  self.speed = UI:NewText(clockPanel, "0 km/h", 13, AK.COLORS.lime, "RIGHT")
+  self.speed:SetPoint("TOPRIGHT", -14, -56)
+
+  -- WHAT PLACE -- bottom left, and by a wide margin the largest thing on the
+  -- screen. This is the single most Mario Kart element there is and it was a
+  -- 30pt string sharing a bar with the speedometer. No panel behind it: a plate
+  -- reads as an addon window, where bare outlined type reads as a game. A soft
+  -- dark halo does the legibility work a plate was doing.
+  self.placeGlow = makeTexture(hud, "BACKGROUND", { 0, 0, 0, 1 }, 0, "glow.tga")
+  self.placeGlow:SetSize(HUD.place.w, HUD.place.h)
+  self.placeGlow:SetPoint("BOTTOMLEFT", HUD.place.x - 46, HUD.place.y - 34)
+  self.placeGlow:SetAlpha(0.55)
+  self.position = UI:NewText(hud, "1ST", 58, AK.COLORS.gold, "LEFT")
+  self.position:SetPoint("BOTTOMLEFT", HUD.place.x, HUD.place.y + 20)
+  self.position:SetShadowColor(0, 0, 0, 1)
+  self.position:SetShadowOffset(2, -2)
+  self.positionOf = UI:NewText(hud, "/ 8", 14, AK.COLORS.muted, "LEFT")
+  self.positionOf:SetPoint("BOTTOMLEFT", HUD.place.x + 3, HUD.place.y)
+
+  -- THE MAP -- bottom right, mirroring the place readout. It used to spend a
+  -- fifth of its own height on a caption reading "TRACK MAP".
+  self.minimapPanel = UI:NewPanel(hud, HUD.map.w, HUD.map.h, HUD_PANEL)
+  self.minimap = self.minimapPanel
+  self.minimap:SetPoint(HUD.map.point, HUD.map.x, HUD.map.y)
+  self.mapRoute = {}
+  for i = 1, 48 do
+    local node = self.minimap:CreateTexture(nil, "ARTWORK")
+    node:SetTexture("Interface\\Buttons\\WHITE8x8")
+    node:SetVertexColor(.32, .44, .58, .95)
+    node:SetSize(5, 5)
+    self.mapRoute[i] = node
+  end
+  self.mapDots = {}
+  for i = 1, AK.MAX_RACERS do
+    local dot = self.minimap:CreateTexture(nil, "OVERLAY")
+    dot:SetTexture("Interface\\Buttons\\WHITE8x8")
+    dot:SetSize(8, 8)
+    self.mapDots[i] = dot
+  end
+
+  -- DRIFT CHARGE -- a thin bar low and centred, right under the kart, so it can
+  -- be read without moving your eyes off the corner you are drifting through.
+  -- It used to be a 260px plate with the words "DRIFT BOOST" printed across it
+  -- at all times, and "RELEASE FOR BOOST" while charging: a tutorial pinned to
+  -- the screen for the whole race. The bar shows the charge; the label now only
+  -- names the tier you have actually banked, which is the part you cannot infer.
+  local driftPanel = UI:NewPanel(hud, HUD.drift.w, HUD.drift.h, { .02, .04, .08, .78 })
+  driftPanel:SetPoint(HUD.drift.point, HUD.drift.x, HUD.drift.y)
   self.driftPanel = driftPanel
+  local driftInner = HUD.drift.h - 8
   self.driftFill = makeTexture(driftPanel, "ARTWORK", AK.COLORS.lime)
   self.driftFill:SetPoint("LEFT", 4, 0)
-  self.driftFill:SetHeight(24)
+  self.driftFill:SetHeight(driftInner)
   self.driftFill:SetWidth(0)
   self.driftGlow = makeWash(driftPanel, "ARTWORK", { 1, 1, 1, 1 }, 1)
   self.driftGlow:SetPoint("LEFT", 4, 0)
-  self.driftGlow:SetHeight(24)
+  self.driftGlow:SetHeight(driftInner)
   self.driftGlow:SetWidth(0)
   self.driftGlow:SetAlpha(0)
-  self.driftLabel = UI:NewText(driftPanel, "DRIFT BOOST", 11, AK.COLORS.gold, "CENTER")
-  self.driftLabel:SetAllPoints()
+  self.driftLabel = UI:NewText(driftPanel, "", 13, AK.COLORS.gold, "CENTER")
+  self.driftLabel:SetPoint("BOTTOM", driftPanel, "TOP", 0, 5)
+  -- Ticks at the three tier thresholds, so the bar reads as a ladder with rungs
+  -- rather than as a bar that changes colour for reasons.
   self.driftTicks = {}
-  for i = 1, 3 do
+  for i, stage in ipairs(DRIFT_TICKS) do
     local tick = makeTexture(driftPanel, "OVERLAY", { .08, .13, .20, 1 })
-    tick:SetSize(2, 24)
-    tick:SetPoint("LEFT", 63 * i + 3, 0)
+    tick:SetSize(2, driftInner)
+    tick:SetPoint("LEFT", 4 + DRIFT_TRACK * stage, 0)
     self.driftTicks[i] = tick
   end
 
-  self.trackName = UI:NewText(frame, "", 17, AK.COLORS.gold, "CENTER")
-  self.trackName:SetPoint("TOP", header, "BOTTOM", 0, -8)
-  self.shortcut = UI:NewText(frame, "", 12, { .9, .92, 1 }, "CENTER")
-  -- Clear of the button row, and width-bounded.
+  -- Surface and effect state, stacked under the place readout rather than over
+  -- the middle of the road. Centred above the drift meter it landed squarely on
+  -- the player's own kart, and the bigger the client the worse it got: the kart
+  -- is drawn in world space and grows with the resolution, so at 1440p "TURBO!"
+  -- was printed across the driver. Bottom left is empty, and the eye is already
+  -- there reading the position.
+  self.status = UI:NewText(hud, "", 15, AK.COLORS.muted, "LEFT")
+  self.status:SetPoint("BOTTOMLEFT", HUD.place.x + 3, HUD.place.y - 26)
+
+  -- Track identity, tucked under the lap block rather than centred in the road.
+  self.trackName = UI:NewText(hud, "", 13, { .72, .62, .40 }, "LEFT")
+  self.trackName:SetPoint("TOPLEFT", lapPanel, "BOTTOMLEFT", 3, -7)
+  -- The shortcut blurb, under the item box. It is race-start onboarding -- it
+  -- fades out once you are driving -- so it belongs where you are looking
+  -- before the lights go out, not across the bottom of the road.
   --
-  -- Centred on the drift meter with no width set, this grew outward from its
-  -- anchor until it ran under the BRAKE and GAS buttons flanking the meter --
-  -- Netherstorm's "SHORTCUT: Blink through a portal at maximum speed" was cut
-  -- off mid-word by the BRAKE button. A fontstring with no width has no reason
-  -- to stop, so it needs both a higher anchor and a bound.
-  self.shortcut:SetPoint("BOTTOM", driftPanel, "TOP", 0, 26)
-  self.shortcut:SetWidth(620)
+  -- Width-bounded, whatever else moves. Centred on the drift meter with no
+  -- width set, it grew outward from its anchor until it ran under the BRAKE and
+  -- GAS buttons flanking the meter, and Netherstorm's "SHORTCUT: Blink through
+  -- a portal at maximum speed" was cut off mid-word. A fontstring with no width
+  -- has no reason to stop.
+  self.shortcut = UI:NewText(hud, "", 12, { .9, .92, 1 }, "CENTER")
+  self.shortcut:SetPoint("TOP", itemPanel, "BOTTOM", 0, -10)
+  self.shortcut:SetWidth(HUD_DESIGN_W * 0.44)
   -- Announcements sat at -250, which is exactly where the player's own kart is
   -- drawn -- and a model frame paints over its parent's fontstrings, so every
   -- "ITEM ACQUIRED" and "BOOST!" was rendering behind the driver. They now live
   -- in a layer above every model, high on screen where nothing can cover them.
-  self.hudLayer = CreateFrame("Frame", nil, frame)
+  -- A child of the SCALED container, so the countdown, the lap banners and the
+  -- FINISHED card are the same size relative to the screen as everything else.
+  -- Frame level is absolute within a strata, so the explicit level below still
+  -- puts it above the field regardless of who its parent is.
+  self.hudLayer = CreateFrame("Frame", nil, hud)
   self.hudLayer:SetAllPoints()
   -- Above the whole depth-sorted field, which tops out at +382.
   self.hudLayer:SetFrameLevel(frame:GetFrameLevel() + 420)
@@ -970,16 +1099,20 @@ function RaceUI:Build()
     self.objectFrames[i] = object
   end
 
-  -- Grouped in one frame so the whole control bar can be hidden at once.
-  self.controlBar = CreateFrame("Frame", nil, frame)
+  -- Grouped in one frame so the whole control bar can be hidden at once. On the
+  -- scaled HUD container, so the row is the same fraction of the screen at any
+  -- resolution -- it used to span a fixed 816px, which simply does not fit on a
+  -- 800-wide window.
+  self.controlBar = CreateFrame("Frame", nil, hud)
   self.controlBar:SetAllPoints()
   -- 52px could not fit "BRAKE" or "RIGHT" at the button font, so the two most
   -- important controls on screen read "BRA..." and "RIG...". Wider, with a
   -- slightly smaller label, and the spacing opened to match so nothing touches.
-  local function control(text, x, y, down, up)
-    local button = UI:NewButton(self.controlBar, text, 62, 44, function() end)
+  local CTRL_W, CTRL_GAP = 68, 6
+  local function control(text, x, down, up)
+    local button = UI:NewButton(self.controlBar, text, CTRL_W, HUD.controls.h, function() end)
     button.label:SetFont(STANDARD_TEXT_FONT, 13, "OUTLINE")
-    button:SetPoint("BOTTOM", x, y)
+    button:SetPoint("BOTTOM", x, HUD.controls.y)
     button:SetScript("OnMouseDown", down)
     button:SetScript("OnMouseUp", up or function() end)
     return button
@@ -987,60 +1120,49 @@ function RaceUI:Build()
   -- Steering on the left hand, throttle and actions on the right, mirroring the
   -- keyboard layout. There was previously no on-screen throttle at all, so a
   -- player driving with the mouse simply could not move.
-  control("LEFT", -371, 42, function() AK.Race:SetControl("left", true) end, function() AK.Race:SetControl("left", false) end)
-  control("RIGHT", -305, 42, function() AK.Race:SetControl("right", true) end, function() AK.Race:SetControl("right", false) end)
-  local brake = control("BRAKE", 185, 42, function() AK.Race:SetControl("brake", true) end, function() AK.Race:SetControl("brake", false) end)
+  --
+  -- The two clusters are now mirrored about the centre and derived from the
+  -- row's own width, so the drift meter sits in the gap between them instead of
+  -- the row being two hand-placed groups with a 490px hole in the middle.
+  local edge = HUD.controls.w * 0.5 - CTRL_W * 0.5
+  local pitch = CTRL_W + CTRL_GAP
+  control("LEFT", -edge, function() AK.Race:SetControl("left", true) end, function() AK.Race:SetControl("left", false) end)
+  control("RIGHT", -edge + pitch, function() AK.Race:SetControl("right", true) end, function() AK.Race:SetControl("right", false) end)
+  local brake = control("BRAKE", edge - pitch * 3, function() AK.Race:SetControl("brake", true) end, function() AK.Race:SetControl("brake", false) end)
   brake:SetRestStyle({ .26, .10, .10, .95 }, AK.COLORS.danger)
-  local gas = control("GAS", 251, 42, function() AK.Race:SetControl("accelerate", true) end, function() AK.Race:SetControl("accelerate", false) end)
+  local gas = control("GAS", edge - pitch * 2, function() AK.Race:SetControl("accelerate", true) end, function() AK.Race:SetControl("accelerate", false) end)
   gas:SetRestStyle({ .10, .24, .12, .95 }, AK.COLORS.lime)
-  control("DRIFT", 317, 42, function() AK.Race:SetControl("drift", true) end, function() AK.Race:SetControl("drift", false) end)
-  control("ITEM", 383, 42, function() AK.Race:UseItem() end)
+  control("DRIFT", edge - pitch, function() AK.Race:SetControl("drift", true) end, function() AK.Race:SetControl("drift", false) end)
+  control("ITEM", edge, function() AK.Race:UseItem() end)
 
-  -- A legend, because every control above also has a key and none of them were
-  -- discoverable. Sits under the buttons so it never covers the road.
   -- The name of the corner you are in. Rally-style, and the cheapest possible
   -- way to turn a sequence of bends into a place with landmarks you remember.
   -- Stacked UNDER the track name rather than pinned 86px from the top edge.
   -- That fixed offset took no account of the header's height, so the corner
   -- callout and the track name -- both gold, both centred -- were drawn on top
   -- of each other every time a corner was entered.
-  self.sectionLabel = UI:NewText(self.hudLayer, "", 15, AK.COLORS.gold, "CENTER")
-  self.sectionLabel:SetPoint("TOP", self.trackName, "BOTTOM", 0, -3)
+  self.sectionLabel = UI:NewText(self.hudLayer, "", 17, AK.COLORS.gold, "LEFT")
+  self.sectionLabel:SetPoint("TOPLEFT", self.trackName, "BOTTOMLEFT", 0, -4)
   self.sectionLabel:SetShadowColor(0, 0, 0, 1)
   self.sectionLabel:SetShadowOffset(1, -1)
 
+  -- A legend, because every control above also has a key and none of them were
+  -- discoverable. Sits under the buttons so it never covers the road.
   self.controlHint = UI:NewText(self.controlBar,
     "W / UP  GAS      S / DOWN  BRAKE      A D  or  LEFT RIGHT  STEER      "
     .. "SPACE  DRIFT      SHIFT  ITEM      ESC  PAUSE", 11, AK.COLORS.muted, "CENTER")
-  self.controlHint:SetPoint("BOTTOM", 0, 20)
+  self.controlHint:SetPoint("BOTTOM", 0, 8)
 
   -- Always-visible exit. The race frame swallows keyboard input, so a mouse
   -- route out has to exist no matter what state the simulation is in.
-  local quit = UI:NewButton(frame, "QUIT", 74, 26, function() AK.Race:Stop(true) end)
-  quit:SetPoint("TOPRIGHT", -30, -142)
+  local quit = UI:NewButton(hud, "QUIT", HUD.quit.w, HUD.quit.h, function() AK.Race:Stop(true) end)
+  quit:SetPoint(HUD.quit.point, HUD.quit.x, HUD.quit.y)
   quit:SetRestStyle({ .28, .09, .09, .95 }, AK.COLORS.danger)
-  local tune = UI:NewButton(frame, "TUNE", 74, 26, function() AK.Workshop:Toggle() end)
-  tune:SetPoint("TOPRIGHT", -30, -172)
-  -- The race beats can only be judged while the race frame is up -- and the
-  -- frame swallows keyboard input, so there is no chat line to type a slash
-  -- command into. A button is the only way to reach them from inside a race.
-  local beats = UI:NewButton(frame, "BEATS", 74, 26, function() self:PlayBeats() end)
-  beats:SetPoint("TOPRIGHT", -30, -202)
-  beats.tooltip = "Play every race moment in sequence -- start lights, splits, final lap, finish -- so they can be seen and screenshotted on demand."
-  local aiReport = UI:NewButton(frame, "AI", 74, 26, function() AK.AI:Report() end)
-  aiReport:SetPoint("TOPRIGHT", -30, -232)
-  aiReport.tooltip = "Live AI telemetry: drifts, braking, mistakes and catch-up assistance, per opponent."
-  -- These are children of the race FRAME, not of any HUD region, so nothing in
-  -- SetHudShown's list covered them and the stack stayed on screen behind the
-  -- main menu during attract mode. Collect them so it can.
-  --
-  -- QUIT IS DELIBERATELY NOT IN THIS LIST. It is the always-visible exit (see
-  -- above), and attract mode is still a running simulation: hiding it left the
-  -- world rendering with no mouse route out, so closing the menu from the
-  -- settings page stranded the player on a live track with no interface at all.
-  -- Only the race-only tools may be hidden here.
-  self.raceButtons = { tune, beats, aiReport }
-
+  -- TUNE, BEATS and AI used to be a column of buttons stacked down the right
+  -- edge for the whole race -- three developer tools permanently occupying the
+  -- screen you are trying to look through. They live on the pause panel now,
+  -- which is one key away and is where you go when you are not driving.
+  self.raceButtons = {}
   local pause = CreateFrame("Frame", nil, frame)
   pause:SetAllPoints()
   -- Above the karts, which climb to +308 for depth sorting.
@@ -1049,7 +1171,7 @@ function RaceUI:Build()
   self.pause = pause
   local dim = makeTexture(pause, "BACKGROUND", { 0, 0, 0, .6 })
   dim:SetAllPoints()
-  local pausePanel = UI:NewPanel(pause, 320, 190, { .045, .075, .125, .98 })
+  local pausePanel = UI:NewPanel(pause, 320, 254, { .045, .075, .125, .98 })
   pausePanel:SetPoint("CENTER", 0, -30)
   local pauseTitle = UI:NewText(pausePanel, "PAUSED", 28, AK.COLORS.gold, "CENTER")
   pauseTitle:SetPoint("TOP", 0, -22)
@@ -1058,6 +1180,29 @@ function RaceUI:Build()
   local abandon = UI:NewButton(pausePanel, "QUIT TO MENU", 240, 40, function() AK.Race:Stop(true) end)
   abandon:SetPoint("TOP", 0, -123)
   abandon:SetRestStyle({ .28, .09, .09, .95 }, AK.COLORS.danger)
+  -- The race tools, rehomed off the racing screen. They can only be judged
+  -- while the race frame is up -- the frame swallows keyboard input, so there
+  -- is no chat line to type a slash command into -- but that is an argument for
+  -- them being reachable, not for them sitting on the track for the whole race.
+  local tools = {
+    { "TUNE", function() AK.Workshop:Toggle() end,
+      "Camera, feel, audio and difficulty, live, while the race runs." },
+    { "BEATS", function() self:PlayBeats() end,
+      "Play every race moment in sequence -- start lights, splits, final lap, finish -- so they can be seen and screenshotted on demand." },
+    { "AI", function() AK.AI:Report() end,
+      "Live AI telemetry: drifts, braking, mistakes and catch-up assistance, per opponent." },
+  }
+  for i, entry in ipairs(tools) do
+    local tool = UI:NewButton(pausePanel, entry[1], 76, 28, entry[2])
+    tool:SetPoint("TOP", (i - 2) * 80, -175)
+    tool.tooltip = entry[3]
+  end
+
+  self:LayoutHud()
+  -- The race frame is pinned to UIParent, so this fires whenever the client is
+  -- resized or the master UI scale changes -- the two things that used to leave
+  -- the HUD at the wrong size until a reload.
+  frame:SetScript("OnSizeChanged", function() RaceUI:LayoutHud() end)
 
   frame:SetScript("OnKeyDown", function(_, key) AK.Race:OnKey(key, true) end)
   frame:SetScript("OnKeyUp", function(_, key) AK.Race:OnKey(key, false) end)
@@ -1093,6 +1238,28 @@ local SKYLINE = {
 
 --- Re-anchor everything pinned to the horizon. Called whenever the tuned
 --- horizon moves, which is the one value that changes static layout.
+--- Fit the whole HUD to the screen.
+---
+--- One SetScale on one container, rather than a screen fraction threaded
+--- through fifty offsets. The container is pinned to UIParent, so scaling it
+--- leaves its corners on the screen's corners and grows everything anchored to
+--- them -- which is exactly the behaviour wanted and exactly what a per-widget
+--- rewrite would have had to reimplement by hand.
+---
+--- Clamped at both ends: below ~0.6 the type stops being legible at all, and
+--- above ~1.7 the HUD starts eating the road on an ultrawide, where the height
+--- is the binding constraint and the extra width should become view, not chrome.
+function RaceUI:LayoutHud()
+  if not self.hud then return end
+  local frame = self.frame
+  local width, height = frame:GetWidth(), frame:GetHeight()
+  if not width or width <= 0 or not height or height <= 0 then return end
+  local fit = math.min(width / HUD_DESIGN_W, height / HUD_DESIGN_H)
+  local dial = (self.T and self.T.hudScale or 100) / 100
+  self.hudFit = AK.Math.Clamp(fit, 0.60, 1.70) * AK.Math.Clamp(dial, 0.5, 2.0)
+  self.hud:SetScale(self.hudFit)
+end
+
 function RaceUI:LayoutHorizon(horizon)
   self.appliedHorizon = horizon
   local frame = self.frame
@@ -1261,6 +1428,7 @@ function RaceUI:Show(race)
   wipe(self.particles)
   wipe(self.previous)
   self:LayoutHorizon(self.T.horizon)
+  self:LayoutHud()
   self:ApplyTrackPalette(race.track)
   self.roulette, self.lastItem = nil, race.player and race.player.item or nil
   -- Only name the theme when it adds something. "Netherstorm Turbo Circuit  /
@@ -1315,8 +1483,10 @@ function RaceUI:SetHudShown(shown)
   self.hudShown = shown
   self:SetModelsEnabled(shown)
   for _, region in ipairs({ self.hudLayer, self.tagLayer, self.minimapPanel,
-    self.headerPanel, self.itemPanel, self.driftPanel, self.controlBar,
-    self.trackName, self.shortcut, self.countdown, self.lightRig }) do
+    self.headerPanel, self.clockPanel, self.itemPanel, self.driftPanel,
+    self.placeGlow, self.position, self.positionOf, self.status,
+    self.controlBar, self.trackName, self.shortcut, self.countdown,
+    self.lightRig }) do
     if region then region:SetShown(shown) end
   end
   for _, button in ipairs(self.raceButtons or {}) do button:SetShown(shown) end
@@ -1390,7 +1560,9 @@ end
 --- Draw the circuit's real plan-view shape. This used to be a fixed ellipse
 --- with the centreline offset added on top, which drew the same ring for every
 --- track and now overflows the panel entirely at real corner amplitudes.
-local MAP_RADIUS = 46
+-- Half the span the route drawing may use inside the map panel, derived from
+-- the panel rather than fixed at 46 against a 128px box that no longer exists.
+local MAP_RADIUS = HUD.map.w * 0.36
 
 function RaceUI:BuildMinimapRoute(track)
   local count = #self.mapRoute
@@ -1402,10 +1574,12 @@ function RaceUI:BuildMinimapRoute(track)
       x, y = x * MAP_RADIUS * 2, y * MAP_RADIUS * 2
     else
       local angle = fraction * math.pi * 2 - math.pi * .5
-      x, y = math.cos(angle) * 38, math.sin(angle) * 27
+      x, y = math.cos(angle) * MAP_RADIUS, math.sin(angle) * MAP_RADIUS * 0.71
     end
     node:ClearAllPoints()
-    node:SetPoint("CENTER", self.minimap, "CENTER", x, y - 7)
+    -- Dead centre. The old -7 shift made room for a "TRACK MAP" caption that
+    -- the panel no longer carries, so the route sat low in its own box.
+    node:SetPoint("CENTER", self.minimap, "CENTER", x, y)
     node:Show()
   end
 end
@@ -1414,10 +1588,10 @@ end
 function RaceUI:MapPosition(track, distance)
   if track.mapPath then
     local x, y = AK.TrackBuilder:MapPoint(track, distance)
-    return x * MAP_RADIUS * 2, y * MAP_RADIUS * 2 - 7
+    return x * MAP_RADIUS * 2, y * MAP_RADIUS * 2
   end
   local angle = (distance % track.length) / track.length * math.pi * 2 - math.pi * .5
-  return math.cos(angle) * 38, math.sin(angle) * 27 - 7
+  return math.cos(angle) * MAP_RADIUS, math.sin(angle) * MAP_RADIUS * 0.71
 end
 
 --- Banner announcement. `icon` gives it a matching item icon, which is what
@@ -1883,6 +2057,7 @@ function RaceUI:RenderSky(race, camX)
   local screenW = self.halfWidth * 2
   local screenH = self.halfHeight * 2
   local grassColor = race.track.color or { .16, .40, .18 }
+  local glow = race.track.glow or { 1, .93, .72 }
   local light = (self.light or 1) * self.T.nightBoost
   local drift = -camX * 6
 
@@ -1940,31 +2115,46 @@ function RaceUI:RenderSky(race, camX)
     self.ring:SetAlpha(0.55)
   end
 
+  -- Aerial perspective on the near wall. The old code made far trees DARKER,
+  -- which raises their contrast against a pale horizon -- the opposite of what
+  -- distance does, and why the back row read as a stencil cut out of the sky.
+  -- Distance washes a silhouette toward the colour of the air in front of it,
+  -- so that is what this does, mixing toward the horizon between sky and glow.
+  local wash = {
+    (skyTint[1] * 0.6 + glow[1] * 0.4) * light,
+    (skyTint[2] * 0.6 + glow[2] * 0.4) * light,
+    (skyTint[3] * 0.6 + glow[3] * 0.4) * light,
+  }
   for i, tree in ipairs(self.trees) do
-    local x = ((i * slice + treeDrift) % spread) - spread * .5
-    -- Deterministic pseudo-noise so the skyline is stable frame to frame.
-    local noise = math.sin(i * 12.9898) * 43758.5453
-    noise = noise - math.floor(noise)
-    -- Alternate rows sit lower and darker, giving the skyline depth. All
-    -- heights are fractions of the screen, never absolute pixels.
-    local back = (i % 3 == 0)
+    local seed = self.treeSeed[i]
+    -- The offset belongs to the SLOT, not to a position, so a tree keeps its
+    -- own spacing as the row wraps: irregular, but it never crawls or shuffles.
+    local x = ((i * slice + seed.x * slice * 0.9 + treeDrift) % spread) - spread * .5
+    -- Depth is continuous rather than "every third one is a back row". Two
+    -- discrete rows is still a pattern, and the eye finds a pattern instantly.
+    local depth = seed.d
     tree:ClearAllPoints()
-    local height = (spirey and (0.10 + noise * 0.20) or (0.042 + noise * 0.075))
-      * screenH * self.T.treeHeight
-    local dip = back and screenH * 0.019 or screenH * 0.006
-    tree:SetPoint("BOTTOM", self.frame, "CENTER", x, horizon - dip)
-    tree:SetSize(height * (spirey and 0.26 or 0.5), height * (back and (spirey and 0.72 or 0.82) or 1))
-    local tone = (back and (spirey and 0.42 or 0.62) or (spirey and 0.66 or 0.92)) * light
+    -- All heights are fractions of the screen, never absolute pixels.
+    local height = (spirey and (0.085 + seed.h * 0.240) or (0.034 + seed.h * 0.105))
+      * screenH * self.T.treeHeight * (1 - depth * 0.34)
+    tree:SetPoint("BOTTOM", self.frame, "CENTER", x, horizon - screenH * (0.004 + depth * 0.017))
+    tree:SetSize(height * (spirey and 0.26 or 0.5) * (0.80 + seed.w * 0.44), height)
+    local tone = (spirey and 0.68 or 0.92) * (1 - depth * 0.12) * light
+    local r, g, b
     if oribos then
-      tree:SetVertexColor(tone * 0.80, tone * 0.70, tone * 1.15, 1)
+      r, g, b = tone * 0.80, tone * 0.70, tone * 1.15
     elseif treeTint then
-      tree:SetVertexColor(tone * treeTint[1], tone * treeTint[2], tone * treeTint[3], 1)
+      r, g, b = tone * treeTint[1], tone * treeTint[2], tone * treeTint[3]
     else
-      tree:SetVertexColor(tone * 0.8, tone, tone * 0.86, 1)
+      r, g, b = tone * 0.8, tone, tone * 0.86
     end
+    local haze = depth * 0.40
+    tree:SetVertexColor(
+      r + (wash[1] - r) * haze,
+      g + (wash[2] - g) * haze,
+      b + (wash[3] - b) * haze, 1)
   end
 
-  local glow = race.track.glow or { 1, .93, .72 }
   -- Enough haze to soften the horizon seam. Too little and ground meets sky on
   -- a hard cut line, which is the strongest "flat 2D" tell in the scene.
   self.haze:SetVertexColor(glow[1] * .8, glow[2] * .8, glow[3] * .85, .30)
@@ -1983,9 +2173,13 @@ function RaceUI:RenderSky(race, camX)
     ground[1] * .28 + hazeMix[1] * .72, ground[2] * .28 + hazeMix[2] * .72, ground[3] * .28 + hazeMix[3] * .72, 1)
 end
 
---- Drive-through arches. Same rolling-window trick as the posts, but the quad
---- keeps growing until it engulfs the screen, which is what selling "you went
---- under that" costs: one texture and honest projection.
+--- Drive-through arches. Same rolling-window trick as the posts.
+---
+--- This used to let the quad grow until it engulfed the screen, on the argument
+--- that engulfing you is what sells "you went under that". Rendered, it does
+--- not: a billboard cannot pass overhead, so all the growth buys is two hard
+--- vertical bars pinned to the edges of the display. It is dropped at 6m
+--- instead -- see the note at the near cutoff below.
 function RaceUI:RenderArches(race, camX, camZ)
   local spacing = race.track.archSpacing
   if not spacing then
@@ -2545,8 +2739,19 @@ function RaceUI:RenderRoad(race, player)
   local roadColor = track.road or { .34, .34, .38 }
   local grassColor = track.color or { .16, .40, .18 }
   local light = (self.light or 1) * tuning.nightBoost
-  -- Brightened so the ground texture actually shows through the tint.
-  local vergeColor = { grassColor[1] * 2.3 + .06, grassColor[2] * 2.1 + .07, grassColor[3] * 1.9 + .05 }
+  -- The verge has to be lifted well above the track's base colour or the grass
+  -- texture has nothing to show through. The old lift was a per-channel
+  -- multiply (2.3/2.1/1.9), which brightens by SATURATING: Elwynn's green came
+  -- out at (0.50, 0.97, 0.43) -- a 2:1 channel ratio that reads as poster paint
+  -- rather than as turf, and it did the same to every other track's ground.
+  -- Lift toward the colour's own luminance instead: same brightness, far less
+  -- scream, hue preserved so the tracks still look nothing like each other.
+  local grassLum = grassColor[1] * 0.30 + grassColor[2] * 0.59 + grassColor[3] * 0.11
+  local vergeColor = {
+    (grassColor[1] * 0.58 + grassLum * 0.42) * 2.15 + .05,
+    (grassColor[2] * 0.58 + grassLum * 0.42) * 2.15 + .05,
+    (grassColor[3] * 0.58 + grassLum * 0.42) * 2.15 + .05,
+  }
 
   -- Derive the nearest sampled distance from the camera rather than fixing it:
   -- any tuned camera height or horizon must still put the first segment below
@@ -2563,6 +2768,39 @@ function RaceUI:RenderRoad(race, player)
   -- Under cover the whole scene loses its daylight, which is most of what
   -- sells a tunnel as a place rather than as a differently textured road.
   light = light * (1 - camDepth * 0.48)
+
+  -- Aerial perspective on the ground plane.
+  --
+  -- Distance used to be expressed only as `fog`, a brightness scale -- and then
+  -- both ground tints added the brightness straight back: the road's
+  -- `+ (1 - fog) * 1.1` term actually made the FAR road BRIGHTER than the road
+  -- under your own bumper, and the verge's `+ (1 - fog) * 0.9` left grass at
+  -- the horizon 8% darker than grass at your front wheels. So the two surfaces
+  -- that fill most of the screen carried no depth cue whatsoever, which is most
+  -- of why the world read as painted flats no matter what else was fixed.
+  --
+  -- What distance actually does is drain contrast and pull hue toward the
+  -- colour of the air, so that is what this does: lerp the lit surface toward
+  -- the horizon. It is the same wash the treeline and the sky already use, so
+  -- ground, verge and skyline now recede together instead of arguing.
+  local skyLow = track.skyLow or { .8, .88, .96 }
+  local trackGlow = track.glow or { 1, .93, .72 }
+  local haze = {
+    (skyLow[1] * 0.58 + trackGlow[1] * 0.42) * light,
+    (skyLow[2] * 0.58 + trackGlow[2] * 0.42) * light,
+    (skyLow[3] * 0.58 + trackGlow[3] * 0.42) * light,
+  }
+  -- Under cover there is no sky to wash toward; the tunnel fill carries depth
+  -- there instead. Capped so the far road never washes out entirely -- you
+  -- still have to be able to read where it goes.
+  local hazeCap = AK.Math.Clamp(0.62 * tuning.fogStrength, 0, 0.72) * (1 - camDepth)
+  --- Lit surface colour blended toward the horizon. Returns r, g, b, a so it
+  --- drops straight into SetVertexColor.
+  local function aerial(r, g, b, lit, mix)
+    r, g, b = r * lit, g * lit, b * lit
+    return r + (haze[1] - r) * mix, g + (haze[2] - g) * mix, b + (haze[3] - b) * mix, 1
+  end
+
   local nearestTunnelBand
 
   for i = 0, SEGMENTS - 1 do
@@ -2595,6 +2833,10 @@ function RaceUI:RenderRoad(race, player)
       -- Distance fog, scaled by the track's ambient light so night circuits go
       -- dark into the distance instead of staying flatly lit.
       local fog = AK.Math.Clamp(1 - (dz / FAR_Z) * tuning.fogStrength, 0.22, 1) * light
+      -- How much air is between the camera and this strip, 0 at the bumper.
+      -- Slightly super-linear so the near half of the road stays crisp and the
+      -- wash concentrates where the depth cue is actually needed.
+      local mix = hazeCap * (AK.Math.Clamp(dz / FAR_Z, 0, 1) ^ 0.85)
 
       -- Subtle banding. High contrast turned the field into a striped lawn.
       -- World-locked UVs. Tying the texture to metres rather than to pixels is
@@ -2613,7 +2855,8 @@ function RaceUI:RenderRoad(race, player)
       -- The verge is lifted well above the track's base colour. Tinting the
       -- texture by the raw colour produced a flat slab with no visible detail
       -- at all -- the ground read as void rather than as terrain.
-      strip.grass:SetVertexColor(unpack(shade(vergeColor, (dark and tuning.grassContrast or 1.0) * fog + (1 - fog) * 0.9)))
+      strip.grass:SetVertexColor(aerial(vergeColor[1], vergeColor[2], vergeColor[3],
+        (dark and tuning.grassContrast or 1.0) * light, mix))
       strip.grass:Show()
 
       strip.road:ClearAllPoints()
@@ -2623,16 +2866,19 @@ function RaceUI:RenderRoad(race, player)
         -- Hazard-striped launch surface: unmistakable, and it scrolls at you.
         local band = (math.floor(segZ / 2.2) % 2 == 0)
         local hot = band and 1.0 or 0.55
-        strip.road:SetVertexColor(1.0 * fog * hot, 0.74 * fog * hot, 0.16 * fog * hot)
+        strip.road:SetVertexColor(aerial(1.0, 0.74, 0.16, hot * light, mix))
       else
-        strip.road:SetVertexColor(unpack(shade(roadColor, (dark and 0.96 or 1.0) * fog + (1 - fog) * 1.1)))
+        strip.road:SetVertexColor(aerial(roadColor[1], roadColor[2], roadColor[3],
+          (dark and 0.96 or 1.0) * light, mix))
       end
       strip.road:Show()
 
       strip.shade:ClearAllPoints()
       strip.shade:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
       strip.shade:SetSize(math.max(2, midHalf * 2), height)
-      strip.shade:SetAlpha(0.85 * fog)
+      -- The verge darkening is a property of the surface, so it washes out
+      -- with the surface rather than staying crisp on a hazed-out far road.
+      strip.shade:SetAlpha(0.85 * (1 - mix))
       strip.shade:Show()
 
       -- Rumble width is capped: proportional-only made the near strips into
@@ -2651,7 +2897,7 @@ function RaceUI:RenderRoad(race, player)
         local flash = 0.65 + 0.35 * math.sin(race.elapsed * 12)
         rr, rg, rb = 1.0 * flash, 0.85 * flash, 0.25 * flash
       end
-      rr, rg, rb = rr * fog, rg * fog, rb * fog
+      rr, rg, rb = aerial(rr, rg, rb, light, mix)
       strip.rumbleLeft:ClearAllPoints()
       strip.rumbleLeft:SetPoint("BOTTOM", self.frame, "CENTER", midX - (midHalf + rumbleWidth * .5), previousY)
       strip.rumbleLeft:SetSize(rumbleWidth, height)
@@ -2667,7 +2913,8 @@ function RaceUI:RenderRoad(race, player)
         strip.lane:ClearAllPoints()
         strip.lane:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
         strip.lane:SetSize(AK.Math.Clamp(midHalf * 0.04, 1, 14), height)
-        strip.lane:SetVertexColor(.96 * fog, .95 * fog, .82 * fog, .75)
+        local lr, lg, lb = aerial(.96, .95, .82, light, mix)
+        strip.lane:SetVertexColor(lr, lg, lb, .75)
         strip.lane:Show()
       else
         strip.lane:Hide()
@@ -3662,6 +3909,12 @@ function RaceUI:Render(race)
   -- Visual easing uses the real frame delta; the simulation uses fixed slices.
   local dt = race.renderDelta or race.delta
   if self.appliedHorizon ~= tuning.horizon then self:LayoutHorizon(tuning.horizon) end
+  -- Same deal for the HUD dial: nudging it in the tuning panel during a race
+  -- should move the HUD while you watch, not on the next reload.
+  if self.appliedHudScale ~= tuning.hudScale then
+    self.appliedHudScale = tuning.hudScale
+    self:LayoutHud()
+  end
 
   local speedRatio = AK.Math.Clamp(player.speed / player.maxSpeed, 0, 1.3)
   -- Lens widens with speed and boost. Cheap, and it is most of what makes going
@@ -3814,7 +4067,7 @@ function RaceUI:Render(race)
     base[2] + (1 - base[2]) * pulseTint,
     base[3] + (1 - base[3]) * pulseTint)
   self.positionOf:SetText("/ " .. #race.vehicles)
-  self.lap:SetText("LAP " .. math.min(player.lap, race.laps) .. " / " .. race.laps)
+  self.lap:SetText(math.min(player.lap, race.laps) .. " / " .. race.laps)
   for i, pip in ipairs(self.lapPips) do
     pip:SetShown(i <= race.laps)
     pip:SetVertexColor(unpack(i < player.lap and AK.COLORS.gold or { .25, .32, .42, 1 }))
@@ -3824,8 +4077,18 @@ function RaceUI:Render(race)
   self.speed:SetText(math.floor(player.speed * 2.2) .. " km/h")
   self.speed:SetTextColor(unpack(player.boostTime > 0 and AK.COLORS.gold or AK.COLORS.lime))
   local slowed = (player.slow or 0) > 0
-  self.status:SetText(slowed and "SLOWED" or (player.offroad and "OFF ROAD" or (player.boostTime > 0 and "TURBO ACTIVE" or "")))
+  self.status:SetText(slowed and "SLOWED" or (player.offroad and "OFF ROAD" or (player.boostTime > 0 and "TURBO!" or "")))
   self.status:SetTextColor(unpack(slowed and AK.COLORS.danger or (player.offroad and AK.COLORS.gold or AK.COLORS.lime)))
+
+  -- The keyboard legend and the shortcut blurb are onboarding, not HUD. They
+  -- are exactly what you want while the lights are counting down, and pure
+  -- clutter across the bottom of the screen for the other ninety seconds. So
+  -- they fade out once you are actually driving, and come back whenever the
+  -- race is not running -- the countdown, a pause, the moment after the flag.
+  local settled = race.state == AK.RACE_STATES.RACING and race.elapsed > 6
+  local onboarding = settled and AK.Math.Clamp(1 - (race.elapsed - 6) / 1.5, 0, 1) or 1
+  self.controlHint:SetAlpha(onboarding)
+  self.shortcut:SetAlpha(onboarding)
 
   -- Item roulette: picking up a box spins the slot before locking in, which is
   -- half the fun of getting one.
@@ -3848,13 +4111,14 @@ function RaceUI:Render(race)
     self.itemIcon:SetDesaturated(false)
     self.itemLabel:SetText("???")
     self.itemGlow:SetAlpha(0.30)
-    self.itemIcon:SetSize(46 + 6 * math.sin(race.elapsed * 24), 46 + 6 * math.sin(race.elapsed * 24))
+    local pop = ITEM_ICON + 9 * math.sin(race.elapsed * 24)
+    self.itemIcon:SetSize(pop, pop)
   else
     if self.roulette then
       self.roulette = nil
       self:Flash(AK.COLORS.gold, .08)
     end
-    self.itemIcon:SetSize(46, 46)
+    self.itemIcon:SetSize(ITEM_ICON, ITEM_ICON)
     -- The slot shows what is banked; a deployed item shows as "READY - FIRE".
     local slot = player.item and AK.Items[player.item]
     local held = player.held and AK.Items[player.held]
@@ -3869,11 +4133,14 @@ function RaceUI:Render(race)
       -- Through the helper rather than reimplementing it here: AK:ItemCount was
       -- the documented way to ask, and this was the only place that asked.
       local count = slot and AK:ItemCount(player) or 1
-      self.itemLabel:SetText(count > 1 and (shown.name .. "  x" .. count) or shown.name)
-      self.itemLabel:SetTextColor(unpack(count > 1 and AK.COLORS.gold or AK.COLORS.muted))
+      -- The icon already says WHAT it is. The label carries the only thing an
+      -- icon cannot: how many are left.
+      self.itemLabel:SetText(count > 1 and ("x" .. count) or "")
+      self.itemLabel:SetTextColor(unpack(AK.COLORS.gold))
     else
-      self.itemLabel:SetText("NO ITEM")
-      self.itemLabel:SetTextColor(unpack(AK.COLORS.muted))
+      -- An empty box is an empty box. It used to print "NO ITEM" in it, which
+      -- is a form field telling you what you can already see.
+      self.itemLabel:SetText("")
     end
     self.itemGlow:SetAlpha(shown and (0.14 + 0.12 * math.sin(race.elapsed * (held and 11 or 6))) or 0)
   end
@@ -3902,15 +4169,25 @@ function RaceUI:Render(race)
     self.lapTime:SetText("")
   end
 
-  local charge = AK.Math.Clamp(player.driftCharge / 2.5, 0, 1)
+  local charge = AK.Math.Clamp(player.driftCharge / DRIFT_MAX, 0, 1)
   local chargeColor = driftColor(player.driftCharge)
-  self.driftFill:SetWidth(252 * charge)
+  self.driftFill:SetWidth(math.max(0.01, DRIFT_TRACK * charge))
   self.driftFill:SetVertexColor(chargeColor[1], chargeColor[2], chargeColor[3], 1)
-  self.driftGlow:SetWidth(252 * charge)
+  self.driftGlow:SetWidth(math.max(0.01, DRIFT_TRACK * charge))
   self.driftGlow:SetVertexColor(chargeColor[1], chargeColor[2], chargeColor[3], 1)
   self.driftGlow:SetAlpha(charge > 0 and (0.18 + 0.22 * math.sin(race.elapsed * 9)) * charge or 0)
-  self.driftLabel:SetText(player.drifting and "DRIFTING" or (player.driftCharge > 0 and "RELEASE FOR BOOST" or "DRIFT BOOST"))
-  for i, tick in ipairs(self.driftTicks) do tick:SetVertexColor(unpack(player.driftCharge >= i * .75 and AK.COLORS.gold or { .08, .13, .20, 1 })) end
+  -- The tier you have BANKED, in the tier's own colour -- not an instruction.
+  -- "DRIFT BOOST" and "RELEASE FOR BOOST" were a tutorial pinned to the screen
+  -- for the whole race; what you actually cannot see is which rung you are on.
+  local tier = driftTier(player.driftCharge)
+  self.driftLabel:SetText(DRIFT_TIER_NAMES[tier] or "")
+  self.driftLabel:SetTextColor(chargeColor[1], chargeColor[2], chargeColor[3])
+  self.driftPanel:SetAlpha(player.drifting and 1 or (charge > 0 and 1 or 0.45))
+  -- Each tick lights when the charge passes the threshold it actually marks.
+  for i, tick in ipairs(self.driftTicks) do
+    local lit = charge >= DRIFT_TICKS[i] - 0.001
+    tick:SetVertexColor(unpack(lit and AK.COLORS.gold or { .08, .13, .20, 1 }))
+  end
 
   self.minimap:SetShown(AK.db.settings.showMinimap)
   if AK.db.settings.showMinimap then
