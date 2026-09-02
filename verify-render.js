@@ -170,8 +170,68 @@ console.log("");
 console.log("  A near pickup (60m) must be readable nearly all the time -- that is the");
 console.log("  one the player actually steers at. Depth only costs visibility in corners.");
 console.log("");
-const pass = worstVisible >= 85;
+// --- how much of each element class is actually ON SCREEN at its own range ---
+//
+// Pickups are not the only discrete thing in the world, and until now they were
+// the only ones this harness looked at. Posts are drawn to 0.8 of the draw
+// distance, arches to 0.9, the finish gantry to 0.75 -- all far beyond where the
+// road reliably still is. Everything out there either slid in from the screen
+// edge (before the fade was applied to them) or is simply faded away most of the
+// time (after), and neither is a scene: one is ugly, the other is bare.
+//
+// So the range each class is drawn to is a real decision, and this is the
+// number it should be made from -- what fraction of a lap something at the FAR
+// end of that range is actually readable.
+console.log("Scene elements at the far end of their own draw range");
+console.log("");
+console.log("  element        range      readable at that range");
+
+// These must match the `*Far` values in UI/RaceUI.lua.
+const CLASSES = [
+  { name: "objects", far: 0.36 },
+  { name: "posts", far: 0.36 },
+  { name: "spectators", far: 0.40 },
+  { name: "arches", far: 0.45 },
+  { name: "finish", far: 0.55 },
+];
+
+const tracks = [];
+for (let i = 0; i < starts.length; i++) {
+  const body = src.slice(starts[i].at, i + 1 < starts.length ? starts[i + 1].at : src.length);
+  const length = +(body.match(/length = (\d+), laps/) || [, 2600])[1];
+  const cv = curveTable(body, length);
+  tracks.push({ length, curveAt: d => cv.table[Math.floor(((d % length) + length) % length / cv.step) % cv.n] });
+}
+
+let thinnest = { name: "-", pct: 100 };
+for (const cls of CLASSES) {
+  const dz = Math.round(DRAW * cls.far);
+  let worst = 100;
+  for (const t of tracks) {
+    let seen = 0, n = 0;
+    for (let camZ = 0; camZ < t.length; camZ += 5) {
+      const bend = bendFrom(t.curveAt, camZ, dz + 8);
+      const off = Math.abs(projectHalfScreens(dz, bend[Math.round(dz / BEND_STEP)] || 0));
+      if (edgeAlpha(off) >= 0.5) seen++;
+      n++;
+    }
+    worst = Math.min(worst, seen / n * 100);
+  }
+  if (worst < thinnest.pct) thinnest = { name: cls.name, pct: worst };
+  console.log("  " + cls.name.padEnd(14) + (dz + "m").padStart(6) + "   " +
+    worst.toFixed(0).padStart(3) + "%  " + (worst >= 50 ? "" : "<- mostly faded away; drawn past where the road is"));
+}
+console.log("");
+console.log("  Anything under 50% is being drawn into space the road has already left,");
+console.log("  so most of what is spawned out there is never seen. Pull the range in.");
+console.log("");
+
+const pass = worstVisible >= 85 && thinnest.pct >= 50;
 console.log(pass
-  ? "PASS (nearest objects fully visible " + worstVisible.toFixed(0) + "% of the lap at worst)"
-  : "FAIL (nearest objects fade out too often: " + worstVisible.toFixed(0) + "% of the lap)");
+  ? "PASS (nearest objects visible " + worstVisible.toFixed(0) +
+    "% of the lap; thinnest class " + thinnest.name + " at " + thinnest.pct.toFixed(0) + "%)"
+  : (worstVisible < 85
+    ? "FAIL (nearest objects fade out too often: " + worstVisible.toFixed(0) + "% of the lap)"
+    : "FAIL (" + thinnest.name + " is drawn to a range where it is only visible " +
+      thinnest.pct.toFixed(0) + "% of the lap)"));
 process.exit(pass ? 0 : 1);

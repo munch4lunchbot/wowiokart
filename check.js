@@ -319,6 +319,45 @@ const orphanAchievements = [];
   }
 }
 
+// --- world renderers that forget the off-axis fade ---------------------------
+//
+// The bend model integrates curvature twice, so the road's screen offset grows
+// quadratically with depth -- measured, it is already past the screen edge by
+// 80m on every track. Anything DISCRETE standing out there therefore appears at
+// the edge of the display and travels inward as you close, which is the
+// "everything slides in from the side" complaint.
+//
+// EdgeFade is the answer, and it was applied to pickups, props and hazards
+// only. Posts (a pair every few metres, out to 0.8 of the draw distance),
+// arches, the finish gantry, spectators, the ghost, shells and the other KARTS
+// were all still drawn hard at whatever off-axis position they landed on. That
+// is not a thing to fix once: it is a rule every world renderer has to follow,
+// so it is checked.
+//
+// The exemptions are the CONTINUOUS surfaces -- a road ribbon swinging off the
+// side of the screen reads as a road going round a bend, which is correct and
+// wanted -- plus the backdrop and screen-space effects.
+const FADE_EXEMPT = /^(RenderRoad|RenderSky|RenderSurround|RenderFork|RenderWeather)$/;
+const unfaded = [];
+{
+  const file = path.join(ADDON, "UI", "RaceUI.lua");
+  if (fs.existsSync(file)) {
+    const src = fs.readFileSync(file, "utf8");
+    const bounds = [...src.matchAll(/^function RaceUI:(\w+)\(/gm)];
+    for (let i = 0; i < bounds.length; i++) {
+      const name = bounds[i][1];
+      if (!/^Render/.test(name) || FADE_EXEMPT.test(name)) continue;
+      const body = src.slice(bounds[i].index,
+        i + 1 < bounds.length ? bounds[i + 1].index : src.length);
+      if (/:Project\(/.test(body) && !/:EdgeFade\(/.test(body)) {
+        const line = src.slice(0, bounds[i].index).split("\n").length;
+        unfaded.push("UI/RaceUI.lua:" + line + "  RaceUI:" + name +
+          " projects world positions but never calls EdgeFade -- it will slide in from the screen edge");
+      }
+    }
+  }
+}
+
 // --- items missing from AK.ItemOrder ----------------------------------------
 //
 // ItemOrder is not just the roulette's display order any more: Network.lua puts
@@ -362,9 +401,12 @@ console.log("unearnable achievements: " + orphanAchievements.length);
 for (const a of orphanAchievements) console.log("  " + a);
 console.log("items missing from ItemOrder: " + unorderedItems.length);
 for (const i of unorderedItems) console.log("  " + i);
+console.log("world renderers without an edge fade: " + unfaded.length);
+for (const u of unfaded) console.log("  " + u);
 
 const bad = errors.length + leaks.size + missing.length + unlisted.length
   + tooNarrow.length + unanchored.length + clamped.length + tableCalls.length
-  + lapRelative.length + orphanAchievements.length + unorderedItems.length;
+  + lapRelative.length + orphanAchievements.length + unorderedItems.length
+  + unfaded.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);

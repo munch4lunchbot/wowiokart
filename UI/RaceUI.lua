@@ -261,6 +261,23 @@ function RaceUI:EdgeFade(x, dz)
   return AK.Math.Clamp((gone - off) / (gone - from), 0, 1)
 end
 
+--- Fade in over the last stretch of a class's own draw range.
+---
+--- Pulling a draw range back to where the road actually still is on screen is
+--- only half a fix: a hard cutoff swaps things sliding in from the side for
+--- things popping into existence, which is not obviously better. Everything
+--- discrete therefore arrives over the last 30% of its range.
+---
+--- RenderObjects had this inline and nothing else had it at all, which is why
+--- posts, arches, the finish gantry and the crowd were all left drawn out to
+--- 200-300m -- depths where, measured (verify-render.js), the road is off the
+--- side of the screen more than half the lap.
+function RaceUI:DepthFade(dz, far)
+  local from = far * 0.70
+  if dz <= from then return 1 end
+  return AK.Math.Clamp((far - dz) / (far - from), 0, 1)
+end
+
 --- On-screen size of something `metres` across, at this depth.
 ---
 --- The floor and ceiling are fractions of the screen, never pixel constants.
@@ -1977,12 +1994,16 @@ function RaceUI:RenderArches(race, camX, camZ)
   end
   local tuning = self.T
   local light = (self.light or 1) * tuning.nightBoost
+  -- Further out than the posts, because an arch is a 17m structure you drive
+  -- through and want to see coming -- but nothing like the 297m it used to use,
+  -- where the road is on screen only 40% of a lap.
+  local archFar = FAR_Z * 0.45
   local first = math.ceil(camZ / spacing)
   for slot, arch in ipairs(self.arches) do
     local index = first + slot - 1
     local archZ = index * spacing
     local dz = archZ - camZ
-    if dz > 0.6 and dz < FAR_Z * 0.9 then
+    if dz > 0.6 and dz < archFar then
       local worldX, worldY = self:RoadAt(self.route or race.track, archZ)
       local x, y, pixelsPerMetre = self:Project(dz, worldX, camX, worldY)
       -- 17m wide, 13m tall; the art's opening lines up with the road.
@@ -1992,6 +2013,7 @@ function RaceUI:RenderArches(race, camX, camZ)
       arch:SetPoint("BOTTOM", self.frame, "CENTER", x, y)
       arch:SetSize(width, width * 0.95)
       arch:SetVertexColor(fog, fog * 0.98, fog * 1.02, 1)
+      arch:SetAlpha(self:DepthFade(dz, archFar) * self:EdgeFade(x, dz))
       arch:Show()
     else
       arch:Hide()
@@ -2003,12 +2025,19 @@ end
 function RaceUI:RenderPosts(race, camX, camZ)
   local tuning = self.T
   local spacing = math.max(2, tuning.postSpacing)
+  -- 0.36 of the draw distance, the same band the pickups use, because it is the
+  -- same question: how far ahead is the road still ON SCREEN? Measured, the
+  -- worst track keeps it there 63% of the lap at 119m and 42% at the 264m these
+  -- were drawn to -- so well over half of every post spawned out there was
+  -- never seen, and the ones that were came in from the side of the display.
+  -- The speed cue posts exist for comes from the ones sweeping past inside 40m.
+  local postFar = FAR_Z * 0.36
   local first = math.ceil(camZ / spacing)
   for slot, pair in ipairs(self.posts) do
     local index = first + slot - 1
     local segZ = index * spacing
     local dz = segZ - camZ
-    if dz > 1 and dz < FAR_Z * 0.8 then
+    if dz > 1 and dz < postFar then
       local worldX, worldY = self:RoadAt(self.route or race.track, segZ)
       local x, y, pixelsPerMetre = self:Project(dz, worldX, camX, worldY)
       local halfWidthPixels = pixelsPerMetre * tuning.roadHalf * AK.Math.RoadWidth(self.route or race.track, segZ)
@@ -2019,15 +2048,24 @@ function RaceUI:RenderPosts(race, camX, camZ)
       local red = (index % 2 == 0)
       local r, g, b = red and .88 or .95, red and .26 or .95, red and .20 or .96
       local offset = halfWidthPixels + width * 2.2
+      -- Faded on each post's OWN screen position, not the road centre's: on the
+      -- outside of a bend the far verge is a long way further off-axis than the
+      -- middle of the road, and it is the outer post that streams in from the
+      -- edge first. These are the most numerous thing in the scene -- a pair
+      -- every `postSpacing` metres, out to 0.8 of the draw distance -- so they
+      -- were the loudest source of "stuff sliding in from the side".
       pair.left:ClearAllPoints()
       pair.left:SetPoint("BOTTOM", self.frame, "CENTER", x - offset, y)
       pair.left:SetSize(width, height)
       pair.left:SetVertexColor(r * fog, g * fog, b * fog, 1)
+      local near = self:DepthFade(dz, postFar)
+      pair.left:SetAlpha(near * self:EdgeFade(x - offset, dz))
       pair.left:Show()
       pair.right:ClearAllPoints()
       pair.right:SetPoint("BOTTOM", self.frame, "CENTER", x + offset, y)
       pair.right:SetSize(width, height)
       pair.right:SetVertexColor(r * fog, g * fog, b * fog, 1)
+      pair.right:SetAlpha(near * self:EdgeFade(x + offset, dz))
       pair.right:Show()
     else
       pair.left:Hide()
@@ -2043,7 +2081,11 @@ function RaceUI:RenderFinish(race, camX, camZ)
   local length = race.track.length
   local lineZ = math.ceil(camZ / length) * length
   local dz = lineZ - camZ
-  if dz < 0.5 or dz > FAR_Z * 0.75 then
+  -- Kept longer than the scenery -- knowing the line is coming is information,
+  -- not decoration -- but pulled in from 248m, where it was on screen under
+  -- half the lap and arrived by sliding in from the edge.
+  local finishFar = FAR_Z * 0.55
+  if dz < 0.5 or dz > finishFar then
     finish:Hide()
     return
   end
@@ -2057,6 +2099,9 @@ function RaceUI:RenderFinish(race, camX, camZ)
   local fog = AK.Math.Clamp(1 - (dz / FAR_Z) * tuning.fogStrength, 0.25, 1)
 
   finish:SetFrameLevel(self.frame:GetFrameLevel() + 2 + math.floor(AK.Math.Clamp(FAR_Z - dz, 1, 150)))
+  -- One alpha on the parent, so the checkerboard, both gantry posts, the banner
+  -- and the label all fade together rather than the line dissolving in pieces.
+  finish:SetAlpha(self:DepthFade(dz, finishFar) * self:EdgeFade(x, dz))
   finish:ClearAllPoints()
   finish:SetPoint("BOTTOM", self.frame, "CENTER", 0, 0)
   finish:SetSize(1, 1)
@@ -2129,11 +2174,15 @@ function RaceUI:RenderSpectators(race, camX, camZ)
     for _, seat in ipairs(self.spectators) do seat:Hide() end
     return
   end
+  -- The crowd is decoration, so it gets the shortest range of the scenery: a
+  -- spectator at the old 205m was a faded speck off the side of the screen
+  -- half the time, and these are MODELS -- the most expensive thing per head.
+  local crowdFar = FAR_Z * 0.40
   local first = math.ceil(camZ / SPECTATOR_SPACING)
   for slot, seat in ipairs(self.spectators) do
     local index = first + slot - 1
     local dz = index * SPECTATOR_SPACING - camZ
-    if dz > 4 and dz < FAR_Z * 0.62 then
+    if dz > 4 and dz < crowdFar then
       local side = (index % 2 == 0) and -1 or 1
       local lateral = side * (tuning.roadHalf + 1.8 + ((index * 37) % 20) * 0.06)
       local baseX, worldY = self:RoadAt(self.route or race.track, index * SPECTATOR_SPACING)
@@ -2145,6 +2194,7 @@ function RaceUI:RenderSpectators(race, camX, camZ)
       seat:SetPoint("CENTER", self.frame, "CENTER", x, y + size * 0.34)
       seat:SetSize(size * 2.2, size * 2.2)
       seat:SetFrameLevel(self.frame:GetFrameLevel() + 2 + math.floor(AK.Math.Clamp(FAR_Z - dz, 1, 140)))
+      seat:SetAlpha(self:DepthFade(dz, crowdFar) * self:EdgeFade(x, dz))
       seat.model.akZoom = tuning.specZoom / math.max(0.01, tuning.modelZoom)
       AK.Model:Reframe(seat.model)
       seat.model:SetFacing(side > 0 and -1.35 or 1.35)
@@ -2782,7 +2832,6 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
   -- the track". Pulling the draw distance back to where the road is reliably on
   -- screen is what makes a pickup appear ON the road and simply grow.
   local objectFar = FAR_Z * 0.36
-  local fadeFrom = objectFar * 0.70
 
   local count = 0
   for _, object in ipairs(race.objects) do
@@ -2850,11 +2899,7 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
       -- anything the corner has swung off-axis is gone before it can be seen
       -- travelling. Applied to the frame so every layer -- pad, ring, icon,
       -- shadow, label -- fades together on exactly the same curve.
-      local appear = 1
-      if dz > fadeFrom then
-        appear = AK.Math.Clamp((objectFar - dz) / (objectFar - fadeFrom), 0, 1)
-      end
-      frame:SetAlpha(appear * self:EdgeFade(x, dz))
+      frame:SetAlpha(self:DepthFade(dz, objectFar) * self:EdgeFade(x, dz))
       -- Cubes hover and bob; pads are painted on the tarmac and never leave it.
       -- Low. A box that floats half its own height off the tarmac reads as a
       -- sticker hanging in the air; MK64's barely leave the ground and the bob
@@ -3096,7 +3141,10 @@ function RaceUI:RenderGhost(race, camX, camZ)
   end
   self.ghostBody:SetSize(width * 1.05, width * 1.05 * 0.625)
   self.ghostBody:SetVertexColor(0.55, 0.85, 1.0)
-  self.ghostKart:SetAlpha(0.38)
+  -- Ghostly by design, and faded again by how far off-axis a corner has thrown
+  -- it -- otherwise the one kart you are racing against in a Time Trial is the
+  -- one thing still sliding in from the screen edge.
+  self.ghostKart:SetAlpha(0.38 * self:EdgeFade(x, dz))
   self.ghostKart:Show()
 end
 
@@ -3150,6 +3198,10 @@ function RaceUI:RenderProjectiles(race, camX, camZ)
       shot.shadow:SetPoint("CENTER", self.frame, "CENTER", x, y + size * 0.05)
       shot.shadow:SetSize(size * 0.9 * (1 - lift * 0.35), math.max(2, size * 0.30 * (1 - lift * 0.35)))
       shot.shadow:SetAlpha(0.5 * fog * (1 - lift * 0.5))
+      -- On the frame, so the icon, its glow and the shadow all go together. The
+      -- shadow is ANCHORED to the race frame but PARENTED to this one, so it
+      -- inherits this; multiplying the fade into it as well would square it.
+      shot:SetAlpha(self:EdgeFade(x, dz))
       shot:Show()
 
       -- Sparks trailing a live shot so it reads as fast, not floating.
@@ -3488,6 +3540,13 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
         -- screen without it.
         kart.tag:SetPoint("CENTER", self.frame, "CENTER", drawX, y + bounce + height * 0.70)
         kart.tagPlate:SetSize(kart.tag:GetStringWidth() + 10, kart.tag:GetStringHeight() + 5)
+        -- Tags live on `tagLayer` so they always draw over the field, which
+        -- also means they do NOT inherit the kart's alpha. Faded by hand, or a
+        -- rival fading out at the screen edge leaves a name floating there on
+        -- its own -- which is the sliding artefact with a label on it.
+        local tagFade = vehicle == player and 1 or self:EdgeFade(drawX, dz)
+        kart.tag:SetAlpha(tagFade)
+        kart.tagPlate:SetAlpha(0.55 * tagFade)
       end
 
       -- Battle marker. A rival counts as fighting you once they have been
@@ -3528,6 +3587,12 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       kart.warn:SetText(battling and "!" or "")
       kart.warn:SetAlpha(battling and (0.55 + 0.45 * math.sin(race.elapsed * 9)) or 0)
 
+      -- A rival thrown off-axis by a corner fades like everything else standing
+      -- in the world. Your OWN kart never does: it sits at camBack metres, well
+      -- inside EdgeFade's near exemption, but it is the one thing on screen that
+      -- must never dim under any circumstances, so it is excluded outright
+      -- rather than left to depend on a tuning value staying where it is.
+      kart:SetAlpha(vehicle == player and 1 or self:EdgeFade(drawX, dz))
       kart:Show()
       if vehicle == player then
         self.playerX, self.playerY, self.playerWidth = drawX, y, width
