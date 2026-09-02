@@ -100,14 +100,6 @@ function UI:NewButton(parent, text, width, height, onClick)
   return button
 end
 
-function UI:StatLine(parent, y, label, value)
-  local left = self:NewText(parent, label, 13, AK.COLORS.muted)
-  left:SetPoint("TOPLEFT", 18, y)
-  local right = self:NewText(parent, tostring(value), 13, AK.COLORS.gold, "RIGHT")
-  right:SetPoint("TOPRIGHT", -18, y)
-  return right
-end
-
 AK.Menu = {}
 local Menu = AK.Menu
 

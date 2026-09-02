@@ -102,13 +102,13 @@ end
 -- with no error anywhere. The player just sees the field stop moving.
 --
 -- So: items go on the wire as their AK.ItemIndex number rather than their name,
--- and the batch is flushed on MEASURED length instead of a count.
--- The cap applies to the whole message body, which is "STATE", the session id
--- and the batch joined by tabs -- NOT to the batch alone. Budgeting only the
--- batch is how a first attempt at this still overflowed: 240 bytes of entries
--- plus a 23-byte header is 263. Derived from the real session id rather than
--- assumed, since that is the part whose length is not known up front. 250
--- leaves a few bytes of margin under the hard 255.
+-- and the batch flushes on MEASURED length instead of a count.
+--
+-- The budget covers the whole message body -- "STATE", the session id and the
+-- batch, joined by tabs -- not the batch alone. Sizing only the batch is how a
+-- first attempt at this still overflowed: 240 bytes of entries plus a 23-byte
+-- header is 263. The session id is the part whose length is not known up front,
+-- so it is measured rather than assumed, and 250 leaves margin under the 255.
 local MAX_MESSAGE = 250
 
 function Net:BroadcastSnapshot(race)

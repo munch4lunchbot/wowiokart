@@ -620,7 +620,8 @@ function Race:UpdateProjectiles(race, dt)
               spent = true
               vehicle.immune = 0.8
               if vehicle == race.player then
-                AK:UnlockAchievement("boost_dodge")
+                -- isPlayer, so the attract demo cannot earn it (see Physics).
+                if vehicle.isPlayer then AK:UnlockAchievement("boost_dodge") end
                 AK.RaceUI:Announce("BOOSTED CLEAR!", AK.COLORS.gold)
                 AK.RaceUI:Flash(AK.COLORS.gold, .18)
                 AK.RaceUI:Shake(10)
@@ -1015,7 +1016,8 @@ function Race:UpdateSlipstream(race, dt)
           AK.RaceUI:Announce("SLINGSHOT!", AK.COLORS.gold)
           AK.RaceUI:Feel("push", 2.4)
           AK.RaceUI:Shake(8)
-          AK:UnlockAchievement("slingshot")
+          -- isPlayer, so the attract demo cannot earn it (see Physics).
+          if vehicle.isPlayer then AK:UnlockAchievement("slingshot") end
           if AK.PlaySfx then AK:PlaySfx("boost") end
         end
       end

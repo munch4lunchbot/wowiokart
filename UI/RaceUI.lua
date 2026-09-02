@@ -3758,7 +3758,9 @@ function RaceUI:Render(race)
       self.itemLabel:SetTextColor(unpack(AK.COLORS.lime))
     elseif shown then
       -- Multi-activation items show how many are left, not three icons.
-      local count = slot and (player.itemCount or 1) or 1
+      -- Through the helper rather than reimplementing it here: AK:ItemCount was
+      -- the documented way to ask, and this was the only place that asked.
+      local count = slot and AK:ItemCount(player) or 1
       self.itemLabel:SetText(count > 1 and (shown.name .. "  x" .. count) or shown.name)
       self.itemLabel:SetTextColor(unpack(count > 1 and AK.COLORS.gold or AK.COLORS.muted))
     else
