@@ -191,8 +191,8 @@ const CLASSES = [
   { name: "objects", far: 0.36 },
   { name: "posts", far: 0.36 },
   { name: "spectators", far: 0.40 },
-  { name: "arches", far: 0.45 },
-  { name: "finish", far: 0.55 },
+  { name: "arches", far: 0.38 },
+  { name: "finish", far: 0.40 },
 ];
 
 const tracks = [];

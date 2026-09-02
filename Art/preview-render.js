@@ -551,7 +551,7 @@ if (tex.arch && track.archSpacing) {
     // Mirrors RaceUI:RenderArches -- dropped once you are under it (a billboard
     // cannot leave the frame overhead, it just smears across the screen edges)
     // and pulled in to where the road is still reliably on screen.
-    if (dz > 6 && dz < FAR_Z * 0.45) {
+    if (dz > 6 && dz < FAR_Z * 0.38) {
       const [x, y, ppm] = project(dz, bend(dz), roadHeight(az));
       const w = ppm * 17, h = w * 0.95;
       const f = clamp(1 - (dz / FAR_Z) * T.fogStrength * .8, .3, 1) * light;

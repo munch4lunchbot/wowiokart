@@ -2212,7 +2212,10 @@ function RaceUI:RenderArches(race, camX, camZ)
   -- Further out than the posts, because an arch is a 17m structure you drive
   -- through and want to see coming -- but nothing like the 297m it used to use,
   -- where the road is on screen only 40% of a lap.
-  local archFar = FAR_Z * 0.45
+  -- Pulled in from 0.45 when the circuits got firmer corners. A tighter lap
+  -- swings the road off the side of the screen sooner, so an arch at 149m was
+  -- faded away 58% of the time -- spawned into space the road has already left.
+  local archFar = FAR_Z * 0.38
   local first = math.ceil(camZ / spacing)
   for slot, arch in ipairs(self.arches) do
     local index = first + slot - 1
@@ -2306,7 +2309,11 @@ function RaceUI:RenderFinish(race, camX, camZ)
   -- Kept longer than the scenery -- knowing the line is coming is information,
   -- not decoration -- but pulled in from 248m, where it was on screen under
   -- half the lap and arrived by sliding in from the edge.
-  local finishFar = FAR_Z * 0.55
+  -- Same reason as the arches, and the same measurement: at 0.55 the gantry sat
+  -- 182m out and was readable on only 39% of a lap. 132m is a little over two
+  -- seconds of warning at racing pace, for a landmark the lap counter and the
+  -- map have both already told you about.
+  local finishFar = FAR_Z * 0.40
   if dz < 0.5 or dz > finishFar then
     finish:Hide()
     return

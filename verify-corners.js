@@ -68,6 +68,18 @@ const pushAt = curve =>
 const STEP = +(BUILD.match(/^local STEP = (\d+)/m) || [, 2])[1];
 const SPAN = +(BUILD.match(/local span = (\d+)/) || [, 15])[1];
 
+// Painted surfaces change the answer completely, so a harness that assumes dry
+// tarmac everywhere is not measuring the game. Ironforge is 47% ice, and ice has
+// steering 1.10 x traction 0.22 -- a QUARTER of the authority the same kart has
+// on road. Its "easy" 1.6 sweepers are decisive corners; reporting them as
+// scenery would have had me flattening the one track whose whole idea is that
+// gentle corners become lethal.
+const TERRAIN = fs.readFileSync(path.join(ADDON, "Data", "Terrain.lua"), "utf8");
+const MATERIALS = {};
+for (const m of TERRAIN.matchAll(/(\w+) = \{\s*\n\s*id = "\w+", name = "[^"]*",\s*\n\s*speed = [\d.]+, acceleration = [\d.]+, steering = ([\d.]+), traction = ([\d.]+),/g))
+  MATERIALS[m[1]] = +m[2] * +m[3];
+if (!MATERIALS.ICE) throw new Error("could not read the terrain table");
+
 const src = fs.readFileSync(path.join(ADDON, "Data", "Tracks.lua"), "utf8");
 const starts = [];
 const re = /\n  \{\n    id = "(\w+)"/g;
@@ -97,7 +109,15 @@ function compile(body) {
     for (let k = -SPAN; k <= SPAN; k++) total += raw[((i + k) % samples + samples) % samples];
     smooth.push(total / (SPAN * 2 + 1));
   }
-  return { length, scale, raw, smooth, where, layout };
+  // Anything painted over the road at this point: Terrain:Sample returns the
+  // painted material with blend 1, so its steering penalty applies in full.
+  const painted = [...body.matchAll(/\{ from = (\d+), to = (\d+), onRoad = "(\w+)" \}/g)]
+    .map(x => ({ from: +x[1], to: +x[2], grip: MATERIALS[x[3]] ?? 1 }));
+  const gripAt = d => {
+    for (const p of painted) if (d >= p.from && d <= p.to) return p.grip;
+    return 1;
+  };
+  return { length, scale, raw, smooth, where, layout, gripAt };
 }
 
 console.log("Corners that have to be driven  (mid-field kart: handling " +
@@ -107,7 +127,7 @@ console.log("  A corner is DECISIVE when the push at full throttle beats full lo
 console.log("  must brake or drift. It is WORK at half that. Below that the wheel wins");
 console.log("  outright and the bend is scenery you steer through without thinking.");
 console.log("");
-console.log("track             arrives   decisive   work   free   driftable   longest flat run");
+console.log("track             arrives   decisive   work   free   driftable   flat run   painted");
 
 let flat = [];
 const rows = [];
@@ -116,9 +136,13 @@ for (let i = 0; i < starts.length; i++) {
   const t = compile(body);
   const authoredPeak = Math.max(...t.raw.map(Math.abs));
   const arrivedPeak = Math.max(...t.smooth.map(Math.abs));
-  let decisive = 0, work = 0, run = 0, longestRun = 0, driftable = 0;
-  for (const c of t.smooth) {
-    const ratio = pushAt(c) / HANDLING;
+  let decisive = 0, work = 0, run = 0, longestRun = 0, driftable = 0, iced = 0;
+  for (let k = 0; k < t.smooth.length; k++) {
+    const c = t.smooth[k];
+    // Steering authority is what the kart has ON THIS SURFACE, not on tarmac.
+    const grip = t.gripAt(k * STEP);
+    if (grip < 0.999) iced++;
+    const ratio = pushAt(c) / (HANDLING * grip);
     if (ratio >= 1) { decisive++; run = 0; }
     else if (ratio >= 0.5) { work++; run = 0; }
     else { run += STEP; if (run > longestRun) longestRun = run; }
@@ -128,8 +152,8 @@ for (let i = 0; i < starts.length; i++) {
   const row = {
     id: starts[i].id, authoredPeak, arrivedPeak,
     decisive: decisive / n * 100, work: work / n * 100,
-    free: (n - decisive - work) / n * 100, longestRun,
-    driftable: driftable / n * 100,
+    free: (n - decisive - work) / n * 100, longestRun, length: t.length,
+    driftable: driftable / n * 100, slippery: iced / n * 100,
   };
   rows.push(row);
   if (row.decisive < 4) flat.push(row.id);
@@ -139,8 +163,8 @@ for (let i = 0; i < starts.length; i++) {
     (row.work.toFixed(0) + "%").padStart(7) +
     (row.free.toFixed(0) + "%").padStart(7) +
     (row.driftable.toFixed(0) + "%").padStart(12) +
-    (longestRun + "m").padStart(16) +
-    (row.decisive < 4 ? "   <- nothing to drive" : ""));
+    (longestRun + "m").padStart(11) +
+    (row.slippery > 0.5 ? (row.slippery.toFixed(0) + "%") : "-").padStart(10));
 }
 
 console.log("");
@@ -160,14 +184,18 @@ console.log("");
 
 // Every track needs at least one corner you have to drive, and no track should
 // be a single unbroken flat-out run for most of a lap.
-const tooFlat = rows.filter(r => r.decisive < 4 || r.driftable < 12).map(r => r.id);
-const tooLong = rows.filter(r => r.longestRun > r.longestRun * 0 + 700).map(r => r.id);
+// A beginner circuit is ALLOWED to have only one corner that forces a decision --
+// Luigi Raceway does. What no circuit may be is a lap with nothing to do: too
+// little worth drifting, or a flat-out run that eats a fifth of it.
+const tooFlat = rows.filter(r => r.driftable < 18 || r.decisive < 2).map(r => r.id);
+const tooLong = rows.filter(r => r.longestRun > 520).map(r => r.id);
 for (const r of rows.filter(x => tooFlat.includes(x.id)))
-  console.log("  " + r.id + ": " + (r.decisive < 4
-    ? "nothing on this lap forces a decision -- the correct input is 'hold the throttle'"
-    : "only " + r.driftable.toFixed(0) + "% of the lap is worth drifting"));
-for (const id of tooLong)
-  console.log("  " + id + ": has a flat-out run longer than 700m, which is most of a lap on rails");
+  console.log("  " + r.id + ": " + (r.decisive < 2
+    ? "not one corner on this lap forces a decision"
+    : "only " + r.driftable.toFixed(0) + "% of the lap is firm enough to be worth drifting"));
+for (const r of rows.filter(x => tooLong.includes(x.id)))
+  console.log("  " + r.id + ": " + r.longestRun + "m of unbroken flat-out running, " +
+    (r.longestRun / r.length * 100).toFixed(0) + "% of the lap with nothing in it");
 
 const bad = tooFlat.length + tooLong.length;
 console.log(bad

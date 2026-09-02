@@ -103,24 +103,37 @@ AK.Tracks = {
       { from = 1200, to = 1440, offroad = "WATER" },
       { from = 1920, to = 2088, onRoad = "MUD" },
     },
+    -- Beginner does not mean EMPTY. Measured, this lap used to be 71% road the
+    -- wheel wins outright, with a 658m unbroken flat-out run -- a quarter of the
+    -- lap on which the only correct input is "hold the throttle" -- and only 14%
+    -- of it firm enough for a mini-turbo to charge. Luigi Raceway is an easy
+    -- track; it is not a track where the drift button does nothing.
+    --
+    -- So the corners keep their shape and their names and stay wide and
+    -- forgiving, but every sweeper is firmed up to where a drift is worth
+    -- taking, and the home straight is broken by a kink. Nothing here is a
+    -- hairpin: Stonefield is still the only hard corner on the lap.
     layout = {
-      { len = 260, curve = 0, name = "Goldshire Straight", width = 1.30 },
-      -- A long, gentle sweep. No surprises.
-      { len = 200, curve = -1.4, name = "Lion's Pride Sweep", width = 1.14 },
-      { len = 100, curve = 0.8, name = "Mill Lane", width = 1.12 },
-      { len = 120, curve = -0.6, grade = 2.4, name = "Hill Road", width = 1.10 },
+      { len = 200, curve = 0, name = "Goldshire Straight", width = 1.30 },
+      -- A long sweep, now firm enough to be worth drifting rather than merely
+      -- worth looking at.
+      { len = 200, curve = -1.7, name = "Lion's Pride Sweep", width = 1.14 },
+      { len = 100, curve = 1.5, name = "Mill Lane", width = 1.12 },
+      { len = 120, curve = -1.2, grade = 2.4, name = "Hill Road", width = 1.10 },
       { len = 45, curve = 0, grade = 4.0, ramp = true, name = "Bridge Jump", width = 1.20 },
       { len = 80, curve = 0, grade = -3.0, name = "Bridge Landing", width = 1.14 },
-      { len = 100, curve = 0.6, name = "Covered Bridge", width = 0.96, tunnel = true },
-      -- 240m of gentle right sweep through the forest.
-      { len = 240, curve = 1.6, name = "Forest Sweep", width = 1.08 },
-      -- The one real challenge.
-      { len = 80, curve = 3.4, name = "Stonefield Bend", width = 0.84 },
-      { len = 140, curve = -0.8, name = "Eastvale Run", width = 1.18 },
-      { len = 180, curve = -1.2, grade = -1.2, name = "Crystal Lake", width = 1.12 },
+      { len = 100, curve = 1.4, name = "Covered Bridge", width = 0.96, tunnel = true },
+      { len = 240, curve = 1.9, name = "Forest Sweep", width = 1.08 },
+      -- Still the one real challenge on the lap.
+      { len = 80, curve = 3.6, name = "Stonefield Bend", width = 0.84 },
+      { len = 140, curve = -1.5, name = "Eastvale Run", width = 1.18 },
+      { len = 180, curve = -1.6, grade = -1.2, name = "Crystal Lake", width = 1.12 },
       { len = 120, curve = 0, name = "Woodland Straight", width = 1.22 },
-      { len = 160, curve = 1.0, name = "Forest Curve", width = 1.10 },
-      { len = 270, curve = 0, name = "Home Straight", width = 1.30 },
+      { len = 160, curve = 1.8, name = "Forest Curve", width = 1.10 },
+      -- The kink that stops the run to the line being a quarter of the lap with
+      -- nothing in it.
+      { len = 90, curve = -2.2, name = "Smithy Kink", width = 1.00 },
+      { len = 190, curve = 0, name = "Home Straight", width = 1.30 },
     },
     hazards = { "Kobold", "Hay Bale", "Defias Bomb" },
     shortcut = "Ford the river for a risky speed strip.",
@@ -234,9 +247,9 @@ AK.Tracks = {
       -- Two LEFT turns in a row: winding into the jungle.
       { len = 220, curve = -2.0, name = "Harbour Sweep", width = 1.02 },
       { len = 170, curve = -1.4, name = "Nesingwary Trail", width = 0.96 },
-      { len = 100, curve = 1.2, name = "Hunter's Run", width = 1.06 },
+      { len = 100, curve = 1.6, name = "Hunter's Run", width = 1.06 },
       { len = 80, curve = 3.8, name = "Panther Hairpin", width = 0.78 },
-      { len = 140, curve = 0.6, grade = 2.8, name = "Canopy Climb", width = 1.00 },
+      { len = 140, curve = 1.5, grade = 2.8, name = "Canopy Climb", width = 1.00 },
       -- Under the canopy: 330m of tree cover.
       { len = 210, curve = 1.4, name = "Canopy Tunnel", width = 0.92, tunnel = true },
       { len = 120, curve = -1.8, grade = -2.8, name = "Vine Drop", width = 0.98, tunnel = true },
@@ -244,10 +257,13 @@ AK.Tracks = {
       { len = 80, curve = 0, grade = -3.4, name = "Ruins Landing", width = 1.10 },
       -- Two RIGHT turns in a row: winding around the troll ruins.
       { len = 240, curve = 1.8, name = "Zul'Gurub Sweep", width = 1.02 },
-      { len = 170, curve = 1.2, name = "Troll Passage", width = 0.98 },
+      { len = 170, curve = 1.6, name = "Troll Passage", width = 0.98 },
       { len = 90, curve = -3.6, name = "Gurubashi Hairpin", width = 0.80 },
-      { len = 190, curve = -0.8, name = "River Road", width = 1.16 },
-      { len = 140, curve = 0.4, name = "Cape Approach", width = 1.12 },
+      { len = 190, curve = -1.6, name = "River Road", width = 1.16 },
+      -- Cape Approach was a 0.4 drift-through-nothing, which put 590m of
+      -- unbroken flat-out running between it, Cape Run and the Booty Bay
+      -- Straight. It is a real corner onto the run to the line now.
+      { len = 140, curve = 1.8, name = "Cape Approach", width = 1.12 },
       { len = 210, curve = 0, name = "Cape Run", width = 1.26 },
     },
     hazards = { "Raptor", "Pirate Barrel", "Murloc" },
@@ -435,23 +451,31 @@ AK.Tracks = {
     surfaces = {
       { from = 1430, to = 1650, onRoad = "BOOST" },
     },
+    -- The speed circuit keeps its speed: the Manaforge Straight is still the
+    -- longest in the game. What it does not get to keep is THREE of them with
+    -- soft bends in between. Measured, only 13% of this lap was firm enough for
+    -- a mini-turbo to charge, and Turbo Run running straight into Manaforge
+    -- Straight made a 650m unbroken flat-out stretch -- a quarter of the lap on
+    -- which nothing happens. The sweepers are firmed up and the run to the line
+    -- now arrives through a kink, which is the classic overtaking spot.
     layout = {
       -- 360m straight. The longest in the game. Full speed.
       { len = 360, curve = 0, name = "Manaforge Straight", width = 1.32 },
-      { len = 260, curve = 1.4, name = "Arcane Sweep", width = 1.16 },
-      { len = 100, curve = -0.6, name = "Ley Run", width = 1.20 },
+      { len = 260, curve = 1.9, name = "Arcane Sweep", width = 1.16 },
+      { len = 100, curve = -1.6, name = "Ley Run", width = 1.20 },
       { len = 80, curve = -4.0, name = "Nexus Hairpin", width = 0.78 },
-      { len = 140, curve = 0.4, grade = 2.8, name = "Rise to the Ring", width = 1.06 },
-      -- Conduit Tube: fast tunnel, gentle curve.
-      { len = 250, curve = 1.2, name = "Conduit Tube", width = 0.96, tunnel = true },
-      { len = 100, curve = -0.8, name = "Tube Exit", width = 1.08, tunnel = true },
+      { len = 140, curve = 1.5, grade = 2.8, name = "Rise to the Ring", width = 1.06 },
+      -- Conduit Tube: fast tunnel, and now a bend worth drifting through it.
+      { len = 250, curve = 1.7, name = "Conduit Tube", width = 0.96, tunnel = true },
+      { len = 100, curve = -1.8, name = "Tube Exit", width = 1.08, tunnel = true },
       { len = 60, curve = 0, grade = 6.0, ramp = true, name = "Void Leap", width = 1.22 },
       { len = 95, curve = 0, grade = -4.8, name = "Void Landing", width = 1.14 },
-      { len = 320, curve = 0, name = "Ethereum Straight", width = 1.30 },
-      { len = 200, curve = -1.6, name = "Sparkfly Sweep", width = 1.08 },
+      { len = 240, curve = 0, name = "Ethereum Straight", width = 1.30 },
+      { len = 200, curve = -2.0, name = "Sparkfly Sweep", width = 1.08 },
       { len = 120, curve = 2.8, name = "Kirin'Var Bend", width = 0.90 },
-      { len = 220, curve = -1.0, name = "Farahlon Sweep", width = 1.12 },
-      { len = 300, curve = 0, name = "Turbo Run", width = 1.32 },
+      { len = 220, curve = -1.7, name = "Farahlon Sweep", width = 1.12 },
+      { len = 150, curve = 0, name = "Turbo Run", width = 1.32 },
+      { len = 90, curve = 2.6, name = "Voidshard Kink", width = 1.04 },
     },
     hazards = { "Mana Storm", "Void Spark", "Arcane Mine" },
     shortcut = "Blink through a portal at maximum speed.",
