@@ -13,7 +13,7 @@ const os = require("os");
 const path = require("path");
 
 const ADDON = __dirname;
-const LS = "C:/Users/munch/Desktop/CABLAUDELE/tools/lua-ls/bin/lua-language-server.exe";
+const LS = process.env.LUA_LS || "C:/Users/munch/Desktop/CABLAUDELE/tools/lua-ls/bin/lua-language-server.exe";
 const logs = fs.mkdtempSync(path.join(os.tmpdir(), "kartcheck-"));
 
 let out = "";
@@ -170,6 +170,13 @@ const onDisk = [];
 const missing = toc.filter(f => !onDisk.includes(f));
 const unlisted = onDisk.filter(f => !toc.includes(f));
 
+// `rel` entries use the .toc's own "\"-joined convention (so they compare
+// against it directly), which is not a valid path segment separator on
+// non-Windows fs calls -- path.join() there would treat the whole string as
+// one literal filename and throw ENOENT. Split on "\" before joining so this
+// check runs the same on Windows, Linux and macOS.
+const absPath = rel => path.join(ADDON, ...rel.split("\\"));
+
 // --- textures that tile by world position but were never told to REPEAT ------
 //
 // A SetTexCoord above 1 CLAMPS unless the texture was created with REPEAT
@@ -186,7 +193,7 @@ const unlisted = onDisk.filter(f => !toc.includes(f));
 // produces false alarms (the skyline ridges take one and are correctly REPEAT).
 const clamped = [];
 for (const rel of onDisk) {
-  const src = fs.readFileSync(path.join(ADDON, rel), "utf8");
+  const src = fs.readFileSync(absPath(rel), "utf8");
   const name = s => s.replace(/^self\./, "");
   // Counted, not just flagged. Sibling tables reuse field names -- the main road
   // strip and the fork road strip are both `road` -- so a single tiled sibling
@@ -241,7 +248,7 @@ for (const rel of onDisk) {
 const tableCalls = [];
 const WIDGET_METHODS = /^(Hide|Show|SetAlpha|SetShown|SetPoint|ClearAllPoints|SetTexture|SetVertexColor|SetText|SetSize|SetWidth|SetHeight|SetTexCoord)$/;
 for (const rel of onDisk) {
-  const src = fs.readFileSync(path.join(ADDON, rel), "utf8");
+  const src = fs.readFileSync(absPath(rel), "utf8");
   const plainTables = new Set();
   for (const m of src.matchAll(/self\.(\w+)\s*=\s*\{\s*\}/g)) plainTables.add(m[1]);
   // A field later assigned a real widget is not a plain table.
@@ -271,7 +278,7 @@ for (const rel of onDisk) {
 const ABSOLUTE_OK = /^(vehicle|projectile|other|first|second)$/;
 const lapRelative = [];
 for (const rel of onDisk) {
-  const src = fs.readFileSync(path.join(ADDON, rel), "utf8");
+  const src = fs.readFileSync(absPath(rel), "utf8");
   for (const m of src.matchAll(/:(?:RoadAt|Bend)\([^)]*?(\w+)\.distance\s*[,)]/g)) {
     if (ABSOLUTE_OK.test(m[1])) continue;
     const line = src.slice(0, m.index).split("\n").length;

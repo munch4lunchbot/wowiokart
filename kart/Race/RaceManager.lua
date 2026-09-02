@@ -1056,6 +1056,11 @@ function Race:ReportRaceMoments(race)
       AK.RaceUI:Announce("YOU TAKE THE LEAD!", AK.COLORS.gold)
       AK.RaceUI:Flash(AK.COLORS.gold, .12)
       if AK.PlaySfx then AK:PlaySfx("overtake") end
+      -- "That's Mine!" is earned on the pass itself, not merely by winning: it
+      -- has to be the final lap when the lead changes hands. Defined in
+      -- Data/Achievements.lua since the addon shipped, this was the only one of
+      -- the five with no code path that ever called UnlockAchievement for it.
+      if player.lap == race.laps then AK:UnlockAchievement("late_pass") end
     elseif position < race.lastPosition then
       AK.RaceUI:Announce("POSITION " .. position, AK.COLORS.lime)
       if AK.PlaySfx then AK:PlaySfx("overtake") end

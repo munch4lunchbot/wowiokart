@@ -1,7 +1,8 @@
 // Port of Builder:Compile + Builder:AnchorBranch, run over the authored tracks
 // so the branch geometry can be checked before it ships.
 const fs = require("fs");
-const SRC = fs.readFileSync("C:/Program Files (x86)/World of Warcraft/_retail_/Interface/AddOns/kart/Data/Tracks.lua", "utf8");
+const path = require("path");
+const SRC = fs.readFileSync(path.join(__dirname, "Data", "Tracks.lua"), "utf8");
 const STEP = 2, CURVE_GAIN = 0.0021, GRADE_GAIN = 0.022;
 
 function compile(track) {
