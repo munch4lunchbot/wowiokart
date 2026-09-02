@@ -10,7 +10,7 @@ local defaults = {
   -- anything bound here wins over the built-in candidates.
   sfxOverride = {},
   records = { bestLap = {}, bestRace = {}, ghosts = {} },
-  selection = { racer = "you", kart = "mechano", track = "oribos" },
+  selection = { racer = "you", kart = "mechano", track = "oribos", cup = "eastern" },
   progress = { coins = 0, races = 0, wins = 0, podiums = 0, bestTimes = {}, achievements = {}, unlockedRacers = {}, unlockedKarts = {}, trophies = {} },
 }
 

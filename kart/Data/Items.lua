@@ -73,13 +73,48 @@ AK.Items = {
     effect = "projectile", speed = 44, life = 14, homing = true, seeksLeader = true,
     blast = 8, reaction = "launch",
   },
+  -- Three shots, not three inventory slots -- same pattern as Triple Mushroom,
+  -- just on the shells and the banana instead. These were the one obviously
+  -- missing piece of the real item table: every kart racer that has a single
+  -- shell or a single banana has the triple version of it too.
+  triple_banana = {
+    name = "Triple Banana", icon = ART .. "banana.tga", tier = "normal",
+    color = { 1.0, 0.85, 0.20 },
+    description = "Three bananas. Lay a trail, not just one peel.",
+    effect = "drop", reaction = "spin", quantity = 3,
+  },
+  triple_green_shell = {
+    name = "Triple Green Shell", icon = ART .. "shell.tga", tier = "strong",
+    color = { 0.30, 0.95, 0.35 }, tint = { 0.30, 0.95, 0.35 },
+    description = "Three shells, fired one at a time.",
+    effect = "projectile", speed = 34, life = 6, quantity = 3,
+  },
+  triple_red_shell = {
+    name = "Triple Red Shell", icon = ART .. "shell.tga", tier = "legendary",
+    color = { 1.0, 0.28, 0.24 }, tint = { 1.0, 0.28, 0.24 },
+    description = "Three homing shells. Clear a path through the whole field.",
+    effect = "projectile", speed = 30, life = 7, homing = true, quantity = 3,
+  },
+  -- The steal. MK64's Boo does two things at once: it takes a banked item off
+  -- someone else, and it makes you untouchable for a moment while you do it --
+  -- the getaway is as much the point as the theft. Reusing `immune` (already
+  -- top-priority in Race.HIT_PRIORITY, already respected by every hazard and
+  -- projectile) gets the "cannot be punished for pulling this off" half for
+  -- free; the steal itself is handled in AK:FireItem.
+  boo = {
+    name = "Boo", icon = "Interface\\Icons\\Ability_Vanish", tier = "legendary",
+    color = { 0.62, 0.42, 0.92 },
+    description = "Steals a banked item from the racer ahead. Untouchable while it works.",
+    effect = "boo", immunity = 2.0,
+  },
 }
 
 -- Stable order for the pickup roulette. pairs() order is undefined, and a reel
 -- that jumps around at random reads as a glitch rather than a spin.
 AK.ItemOrder = {
   "mushroom", "banana", "green_shell", "red_shell", "bomb",
-  "triple_mushroom", "fake_box", "spiny_shell", "star", "bolt",
+  "triple_mushroom", "triple_banana", "triple_green_shell", "triple_red_shell",
+  "fake_box", "spiny_shell", "boo", "star", "bolt",
 }
 
 -- Each power-up gets its own voice, so you can tell what fired without looking.
@@ -87,13 +122,18 @@ AK.ITEM_SOUND = {
   mushroom = "boost",
   triple_mushroom = "boost",
   banana = "drop",
+  triple_banana = "drop",
   fake_box = "drop",
   green_shell = "throw",
+  triple_green_shell = "throw",
   red_shell = "throwHoming",
+  triple_red_shell = "throwHoming",
   spiny_shell = "throwHoming",
   bomb = "throwHeavy",
   star = "starPower",
   bolt = "thunder",
+  -- No dedicated cue exists for a steal yet; Audio.lua's fallback ("itemUse")
+  -- covers it until one is authored and bound here.
 }
 
 --- Weighted draw. Trailing racers get the heavy hitters, the leader mostly gets
@@ -106,23 +146,27 @@ AK.ITEM_TABLE = {
   -- fraction of the field behind you -> weighted draw
   { upTo = 0.14, weights = {                                    -- 1st
     { value = "banana", weight = 42 }, { value = "green_shell", weight = 30 },
-    { value = "mushroom", weight = 18 }, { value = "fake_box", weight = 10 } } },
+    { value = "mushroom", weight = 18 }, { value = "fake_box", weight = 10 },
+    { value = "triple_banana", weight = 10 } } },
   { upTo = 0.35, weights = {                                    -- 2nd-3rd
     { value = "banana", weight = 24 }, { value = "green_shell", weight = 28 },
     { value = "red_shell", weight = 22 }, { value = "mushroom", weight = 16 },
-    { value = "fake_box", weight = 10 } } },
+    { value = "fake_box", weight = 10 }, { value = "triple_green_shell", weight = 10 } } },
   { upTo = 0.60, weights = {                                    -- midfield
     { value = "green_shell", weight = 18 }, { value = "red_shell", weight = 26 },
     { value = "mushroom", weight = 20 }, { value = "bomb", weight = 14 },
-    { value = "banana", weight = 12 }, { value = "triple_mushroom", weight = 10 } } },
+    { value = "banana", weight = 12 }, { value = "triple_mushroom", weight = 10 },
+    { value = "triple_green_shell", weight = 8 }, { value = "boo", weight = 6 } } },
   { upTo = 0.82, weights = {                                    -- back half
     { value = "red_shell", weight = 20 }, { value = "triple_mushroom", weight = 22 },
     { value = "bomb", weight = 16 }, { value = "star", weight = 16 },
-    { value = "bolt", weight = 10 }, { value = "spiny_shell", weight = 16 } } },
+    { value = "bolt", weight = 10 }, { value = "spiny_shell", weight = 16 },
+    { value = "triple_red_shell", weight = 14 }, { value = "boo", weight = 12 } } },
   { upTo = 1.01, weights = {                                    -- last
     { value = "star", weight = 24 }, { value = "bolt", weight = 20 },
     { value = "spiny_shell", weight = 22 }, { value = "triple_mushroom", weight = 22 },
-    { value = "bomb", weight = 12 } } },
+    { value = "bomb", weight = 12 }, { value = "triple_red_shell", weight = 18 },
+    { value = "boo", weight = 16 } } },
 }
 
 --- Weighted draw from the tier matching your race position.
@@ -177,6 +221,7 @@ end
 AK.DEPLOYABLE = {
   banana = true, green_shell = true, red_shell = true, bomb = true,
   fake_box = true, spiny_shell = true,
+  triple_banana = true, triple_green_shell = true, triple_red_shell = true,
 }
 
 --- Items with multiple activations report how many are left.
@@ -254,6 +299,28 @@ function AK:FireItem(race, vehicle, id)
       end
     end
     if isPlayer then AK.RaceUI:Flash({ 1, 1, .7 }, .34) end
+
+  elseif item.effect == "boo" then
+    -- Steal whatever the racer directly ahead is banking -- their queued item
+    -- if they have one, otherwise whatever they have trailing as a shield --
+    -- and vanish from every hazard and projectile for a beat regardless of
+    -- whether there was anything to take. `ConsumeItem` already cleared this
+    -- vehicle's own slot before FireItem ran, so it is safe to hand the loot
+    -- straight into `vehicle.item` here.
+    local target = AK.Race:GetAheadTarget(vehicle)
+    local stolen = target and (target.item or target.held)
+    if stolen then
+      if target.held == stolen then target.held = nil else target.item, target.itemCount = nil, nil end
+      vehicle.item = stolen
+      vehicle.itemCount = AK.Items[stolen] and AK.Items[stolen].quantity or 1
+      if target == race.player then
+        AK.RaceUI:Announce("BOO STOLE YOUR ITEM!", AK.COLORS.danger)
+        AK.RaceUI:Flash({ .62, .42, .92 }, .18)
+      elseif isPlayer then
+        AK.RaceUI:Announce("STOLE " .. AK.Items[stolen].name:upper() .. "!", item.color)
+      end
+    end
+    vehicle.immune = math.max(vehicle.immune or 0, item.immunity or 2.0)
 
   elseif item.effect == "drop" then
     AK.Race:SpawnProjectile(race, vehicle, id, -1)

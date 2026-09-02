@@ -1253,7 +1253,12 @@ function RaceUI:Show(race)
   local redundant = theme and race.track.name:upper():find(theme:upper(), 1, true)
   self.trackName:SetText(redundant and race.track.name
     or (race.track.name .. "  /  " .. theme))
-  self.shortcut:SetText("SHORTCUT: " .. race.track.shortcut)
+  -- Concatenating a nil `shortcut` throws here and takes the whole race start
+  -- down with it -- and a battle arena has no shortcut to speak of, so this
+  -- would fire on the very first fixture. Every circuit happens to define one
+  -- today, but a HUD line should not be a landmine for the next track that
+  -- forgets to.
+  self.shortcut:SetText(race.track.shortcut and ("SHORTCUT: " .. race.track.shortcut) or "")
   self.notice:SetText("")
   self.countdown:SetText("")
   self:BuildMinimapRoute(race.track)

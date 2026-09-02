@@ -54,11 +54,46 @@ AK.Racers = {
     color = { 0.72, 0.55, 0.22 }, speed = 6, acceleration = 4, handling = 4, weight = 10, drift = 4, luck = 7,
     quip = "Genuinely the hardest thing on this track." },
 
-  { id = "chieftain", name = "The Other Baine", race = "Tauren", tag = "BAINE II",
-    model = { creature = 36648 }, icon = "Interface\\Icons\\Achievement_Character_Tauren_Male",
-    seatZ = -0.15, seatScale = 0.88,
-    color = { 0.78, 0.52, 0.24 }, speed = 6, acceleration = 6, handling = 7, weight = 8, drift = 7, luck = 5,
-    quip = "There are always more Baines." },
+  -- "The Other Baine" -- a second entry with Baine's own creature id and stats
+  -- under a different name -- used to sit here. It existed purely to pad the
+  -- AI pool out to seven so a full grid never repeated a face, which stopped
+  -- mattering the moment BuildAIField actually shuffles (see Racers.lua). Four
+  -- real characters replace it; three tie directly into content already in
+  -- the game rather than floating free of it.
+  --
+  -- Creature ids below are the best entries on hand, not verified against a
+  -- live client from here. `/kart npc <id>` (Data/Models.lua's AK:PreviewNPC)
+  -- and `/kart roster` (AK:ReportRoster) exist for exactly this: confirming
+  -- what a creature id actually resolves to in-game and swapping in a
+  -- corrected one, without needing a reload.
+  { id = "mankrik", name = "Mankrik", race = "Orc", tag = "MANKRIK",
+    model = { creature = 3299 }, icon = "Interface\\Icons\\Achievement_Character_Orc_Male",
+    seatZ = -0.05, seatScale = 0.94,
+    color = { 0.58, 0.42, 0.30 }, speed = 6, acceleration = 6, handling = 6, weight = 6, drift = 5, luck = 3,
+    quip = "Still looking for his wife. Sees the finish line instead." },
+
+  -- The achievement this addon already ships is named after him. Not adding
+  -- the actual Leeroy Jenkins to a game with a Leeroy Jenkins achievement was
+  -- the gap.
+  { id = "leeroy", name = "Leeroy Jenkins", race = "Human", tag = "LEEROY",
+    model = { creature = 24296 }, icon = "Interface\\Icons\\Achievement_Character_Human_Male",
+    seatZ = 0.02, seatScale = 1.00,
+    color = { 0.95, 0.62, 0.18 }, speed = 8, acceleration = 9, handling = 3, weight = 5, drift = 6, luck = 6,
+    quip = "Skipped the pre-race briefing. Is already at full throttle." },
+
+  -- Baine's father. Sits next to the mascot joke rather than beside it.
+  { id = "cairne", name = "Cairne Bloodhoof", race = "Tauren", tag = "CAIRNE",
+    model = { creature = 3057 }, icon = "Interface\\Icons\\Achievement_Character_Tauren_Male",
+    seatZ = -0.16, seatScale = 0.90,
+    color = { 0.38, 0.30, 0.22 }, speed = 4, acceleration = 4, handling = 6, weight = 10, drift = 5, luck = 8,
+    quip = "Outlived three of these karts already." },
+
+  -- The Deadmines Run is already in the game; its final boss was not.
+  { id = "vancleef", name = "Edwin VanCleef", race = "Human", tag = "VANCLEEF",
+    model = { creature = 1774 }, icon = "Interface\\Icons\\Achievement_Character_Human_Male",
+    seatZ = -0.02, seatScale = 0.96,
+    color = { 0.22, 0.22, 0.28 }, speed = 7, acceleration = 6, handling = 8, weight = 4, drift = 7, luck = 4,
+    quip = "Left the mine once. Regrets coming back for this." },
 }
 
 function AK:GetRacer(id)
@@ -69,15 +104,32 @@ end
 --- Pick `count` distinct opponents. The old grid indexed AK.Racers directly,
 --- which handed slot 2 the "Yourself" entry -- so an AI raced as a copy of the
 --- player -- and repeated entries once the list wrapped.
-function AK:BuildAIField(exclude, count)
+---
+--- `rng` shuffles the pool before it is walked, seeded per race like every
+--- other roll. Without it this always returned the SAME faces in the SAME
+--- order: pool[1], pool[2], pool[3]... every single race, forever, because the
+--- walk started from the front of a list that never moved. Growing the roster
+--- past the grid size did nothing at all -- the extra racers were never
+--- reached. A stream is optional so callers without one (previews, tooling)
+--- still get a deterministic, order-stable answer.
+function AK:BuildAIField(exclude, count, rng)
   local pool = {}
   for _, racer in ipairs(self.Racers) do
     -- "you" is the player's own model and must never be given to an AI.
     if racer.id ~= "you" and racer ~= exclude then table.insert(pool, racer) end
   end
+  if rng then
+    -- Fisher-Yates, off the race's own seeded stream so the grid is
+    -- reproducible for ghosts and bug reports like everything else it rolls.
+    for i = #pool, 2, -1 do
+      local j = rng:Range(1, i)
+      pool[i], pool[j] = pool[j], pool[i]
+    end
+  end
   local field = {}
   for i = 1, count do
-    -- Walk the pool rather than repeating, so a full grid shows every face.
+    -- Walk the (now shuffled) pool rather than repeating, so a full grid shows
+    -- every face before any of them repeat.
     field[i] = pool[((i - 1) % #pool) + 1]
   end
   return field

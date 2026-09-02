@@ -97,7 +97,13 @@ end
 
 function Race:BuildRace(mode, options)
   options = options or {}
-  local track = AK:GetTrack(options.track or AK.db.selection.track)
+  -- Battle draws from the dedicated arena pool, never the circuit list: an
+  -- arena is authored short and tight on purpose, and picking it up from
+  -- AK.db.selection.track would silently hand a battle a full-length race
+  -- circuit again the moment the player had a normal track selected.
+  local track = mode == "battle"
+    and AK:GetArena(options.arena or AK.Arenas[1].id)
+    or AK:GetTrack(options.track or AK.db.selection.track)
   local race = {
     mode = mode,
     track = track,
@@ -135,15 +141,27 @@ function Race:BuildRace(mode, options)
       count = count + 1
       self:AddVehicle(race, AK:GetRacer(entry.racer), AK:GetKart(entry.kart), owner, owner == localName, count)
     end
+    -- Filler bots for the empty grid slots nobody joined. This used to index
+    -- AK.Racers directly by position, which does not exclude "you" -- entry 2
+    -- in the roster -- so a filler bot could be dealt the "you" spec, whose
+    -- model is `{ unit = "player" }`. Model:Dress resolves that unit locally on
+    -- EVERY client, so every viewer would have seen that bot driving around
+    -- wearing their OWN character, uncontrolled. BuildAIField already excludes
+    -- "you" for exactly this reason; the fill-in loop just was not using it.
+    local startCount = #race.vehicles
+    local filler = AK:BuildAIField(nil, AK.MAX_RACERS - startCount, race.rngAI)
     while #race.vehicles < AK.MAX_RACERS do
       local aiIndex = #race.vehicles + 1
-      self:AddVehicle(race, AK.Racers[(aiIndex - 1) % #AK.Racers + 1], AK.Karts[(aiIndex - 1) % #AK.Karts + 1], nil, false, aiIndex)
+      self:AddVehicle(race, filler[aiIndex - startCount], AK.Karts[(aiIndex - 1) % #AK.Karts + 1], nil, false, aiIndex)
     end
   else
     local chosen = AK:GetRacer(AK.db.selection.racer)
     self:AddVehicle(race, chosen, AK:GetKart(AK.db.selection.kart), "player", true, 1)
     local total = (mode == "time_trial" or mode == "practice") and 1 or math.min(AK.MAX_RACERS, (AK.db.settings.aiCount or 7) + 1)
-    local field = AK:BuildAIField(chosen, total - 1)
+    -- Shuffled per race off the seeded AI stream: without this the grid was the
+    -- same faces in the same order every single race, no matter how many
+    -- racers the roster actually holds -- see BuildAIField.
+    local field = AK:BuildAIField(chosen, total - 1, race.rngAI)
     while #race.vehicles < total do
       local index = #race.vehicles + 1
       self:AddVehicle(race, field[index - 1], AK.Karts[(index + 1) % #AK.Karts + 1], nil, false, index)
@@ -299,7 +317,12 @@ function Race:StartBattle()
   self:StopAttract()
   if self.current then self:Stop(false) end
   self:ResetControls()
-  local race = self:BuildRace("battle", { track = AK.db.selection.track })
+  -- A fresh arena each fight, so back-to-back battles do not open on the same
+  -- stage every time. Not fed through a seeded stream: this decides which
+  -- fixture gets played at all, not an outcome inside one, so it does not need
+  -- to be reproducible the way an item roll or an AI's line does.
+  local arena = AK.Arenas[math.random(#AK.Arenas)]
+  local race = self:BuildRace("battle", { arena = arena.id })
   race.laps = 999                       -- never completes by distance
   race.battle = true
   -- Spread the field around the loop so nobody starts in anyone's lap.
@@ -354,7 +377,11 @@ function Race:CheckBattleEnd(race)
 end
 
 function Race:StartGrandPrix()
-  local cup = AK.Cups[1]
+  -- Used to always be AK.Cups[1]: there was no selection UI and nothing else
+  -- read a chosen cup, so every other one authored (the Wild Worlds Cup, and
+  -- now the Frontier Cup) was dead data -- present in the file, unreachable in
+  -- the game. MainMenu's SELECT CUP screen now writes AK.db.selection.cup.
+  local cup = AK:GetCup(AK.db.selection.cup)
   local gp = { cup = cup, index = 1, points = {} }
   self:Start("grand_prix", { track = cup.tracks[1], grandPrix = gp })
 end

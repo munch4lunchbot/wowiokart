@@ -18,6 +18,7 @@ Data\Racers.lua
 Data\Karts.lua
 Data\Roster.lua
 Data\Tracks.lua
+Data\Arenas.lua
 Data\Items.lua
 Data\Achievements.lua
 Database.lua

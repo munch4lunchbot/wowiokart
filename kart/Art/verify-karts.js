@@ -26,7 +26,7 @@ const path = require("path");
 
 const ART = process.argv[2] || __dirname;
 const COL = [80, 176];
-const IDS = ["rocket", "mechano", "kodo", "griffon", "minecart", "chicken"];
+const IDS = ["rocket", "mechano", "kodo", "griffon", "minecart", "raptor", "ram", "chicken"];
 
 function load(file) {
   const b = fs.readFileSync(path.join(ART, file));

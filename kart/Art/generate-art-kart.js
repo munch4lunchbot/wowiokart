@@ -229,6 +229,80 @@ const KARTS = {
     },
   },
 
+  // Low and clawed, a tail counterweight sweeping out back-low and small
+  // raptor feet gripping the flanks. Aggressive and narrow, unlike anything
+  // else in the roster -- the closest thing here (griffon) reads as wings
+  // swept UP and OUT, where this reads as a body swept BACK and DOWN.
+  raptor: {
+    halfW: 70, radius: 12, wheelX: [32, 220], wheelR: 26,
+    seat: { cy: 58, hw: 34, hh: 26, r: 10 },
+    behind(put, x, y) {
+      // Tail: three tapering segments low and behind, well clear of the
+      // rider's head -- every point of it sits below row 96.
+      put(solid(capsule(x, y, 128, 70, 128, 96, 15)) * 0.95, 0.24, 0.42, 0.22);
+      put(solid(capsule(x, y, 128, 88, 108, 108, 10)) * 0.9, 0.22, 0.38, 0.20);
+      put(solid(capsule(x, y, 108, 104, 90, 118, 6)) * 0.85, 0.20, 0.34, 0.18);
+      // Clawed forearms, outboard and reaching UP well past the body top --
+      // the one part of this kart that lives in the scored "free" region, and
+      // shaped nothing like a feather fan or a swept wing: two bent limbs
+      // ending in a three-claw hand, elbow out and away from the centreline.
+      for (const dir of [-1, 1]) {
+        const ex = 128 + dir * 94;
+        put(solid(capsule(x, y, 128 + dir * 60, 96, ex, 50, 9)) * 0.95, 0.26, 0.44, 0.24);
+        put(solid(capsule(x, y, ex, 50, ex + dir * 8, 20, 7)) * 0.95, 0.28, 0.46, 0.25);
+        for (let k = -1; k <= 1; k++) {
+          put(solid(capsule(x, y, ex + dir * 8, 20, ex + dir * (8 + k * 9), 4, 3)) * 0.9, 0.14, 0.14, 0.16);
+        }
+      }
+      // Clawed feet, outboard and low -- pure personality, never near the
+      // rider column at all.
+      for (const dir of [-1, 1]) {
+        const fx = 128 + dir * 92;
+        put(solid(capsule(x, y, fx, 96, fx + dir * 14, 122, 9)) * 0.95, 0.26, 0.44, 0.24);
+        for (let k = 0; k < 3; k++) {
+          put(solid(capsule(x, y, fx + dir * 14, 122, fx + dir * (20 + k * 5), 134, 3)) * 0.9, 0.14, 0.14, 0.16);
+        }
+      }
+    },
+    front(put, x, y) {
+      // Toothy snout ornament, low-centre, and clawed tread marks.
+      put(solid(wedge(x, y, 128, 116, 148, 22)), 0.30, 0.48, 0.26);
+      for (const cx of [116, 140]) put(solid(wedge(x, y, cx, 132, 146, 4)) * 0.9, 0.92, 0.90, 0.80);
+      for (let cx = 70; cx <= 186; cx += 19) put(solid(capsule(x, y, cx, 104, cx + 6, 96, 3)) * 0.7, 0.16, 0.28, 0.15);
+    },
+  },
+
+  // Stocky and wide, with big curled horns rising well outboard of the body --
+  // the docs say horns belong outboard, and nothing else in the roster takes
+  // them this far up. Dwarf ram cavalry, not a kodo's straight bone spread.
+  ram: {
+    halfW: 84, radius: 6, wheelX: [30, 226], wheelR: 30,
+    seat: { cy: 56, hw: 50, hh: 30, r: 5 },
+    behind(put, x, y) {
+      for (const dir of [-1, 1]) {
+        const bx = 128 + dir * 66;
+        // Three-segment curl: out, up, and back in toward the centreline --
+        // outboard the whole way, so height is free to use.
+        put(solid(capsule(x, y, bx, 90, bx + dir * 26, 54, 11)) * 0.95, ...BONE);
+        put(solid(capsule(x, y, bx + dir * 26, 54, bx + dir * 14, 20, 9)) * 0.95, 0.90, 0.87, 0.76);
+        put(solid(capsule(x, y, bx + dir * 14, 20, bx - dir * 4, 8, 7)) * 0.9, 0.94, 0.91, 0.80);
+        // Ridged texture along the curl.
+        for (let k = 0; k < 4; k++) {
+          const t = 0.2 + k * 0.22;
+          put(solid(disc(x, y, bx + dir * 26 * t, 90 - t * 36, 3)) * 0.6, 0.68, 0.64, 0.52);
+        }
+      }
+    },
+    front(put, x, y) {
+      // Battering-ram faceplate, low and centred.
+      put(solid(roundRect(x, y, 128, 132, 44, 14, 6)), ...STEEL);
+      put(solid(roundRect(x, y, 128, 132, 34, 8, 4)), 0.30, 0.30, 0.34);
+      for (const cx of [96, 160]) put(solid(disc(x, y, cx, 132, 5)) * 0.9, ...COPPER);
+      // Wool tufts along the flanks.
+      for (let cx = 66; cx <= 190; cx += 14) put(solid(disc(x, y, cx, 118, 5)) * 0.5, 0.88, 0.86, 0.80);
+    },
+  },
+
   // Tail feathers fanning up BEHIND the rider, beak prow below.
   chicken: {
     halfW: 74, radius: 22, wheelX: [36, 220], wheelR: 26,

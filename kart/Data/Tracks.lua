@@ -395,6 +395,52 @@ AK.Tracks = {
     hazards = { "Mana Storm", "Void Spark", "Arcane Mine" },
     shortcut = "Blink through a portal at maximum speed.",
   },
+  -- ================================================================
+  -- THOUSAND NEEDLES MESA RUN -- The jump track. THREE ramps, the most in
+  -- the game, each launching over a real canyon gap rather than a token
+  -- rise. Moderate corners throughout; the lap is defined by elevation and
+  -- airtime, not by cornering technique. MK64 analogue: Kalimari Desert /
+  -- DK's Jungle Parkway's canyon jump, but the whole lap is built around it.
+  -- ================================================================
+  {
+    id = "thousandneedles", name = "Thousand Needles Mesa Run", subtitle = "Mind the gap. All of them.", theme = "THOUSAND NEEDLES",
+    sweep = 2.8,
+    length = 2100, laps = 3, color = { 0.62, 0.34, 0.20 }, road = { 0.58, 0.42, 0.28 },
+    skyTop = { 0.36, 0.20, 0.14 }, skyLow = { 0.92, 0.62, 0.38 }, glow = { 1.00, 0.78, 0.48 },
+    weather = "none", light = 0.96,
+    hazardPlan = {
+      { kind = "static", name = "Rockslide", count = 3, at = 0.30, spacing = 150, lateral = -0.4, radius = 3.2, slow = 1.3,
+        icon = "Interface\\Icons\\INV_Stone_15" },
+    },
+    offroad = "SAND",
+    surfaces = {
+      { from = 400, to = 620, onRoad = "SAND" },
+      { from = 1400, to = 1580, onRoad = "BOOST" },
+    },
+    layout = {
+      { len = 280, curve = 0, name = "Freewind Straight", width = 1.30 },
+      { len = 90, curve = -3.4, name = "Mesa Switchback", width = 0.86 },
+      { len = 140, curve = 1.2, grade = 4.0, name = "Rise to the Plateau", width = 1.05 },
+      -- First leap: the canyon gap that gives the track its name.
+      { len = 55, curve = 0, grade = 6.5, ramp = true, name = "Canyon Leap", width = 1.20 },
+      { len = 100, curve = 0, grade = -5.5, name = "Canyon Landing", width = 1.10 },
+      { len = 160, curve = 2.0, name = "Plateau Sweep", width = 1.08 },
+      -- Narrowest point on the lap; no ramp here, just nerve.
+      { len = 70, curve = 0, grade = 1.2, name = "Rope Crossing", width = 0.68 },
+      { len = 80, curve = -2.8, name = "Grimtotem Bend", width = 0.84 },
+      { len = 200, curve = 0, name = "Mirage Straight", width = 1.26 },
+      { len = 55, curve = 0, grade = 5.8, ramp = true, name = "Second Leap", width = 1.18 },
+      { len = 85, curve = 0, grade = -4.6, name = "Second Landing", width = 1.10 },
+      { len = 120, curve = 3.0, name = "Naga Coil", width = 0.92 },
+      { len = 90, curve = -1.4, grade = -2.6, name = "Descent Run", width = 1.00 },
+      { len = 60, curve = 0, grade = 5.0, ramp = true, name = "Final Leap", width = 1.16 },
+      { len = 80, curve = 0, grade = -3.8, name = "Final Landing", width = 1.08 },
+      { len = 170, curve = 1.6, name = "Highland Curve", width = 1.10 },
+      { len = 240, curve = 0, name = "Home Straight", width = 1.28 },
+    },
+    hazards = { "Rockslide", "Naga Ambush", "Harpy" },
+    shortcut = "Cut across the canyon rim and hope the wind is with you.",
+  },
 }
 
 function AK:GetTrack(id)
@@ -407,4 +453,10 @@ end
 AK.Cups = {
   { id = "eastern", name = "Eastern Kingdoms Cup", tracks = { "oribos", "stranglethorn", "ironforge", "deadmines" } },
   { id = "wild", name = "Wild Worlds Cup", tracks = { "durotar", "netherstorm", "elwynn", "stranglethorn" } },
+  { id = "frontier", name = "Frontier Cup", tracks = { "thousandneedles", "netherstorm", "oribos", "deadmines" } },
 }
+
+function AK:GetCup(id)
+  for _, cup in ipairs(self.Cups) do if cup.id == id then return cup end end
+  return self.Cups[1]
+end

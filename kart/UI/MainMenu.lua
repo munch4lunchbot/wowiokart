@@ -207,6 +207,7 @@ function Menu:BuildHome()
     { "SELECT RACER", "Choose a pilot with a distinct handling profile.", function() self:ShowSelection("racer") end },
     { "SELECT KART", "Pick an impossibly unsafe vehicle.", function() self:ShowSelection("kart") end },
     { "SELECT TRACK", "Choose a course from across Azeroth.", function() self:ShowSelection("track") end },
+    { "SELECT CUP", "Choose which four-race Grand Prix you'll run.", function() self:ShowSelection("cup") end },
     { "GRAND PRIX", "Four races. One moderately shiny trophy.", function() AK.Race:StartGrandPrix() end },
     { "MULTIPLAYER", "Host or join a party/raid race with other addon users.", function() self:ShowMultiplayer() end },
     { "TIME TRIAL", "No rivals, no items, race your own ghost.", function() AK.Race:Start("time_trial") end },
@@ -329,13 +330,16 @@ function Menu:ShowSelection(kind)
   self:HideDynamic()
   local page = self:AddDynamic(CreateFrame("Frame", nil, self.content))
   page:SetAllPoints()
-  local names = { racer = "CHOOSE YOUR RACER", kart = "CHOOSE YOUR KART", track = "CHOOSE YOUR TRACK" }
+  local names = { racer = "CHOOSE YOUR RACER", kart = "CHOOSE YOUR KART", track = "CHOOSE YOUR TRACK", cup = "CHOOSE YOUR CUP" }
   local header = UI:NewText(page, names[kind], 25, AK.COLORS.gold, "CENTER")
   header:SetPoint("TOP", 0, -28)
   local back = UI:NewButton(page, "BACK", 120, 32, function() self:ShowHome() end)
   back:SetPoint("TOPLEFT", 25, -25)
 
-  local entries = kind == "racer" and AK.Racers or (kind == "kart" and AK.Karts or AK.Tracks)
+  local entries = kind == "racer" and AK.Racers
+    or (kind == "kart" and AK.Karts)
+    or (kind == "cup" and AK.Cups)
+    or AK.Tracks
 
   -- Size the grid from the entry count, never from hard-coded card dimensions.
   --
@@ -397,6 +401,10 @@ function Menu:ShowSelection(kind)
         AK:ColorHex(AK.COLORS.muted), entry.quip or ""))
     elseif kind == "kart" then
       detail:SetText(("%s\nSPD %d  ACC %d  HND %d\nWEIGHT %d  DRIFT %d"):format(entry.description, entry.speed, entry.acceleration, entry.handling, entry.weight, entry.drift))
+    elseif kind == "cup" then
+      local names = {}
+      for _, trackId in ipairs(entry.tracks) do table.insert(names, AK:GetTrack(trackId).name) end
+      detail:SetText(("%d races\n%s"):format(#entry.tracks, table.concat(names, "\n")))
     else
       detail:SetText(("%s\n%s\n3 laps / %dm"):format(entry.subtitle, entry.shortcut, entry.length))
     end
