@@ -2003,7 +2003,14 @@ function RaceUI:RenderArches(race, camX, camZ)
     local index = first + slot - 1
     local archZ = index * spacing
     local dz = archZ - camZ
-    if dz > 0.6 and dz < archFar then
+    -- Dropped once you are underneath it, not at 0.6m. An arch is a flat
+    -- billboard 17m wide, and its projected size grows without bound as dz
+    -- falls -- at a metre out it is thousands of pixels across, so what the
+    -- player actually saw was two hard vertical bars pinned to the left and
+    -- right edges of the screen, sliding as they passed. A real gateway leaves
+    -- the frame overhead; a billboard cannot, so it stops being drawn instead.
+    -- By 6m the top of a 13m arch is already well above the screen.
+    if dz > 6 and dz < archFar then
       local worldX, worldY = self:RoadAt(self.route or race.track, archZ)
       local x, y, pixelsPerMetre = self:Project(dz, worldX, camX, worldY)
       -- 17m wide, 13m tall; the art's opening lines up with the road.
@@ -2132,7 +2139,11 @@ function RaceUI:RenderFinish(race, camX, camZ)
   -- Overhead gantry. Only worth drawing once it is close enough to read.
   local postWidth = math.max(1, pixelsPerMetre * 0.34)
   local postHeight = pixelsPerMetre * 5.2
-  local showGantry = postHeight > 16
+  -- Big enough to read, and not so close that the billboard has swollen past
+  -- the frame -- the same unbounded near-field growth the arches had. The
+  -- checkerboard on the ground keeps drawing right up to the line; it lies flat
+  -- and stays where it should. It is the upright gantry that blows up.
+  local showGantry = postHeight > 16 and dz > 6
   finish.leftPost:SetShown(showGantry)
   finish.rightPost:SetShown(showGantry)
   finish.banner:SetShown(showGantry)
@@ -2245,6 +2256,10 @@ local PROP_KINDS = {
 function RaceUI:BuildProps(route, style)
   if route.props then return route.props end
   local kinds = PROP_KINDS[style or "default"] or PROP_KINDS.default
+  -- Resolve each art path ONCE. RenderProps used to build it with a concat per
+  -- prop per frame, which is 54 short-lived strings every frame for a value
+  -- that never changes.
+  for _, kind in ipairs(kinds) do kind.artPath = kind.artPath or (ART .. kind.art) end
   -- Seed from the whole id, not its length: half the tracks share a name
   -- length and would otherwise grow byte-identical forests.
   local name = route.id or route.name or "route"
@@ -2325,7 +2340,16 @@ function RaceUI:RenderProps(race, camX, camZ)
         -- Nearer props draw over farther ones, matching the road strips.
         frame:SetFrameLevel(self.frame:GetFrameLevel() + 1
           + math.floor(AK.Math.Clamp(FAR_Z - dz, 1, 150)))
-        frame.art:SetTexture(ART .. kind.art)
+        -- Only when it actually changes, for the reason RenderKarts already
+        -- states: re-binding the same file every frame costs for nothing. Props
+        -- are the worse case of the two -- 54 of them against eight karts -- and
+        -- the path was being CONCATENATED here as well, so a fresh string was
+        -- allocated per prop per frame purely to hand back a texture the widget
+        -- was already showing. `artPath` is resolved once in BuildProps.
+        if frame.artApplied ~= kind.artPath then
+          frame.artApplied = kind.artPath
+          frame.art:SetTexture(kind.artPath)
+        end
         frame.art:SetVertexColor(tint[1] * shade, tint[2] * shade, tint[3] * shade, 1)
         -- A contact shadow is what stops a sprite looking pasted onto the
         -- grass; without one everything hovers.
@@ -2956,7 +2980,10 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
         frame.pad:SetAlpha((.34 + pulse * .30) * fog)
         frame.beam:Hide()
         frame.icon:SetSize(size * 1.42, math.max(minH, size * 0.32))
-        frame.icon:SetTexture(style.icon)
+        if frame.iconApplied ~= style.icon then
+          frame.iconApplied = style.icon
+          frame.icon:SetTexture(style.icon)
+        end
         frame.icon:SetVertexColor(color[1] * fog, color[2] * fog, color[3] * fog)
         -- Fixed width, pulsing only in brightness. A flat plate that also
         -- breathes in and out reads as sliding around on the road.
@@ -2972,7 +2999,10 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
         frame.beam:SetVertexColor(color[1], color[2], color[3], 1)
         frame.beam:SetAlpha((.10 + pulse * .12) * fog)
         frame.icon:SetSize(size, size)
-        frame.icon:SetTexture(style.icon)
+        if frame.iconApplied ~= style.icon then
+          frame.iconApplied = style.icon
+          frame.icon:SetTexture(style.icon)
+        end
         frame.icon:SetVertexColor(fog, fog, fog)
         frame.ring:SetSize(size * (1.05 + pulse * .10), math.max(2, size * 0.05))
         frame.ring:SetAlpha((.45 + pulse * .45) * fog)
@@ -3098,7 +3128,11 @@ function RaceUI:RenderHazards(race, camX, camZ)
       -- it with the hazard's own colour at least makes it read as an object in
       -- the world rather than a spellbook button someone dropped.
       frame.icon:SetShown(not ready)
-      frame.icon:SetTexture(hazard.icon or "Interface\\Icons\\Spell_Fire_SelfDestruct")
+      local hazardIcon = hazard.icon or "Interface\\Icons\\Spell_Fire_SelfDestruct"
+      if frame.iconApplied ~= hazardIcon then
+        frame.iconApplied = hazardIcon
+        frame.icon:SetTexture(hazardIcon)
+      end
       frame.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
       local tint = hazard.color or { 1, 1, 1 }
       frame.icon:SetVertexColor(tint[1], tint[2], tint[3])
@@ -3180,7 +3214,10 @@ function RaceUI:RenderProjectiles(race, camX, camZ)
       -- certain relative depths; the only consequence is undefined order
       -- between a shell and a bumper, which is not worth another band.
       shot:SetFrameLevel(self:DepthLevel("shot", dz))
-      shot.icon:SetTexture(item.icon)
+      if shot.iconApplied ~= item.icon then
+        shot.iconApplied = item.icon
+        shot.icon:SetTexture(item.icon)
+      end
       -- Item icons are WoW ability art with a baked border. Trimmed so a shell
       -- on the road stops reading as a spellbook button someone dropped.
       shot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
@@ -3499,7 +3536,10 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       if kart.model.SetDesaturation then kart.model:SetDesaturation(vehicle.stun > 0 and 1 or 0) end
       kart.icon:SetShown(not modelReady)
       kart.icon:SetSize(width * .6, width * .6)
-      kart.icon:SetTexture(vehicle.kart.icon)
+      if kart.iconApplied ~= vehicle.kart.icon then
+        kart.iconApplied = vehicle.kart.icon
+        kart.icon:SetTexture(vehicle.kart.icon)
+      end
 
       -- Deployed item, orbiting just behind the rear bumper.
       local held = vehicle.held and AK.Items[vehicle.held]
@@ -3511,7 +3551,10 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
         kart.heldIcon:ClearAllPoints()
         kart.heldIcon:SetPoint("CENTER", kart, "BOTTOM", sway, -width * 0.16)
         kart.heldIcon:SetSize(size, size)
-        kart.heldIcon:SetTexture(held.icon)
+        if kart.heldApplied ~= held.icon then
+          kart.heldApplied = held.icon
+          kart.heldIcon:SetTexture(held.icon)
+        end
         kart.heldIcon:SetVertexColor(unpack(held.tint or { 1, 1, 1 }))
         kart.heldGlow:ClearAllPoints()
         kart.heldGlow:SetPoint("CENTER", kart.heldIcon, "CENTER")

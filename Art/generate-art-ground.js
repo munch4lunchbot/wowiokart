@@ -49,32 +49,51 @@ const R = 256;
 // ---- road: cut stone slabs, 4x4 to the tile, with seams and wear ----
 // Real seams give the eye something to track as it rushes past, which is what
 // actually conveys speed. Uniform noise conveys nothing.
+// THE ROAD IS A SURFACE, NOT A FLOOR.
+//
+// This was 64px slabs -- four across a tile that repeats every 4.2m, so about
+// one seam per metre in BOTH directions -- with the groove darkening to 42%.
+// Rendered, that is seventeen hard dark lines across the road converging on the
+// vanishing point, on every track: it read as tiled paving, and on a forest
+// dirt road it read as tiled paving in a forest. The tile is also tinted per
+// track, so whatever is baked here has to work as asphalt, packed dirt, ice and
+// cavern floor at once -- which argues for aggregate and grain, and against
+// masonry.
+//
+// So: fewer and far softer seams (two slabs a tile, and a groove that shades
+// rather than draws a line), with the fine aggregate carrying the detail. The
+// surface still moves under you -- that is what sells speed -- without the road
+// being a grid.
 writeTGA("road.tga", R, R, (x, y) => {
-  const cell = R / 4;                       // 64px slabs
+  const cell = R / 2;                       // 128px slabs -- ~2.1m on the road
   const gx = Math.floor(x / cell), gy = Math.floor(y / cell);
   const lx = (x % cell) / cell, ly = (y % cell) / cell;
 
-  // Per-slab tone so the paving is not uniform.
+  // Per-slab tone, kept gentle: big flat patches of differing brightness read
+  // as panelling. This is a hint of unevenness, not a chequerboard.
   const slab = hash(gx, gy, 4, 7);
-  let v = 0.62 + slab * 0.26;
+  let v = 0.70 + slab * 0.10;
 
-  // Coarse staining and fine aggregate.
-  v += (fbm(x / 30, y / 30, 8, 11, 4) - 0.5) * 0.22;
-  v += (fbm(x / 2.2, y / 2.2, 116, 23, 2) - 0.5) * 0.13;
+  // Coarse staining and fine aggregate -- now the main event.
+  v += (fbm(x / 30, y / 30, 8, 11, 4) - 0.5) * 0.20;
+  v += (fbm(x / 2.2, y / 2.2, 116, 23, 2) - 0.5) * 0.17;
 
-  // Seams: dark groove with a lit upper lip, wobbling slightly.
-  const wob = (fbm(x / 12, y / 12, 20, 31, 2) - 0.5) * 0.05;
+  // Seams, as a soft shading trough rather than a drawn line. Widened and
+  // lightened together: a wide gentle dip disappears into the aggregate at
+  // speed, where a narrow black line stays crisp and stripes the whole road.
+  const wob = (fbm(x / 12, y / 12, 20, 31, 2) - 0.5) * 0.06;
   const dEdge = Math.min(lx, 1 - lx, ly, 1 - ly) + wob;
-  if (dEdge < 0.035) v *= 0.42 + dEdge * 8;         // groove
-  else if (dEdge < 0.055) v *= 1.14;                // chipped highlight
+  if (dEdge < 0.05) v *= 0.90 + dEdge * 2.0;
 
-  // Worn tyre paths: two darker bands running the length of the tile.
-  const lane = Math.min(Math.abs(x - R * 0.30), Math.abs(x - R * 0.70));
-  if (lane < 26) v *= 1 - 0.10 * (1 - lane / 26);
+  // The old "worn tyre paths" were keyed to TEXTURE space, so they repeated
+  // with the tile -- a pair of darker bands every 4.2m across the road, which
+  // is not what a tyre path is. Removed; the road's own shading (roadshade.tga)
+  // is what darkens toward the verges, and it is applied in world space.
 
-  // Occasional crack.
+  // Occasional crack, softened so it is a mark on the surface rather than a
+  // seam competing with the slab edges.
   const crack = fbm(x / 18, y / 90, 14, 41, 3);
-  if (crack > 0.74) v *= 0.80;
+  if (crack > 0.80) v *= 0.90;
 
   v = Math.max(0.12, Math.min(1.35, v));
   // Very slight warm cast so grey does not read as dead.

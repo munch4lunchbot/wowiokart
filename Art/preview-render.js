@@ -395,6 +395,29 @@ if (skyArt) {
     for (let x = 0; x < W; x++) blend(x, yy, g0[0] * .8, g0[1] * .8, g0[2] * .85, a);
   }
 }
+// ---------- surround: rock over the whole frame once actually under cover ----
+//
+// Mirrors RaceUI:RenderSurround, which this harness did not implement at all.
+// The per-band walls draw the tunnel as a portal, which is right on approach;
+// once inside, everything the portal does not cover -- outboard of the walls and
+// above the ceiling -- is also rock. Without it the preview showed open sky
+// above every tunnel roof, which is a defect in the PREVIEW that reads exactly
+// like a defect in the game, and a mirror that invents faults is worse than no
+// mirror at all.
+{
+  const depth = tunnelDepth(camZ);
+  if (depth > 0 && tex.rock) {
+    const tileP = Math.max(64, HH * 0.85);
+    const band = 0.86 * light;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const t = sample(tex.rock, (x / tileP) % 1, (y / tileP) % 1);
+        blend(x, y, t[0] * band * 1.02, t[1] * band * 0.97, t[2] * band * 0.92, depth * t[3]);
+      }
+    }
+  }
+}
+
 // ---------- road ----------
 const lift = T.camDepth * T.camHeight * HH;
 const nearZ = Math.max(1.2, lift / (T.horizon + HH + 60));
@@ -487,7 +510,10 @@ if (tex.arch && track.archSpacing) {
   const first = Math.ceil(camZ / track.archSpacing);
   for (let s = 3; s >= 0; s--) {
     const az = (first + s) * track.archSpacing, dz = az - camZ;
-    if (dz > 0.6 && dz < FAR_Z * 0.9) {
+    // Mirrors RaceUI:RenderArches -- dropped once you are under it (a billboard
+    // cannot leave the frame overhead, it just smears across the screen edges)
+    // and pulled in to where the road is still reliably on screen.
+    if (dz > 6 && dz < FAR_Z * 0.45) {
       const [x, y, ppm] = project(dz, bend(dz), roadHeight(az));
       const w = ppm * 17, h = w * 0.95;
       const f = clamp(1 - (dz / FAR_Z) * T.fogStrength * .8, .3, 1) * light;
