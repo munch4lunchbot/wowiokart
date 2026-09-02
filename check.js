@@ -446,6 +446,42 @@ const invisibleSurfaces = [];
   }
 }
 
+// --- items you cannot tell apart --------------------------------------------
+//
+// The shells are drawn white-cored on purpose so one texture makes the green,
+// the red and the spiny by vertex tint -- Art/generate-art-items.js says so in
+// its first three lines. Sharing a texture is therefore fine; sharing the
+// PICTURE THE PLAYER SEES is not. The item box applied no tint at all, so five
+// different items were the same white ball in your hand, and which shell you
+// are holding is the entire decision: one homes, one does not, one is aimed at
+// whoever is winning.
+const sameLookingItems = [];
+{
+  const file = path.join(ADDON, "Data", "Items.lua");
+  if (fs.existsSync(file)) {
+    const src = fs.readFileSync(file, "utf8");
+    const block = src.slice(src.indexOf("AK.Items = {"));
+    const seen = new Map();
+    const heads = [...block.matchAll(/^  (\w+) = \{$/gm)];
+    for (let i = 0; i < heads.length; i++) {
+      const body = block.slice(heads[i].index,
+        i + 1 < heads.length ? heads[i + 1].index : block.length);
+      const icon = (body.match(/icon = ([^,\n]+)/) || [, "?"])[1].trim();
+      const tint = (body.match(/tint = \{ ([^}]*) \}/) || [, "none"])[1].trim();
+      const look = icon + " | " + tint;
+      if (seen.has(look)) seen.get(look).push(heads[i][1]);
+      else seen.set(look, [heads[i][1]]);
+    }
+    for (const [look, ids] of seen) {
+      // A triple is deliberately the same item three times, and the HUD says
+      // "x3" beside it -- that pair is not a confusion.
+      const distinct = new Set(ids.map(id => id.replace(/^triple_/, "")));
+      if (ids.length > 1 && distinct.size > 1)
+        sameLookingItems.push(ids.join(", ") + "  are drawn identically (" + look + ")");
+    }
+  }
+}
+
 console.log("files: " + toc.length + " listed, " + onDisk.length + " on disk");
 if (missing.length) console.log("  MISSING (in toc, not on disk): " + missing.join(", "));
 if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted.join(", "));
@@ -473,10 +509,12 @@ console.log("screens that never fit themselves to the client: " + unscaled.lengt
 for (const u of unscaled) console.log("  " + u);
 console.log("surfaces the physics feels but the renderer never draws: " + invisibleSurfaces.length);
 for (const u of invisibleSurfaces) console.log("  " + u);
+console.log("items the player cannot tell apart: " + sameLookingItems.length);
+for (const u of sameLookingItems) console.log("  " + u);
 
 const bad = errors.length + leaks.size + missing.length + unlisted.length
   + tooNarrow.length + unanchored.length + clamped.length + tableCalls.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
-  + unfaded.length + unscaled.length + invisibleSurfaces.length;
+  + unfaded.length + unscaled.length + invisibleSurfaces.length + sameLookingItems.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);

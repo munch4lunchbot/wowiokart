@@ -113,13 +113,20 @@ function Terrain:Sample(track, distance, lateral)
   if offBy <= 0 then
     -- Still on the tarmac, unless the track paints a surface over the road
     -- (an icy patch, a mud strip) at this point.
+    --
+    -- The third return says whether the wheels are on the ROAD, which is not
+    -- the same question as which material they are on. Callers used to infer
+    -- "off road" from `material.id ~= "ROAD"`, so an ice patch painted ON the
+    -- tarmac read as leaving the course: Ironforge is 47% ice, so half of that
+    -- lap reported OFF ROAD, kicked up dirt and flashed the warning while the
+    -- kart was dead centre on the racing line.
     local painted = self:Painted(track, distance, lateral)
-    if painted then return painted, 1 end
-    return self.TYPES.ROAD, 0
+    if painted then return painted, 1, true end
+    return self.TYPES.ROAD, 0, true
   end
   -- Beyond the verge: which material, and how committed are we to it?
   local material = self:Get(self:OffroadAt(track, distance))
-  if not material.drivable then return material, 1 end
+  if not material.drivable then return material, 1, false end
   -- Ramp the penalty in over most of a road-width so brushing the edge is a
   -- warning rather than a wall.
   --
@@ -129,7 +136,7 @@ function Terrain:Sample(track, distance, lateral)
   -- narrow, "off the course" arrived with no usable margin in between. A longer
   -- ramp is what makes clipping the verge a decision rather than an accident.
   local blend = AK.Math.Clamp(offBy / (width * 0.70), 0, 1)
-  return material, blend
+  return material, blend, false
 end
 
 --- The material just off the road at this point in the lap.

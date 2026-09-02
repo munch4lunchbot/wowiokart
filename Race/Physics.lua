@@ -310,10 +310,10 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
   local edge = AK.Math.RoadWidth(route, vehicle.distance)
   vehicle.roadEdge = edge
   do
-    local material, blend = AK.Terrain.TYPES.ROAD, 0
+    local material, blend, onRoad = AK.Terrain.TYPES.ROAD, 0, true
     -- Airborne karts touch nothing, so they are always on clean air.
     if (vehicle.air or 0) <= 0 then
-      material, blend = AK.Terrain:Sample(route, vehicle.distance, vehicle.lateral)
+      material, blend, onRoad = AK.Terrain:Sample(route, vehicle.distance, vehicle.lateral)
     end
     if material.fall and blend > 0.9 then
       vehicle.falling = vehicle.falling or 0.01
@@ -326,7 +326,10 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
     end
     vehicle.material = material
     vehicle.materialBlend = blend
-    vehicle.offroad = blend > 0.05 and material.id ~= "ROAD" and material.id ~= "BOOST"
+    -- OFF ROAD means the wheels have LEFT THE ROAD, which Sample now answers
+    -- directly. Deriving it from the material meant every surface the track
+    -- paints across its own tarmac counted as leaving the course.
+    vehicle.offroad = not onRoad and blend > 0.05
   end
 
   do

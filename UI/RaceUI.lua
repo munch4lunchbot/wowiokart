@@ -174,6 +174,24 @@ local function makeWash(parent, layer, color, sublayer)
   return texture
 end
 
+--- Tint an item's icon with the item's own colour.
+---
+--- The shells are drawn white-cored ON PURPOSE -- Art/generate-art-items.js
+--- says so in its first three lines -- precisely so one texture makes the green,
+--- the red and the spiny by vertex tint. The projectile in flight does apply it.
+--- The item box never did, so five different items (green shell, red shell,
+--- spiny shell, and the triple versions of two of them) were the same white ball
+--- in your hand. Which shell you are holding is the entire decision in Mario
+--- Kart: one homes, one does not, one is aimed at whoever is winning.
+local function applyItemTint(texture, item)
+  local tint = item and item.tint
+  if tint then
+    texture:SetVertexColor(tint[1], tint[2], tint[3], 1)
+  else
+    texture:SetVertexColor(1, 1, 1, 1)
+  end
+end
+
 local function shade(color, factor, alpha)
   return { color[1] * factor, color[2] * factor, color[3] * factor, alpha or 1 }
 end
@@ -2085,6 +2103,18 @@ end
 -- --------------------------------------------------------------------------
 
 function RaceUI:RenderSky(race, camX)
+  -- UNDER A MOUNTAIN THERE IS NO SKY.
+  --
+  -- The tunnel fill is a full-screen quad on BACKGROUND sublevel 6, so it does
+  -- cover the sky, the clouds, the ridges and the treeline -- but only in
+  -- proportion to how far in you are, and `self.haze` sits a whole layer above
+  -- it on BORDER and was only ever dimmed, not hidden. The result in a tunnel
+  -- was a pale horizon band straight across the rock, with the odd ridge behind
+  -- it. Everything that belongs to the horizon is now taken down together, by
+  -- the same cover value the rock fades in with.
+  local cover = self.tunnelDepth or 0
+  local outside = AK.Math.Clamp(1 - cover * 1.35, 0, 1)
+  self.skylineAlpha = outside
   local horizon = self.T.horizon
   local screenW = self.halfWidth * 2
   local screenH = self.halfHeight * 2
@@ -2206,6 +2236,24 @@ function RaceUI:RenderSky(race, camX)
   applyGradient(self.ground, "VERTICAL",
     ground[1], ground[2], ground[3], 1,
     ground[1] * .28 + hazeMix[1] * .72, ground[2] * .28 + hazeMix[2] * .72, ground[3] * .28 + hazeMix[3] * .72, 1)
+
+  -- Take the whole horizon down together. Alpha rather than Hide, so entering
+  -- and leaving a tunnel is a transition rather than a switch -- and applied
+  -- last, so nothing above has just set an alpha of its own back to 1.
+  if outside < 1 then
+    self.sky:SetAlpha(outside)
+    self.skyGlow:SetAlpha(0.55 * outside)
+    self.mountain:SetAlpha((skyline.mtn and skyline.mtn.a or 1) * outside)
+    self.hillLine:SetAlpha((skyline.hill and skyline.hill.a or 1) * outside)
+    self.ring:SetAlpha(0.55 * outside)
+    for _, cloud in ipairs(self.clouds) do cloud:SetAlpha(self.T.cloudAlpha * outside) end
+    for _, tree in ipairs(self.trees) do tree:SetAlpha(outside) end
+    self.ground:SetAlpha(outside)
+  else
+    self.sky:SetAlpha(1)
+    self.ground:SetAlpha(1)
+    for _, tree in ipairs(self.trees) do tree:SetAlpha(1) end
+  end
 end
 
 --- Drive-through arches. Same rolling-window trick as the posts.
@@ -2542,7 +2590,16 @@ function RaceUI:RenderProps(race, camX, camZ)
   for _, prop in ipairs(props) do
     if shown >= PROPS then break end
     local dz = AK.Math.SignedLoopDistance(camZ % length, prop.distance, length)
-    if dz > 0.8 and dz < FAR_Z then
+    -- A TREE UNDER A MOUNTAIN IS NOT A TREE.
+    --
+    -- Props are child frames, so they draw ABOVE the tunnel rock rather than
+    -- behind it, and the only thing stopping them was a single gate on the
+    -- CAMERA's cover. That let a conifer stand inside the Frozen Tunnel for as
+    -- long as the camera had not finished entering -- which in the footage is
+    -- most of the tunnel, because the camera trails the kart and the cover
+    -- ramps over 14m. Each prop is now tested where IT stands.
+    if dz > 0.8 and dz < FAR_Z
+      and AK.TrackBuilder:TunnelDepth(route, prop.distance) < 0.5 then
       shown = shown + 1
       local frame = self.props[shown]
       -- camZ + dz, NOT prop.distance.
@@ -3174,7 +3231,10 @@ function RaceUI:RenderSurround(depth, band)
   -- soften, and leaving it up put a bright band across the middle of a tunnel.
   -- SetVertexColor already carries the haze's own .30 alpha and SetAlpha
   -- multiplies it, so this is a plain 1..0 scale, not a second alpha value.
-  if self.haze then self.haze:SetAlpha(1 - depth) end
+  -- The haze lives on BORDER, a whole layer above the rock, so it paints over
+  -- the tunnel no matter what the fill does. Under cover there is no horizon to
+  -- soften and it has to leave entirely, faster than the rock arrives.
+  if self.haze then self.haze:SetAlpha(AK.Math.Clamp(1 - depth * 1.6, 0, 1)) end
 end
 
 function RaceUI:RenderObjects(race, player, camX, camZ)
@@ -3224,11 +3284,20 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
   -- the track". Pulling the draw distance back to where the road is reliably on
   -- screen is what makes a pickup appear ON the road and simply grow.
   local objectFar = FAR_Z * 0.36
+  -- ANYTHING BEHIND THE KART IS BEHIND THE KART.
+  --
+  -- `dz` is measured from the CAMERA, which trails the kart by camBack -- so a
+  -- cutoff of 1.5m kept drawing things four and a half metres behind the driver,
+  -- at the size clamp and flung to the edge of the screen by the projection. In
+  -- the footage that is a dash panel filling the bottom-left corner of the
+  -- display, over the control buttons, while the kart is somewhere else. Objects
+  -- now leave as they pass under the kart, which is where they went.
+  local objectNear = tuning.camBack * 0.70
 
   local count = 0
   for _, object in ipairs(race.objects) do
     local dz = AK.Math.SignedLoopDistance(camZ % route.length, object.distance, route.length)
-    if dz > 1.5 and dz < objectFar and not object.hidden and self:OnRoute(race, object) then
+    if dz > objectNear and dz < objectFar and not object.hidden and self:OnRoute(race, object) then
       count = count + 1
       local entry = visible[count]
       if not entry then entry = {} visible[count] = entry end
@@ -3413,7 +3482,9 @@ function RaceUI:RenderHazards(race, camX, camZ)
   for _, hazard in ipairs(race.hazards or {}) do
     local dz = AK.Math.SignedLoopDistance(camZ % routeLength,
       hazard.distance % routeLength, routeLength)
-    if dz > 1.5 and dz < hazardFar then
+    -- Same as the pickups: past the kart is past the kart, not a wall of art
+    -- across the corner of the screen.
+    if dz > tuning.camBack * 0.70 and dz < hazardFar then
       hCount = hCount + 1
       local entry = hVisible[hCount]
       if not entry then entry = {} hVisible[hCount] = entry end
@@ -4121,9 +4192,11 @@ function RaceUI:Render(race)
 
   local camX, camZ = self:RenderRoad(race, player)
   self:RenderFork(race, player, camX, camZ)
-  -- Props are child frames, so they draw above the rock rather than behind it.
-  -- Underground there is no roadside to decorate anyway.
-  if (self.tunnelDepth or 0) < 0.85 then self:RenderProps(race, camX, camZ) end
+  -- Props are child frames, so they draw above the rock rather than behind it,
+  -- and underground there is no roadside to decorate. This gate was 0.85, which
+  -- is not "under cover" -- cover ramps in over 14m, so 0.85 is twelve metres
+  -- INSIDE the tunnel with the rock already almost opaque behind the trees.
+  if (self.tunnelDepth or 0) < 0.15 then self:RenderProps(race, camX, camZ) end
   self:RenderSky(race, camX)
   self:RenderPosts(race, camX, camZ)
   self:RenderArches(race, camX, camZ)
@@ -4244,6 +4317,8 @@ function RaceUI:Render(race)
     self.itemGlow:SetAlpha(0.30)
     local pop = ITEM_ICON + 9 * math.sin(race.elapsed * 24)
     self.itemIcon:SetSize(pop, pop)
+    self.itemIcon:SetShown(true)
+    applyItemTint(self.itemIcon, AK.Items[shown])
   else
     if self.roulette then
       self.roulette = nil
@@ -4254,8 +4329,15 @@ function RaceUI:Render(race)
     local slot = player.item and AK.Items[player.item]
     local held = player.held and AK.Items[player.held]
     local shown = slot or held
-    self.itemIcon:SetTexture(shown and shown.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-    self.itemIcon:SetDesaturated(not shown)
+    -- An empty box is an EMPTY BOX. It used to show a big desaturated question
+    -- mark, which reads as "you are holding something unidentified" rather than
+    -- as "you are holding nothing".
+    self.itemIcon:SetShown(shown ~= nil)
+    if shown then
+      self.itemIcon:SetTexture(shown.icon)
+      self.itemIcon:SetDesaturated(false)
+      applyItemTint(self.itemIcon, shown)
+    end
     if held and not slot then
       self.itemLabel:SetText("FIRE!")
       self.itemLabel:SetTextColor(unpack(AK.COLORS.lime))
