@@ -95,15 +95,43 @@ end
 -- top speed, so they must shed a third of it, exactly as a player must.
 local CURVE_GAIN = 0.002
 
-local function cornerSpeed(vehicle, curve, ai)
+--- The curvature above which these drivers commit to a drift. Must match the
+--- `corner` test further down, because a corner they will drift is a corner
+--- they may carry more speed into.
+local DRIFT_CORNER = 1.5
+
+--- Grip at a point on the lap, as a multiplier on steering authority.
+---
+--- Physics multiplies turn strength by the surface's steering AND its traction,
+--- so ice (1.10 x 0.22) leaves a kart a QUARTER of the authority it has on
+--- tarmac. Nothing in this file knew that: the field braked for Ironforge's
+--- corners as though its 1160m of ice were dry road, and Ironforge is 47% ice.
+--- The mistake was invisible while drifting did nothing and every corner was
+--- taken slowly anyway; it stops being invisible the moment corners are quick.
+local function surfaceGrip(track, distance)
+  local painted = AK.Terrain and AK.Terrain.Painted
+    and AK.Terrain:Painted(track, distance, 0)
+  if not painted then return 1 end
+  return (painted.steering or 1) * (painted.traction or 1)
+end
+
+local function cornerSpeed(vehicle, curve, ai, drifting, grip)
   curve = math.abs(curve)
   if curve < 0.12 then return math.huge end
   local push = AK.db.tuning.curvePush or 4.2
   if push <= 0 then return math.huge end
   local weightFactor = 0.75 + (vehicle.weight or 5) * 0.05
-  local authority = (vehicle.handling or 1) * 0.95
+  -- A DRIFTED CORNER IS A DIFFERENT CORNER.
+  --
+  -- This was the grip-limited speed, full stop -- correct while drifting did
+  -- nothing for your line, and wrong the moment it did. The field drifts every
+  -- corner above 1.5 and would then brake for it as though it were not, handing
+  -- a drifting player the entire advantage in every turn on the lap.
+  local steer = drifting and (AK.DRIFT_STEER or 1.30) or 1
+  local bite = drifting and (AK.DRIFT_BITE or 1) or 1
+  local authority = (vehicle.handling or 1) * 0.95 * steer * (grip or 1)
   local limit = math.sqrt(authority * vehicle.maxSpeed
-    / (CURVE_GAIN * push * weightFactor * curve))
+    / (CURVE_GAIN * push * weightFactor * curve * bite))
   return limit * (0.82 + (ai and ai.precision or 0.8) * 0.16)
 end
 
@@ -119,8 +147,12 @@ local function brakeTarget(race, vehicle, ai)
   if decel <= 0 then return nil end
   -- A confident driver leaves it later; a nervous one brakes early.
   local margin = 14 - ai.daring * 6
+  local willDrift = ai.daring > 0.4
   for ahead = 6, 110, 7 do
-    local limit = cornerSpeed(vehicle, AK.Math.RoadCurve(track, vehicle.distance + ahead), ai)
+    local curve = AK.Math.RoadCurve(track, vehicle.distance + ahead)
+    local limit = cornerSpeed(vehicle, curve, ai,
+      willDrift and math.abs(curve) > DRIFT_CORNER,
+      surfaceGrip(track, vehicle.distance + ahead))
     if vehicle.speed > limit then
       local needed = (vehicle.speed * vehicle.speed - limit * limit) / (2 * decel)
       if needed >= ahead - margin then return limit end
@@ -327,7 +359,7 @@ function AI:Controls(race, vehicle, dt)
   -- for a fifth of the race and banked almost no mini-turbos: all of the scrub,
   -- none of the boost. Curvature decides now, and the release is a decision
   -- about CHARGE rather than about the road running out.
-  local corner = math.abs(curveSoon) > 1.5 or math.abs(curveHere) > 1.2
+  local corner = math.abs(curveSoon) > DRIFT_CORNER or math.abs(curveHere) > 1.2
   ai.driftCool = math.max(0, (ai.driftCool or 0) - dt)
   -- How long a driver is willing to wait before cashing in. The bold hold out
   -- for a mega, the cautious take the mini and go; the tiers mirror the

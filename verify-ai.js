@@ -45,17 +45,46 @@ const KART = {
 // boosts banked is.
 const DRIFT_STAT = 5;
 const CHARGE_RATE = (0.30 + DRIFT_STAT * 0.05) * 2.2;   // per second, holding in
+// A mini-turbo only charges at full rate when the kart is LOADED -- see the
+// load gate in Physics:UpdateVehicle. The AI drifts on curvature above 1.5 and
+// the gate is full at 1.6, so it is usually near enough all of it; but "usually"
+// is not a model, and a harness that charges at full rate everywhere would hide
+// the day someone moves either number.
+const PHYS_SRC = fs.readFileSync(path.join(__dirname, "Race", "Physics.lua"), "utf8");
+const AI_SRC = fs.readFileSync(path.join(__dirname, "Race", "AI.lua"), "utf8");
+const LOAD_FLOOR = +(PHYS_SRC.match(/local DRIFT_LOAD_FLOOR = ([\d.]+)/) || [, 1])[1];
+const LOAD_FULL = +(PHYS_SRC.match(/local DRIFT_LOAD_FULL = ([\d.]+)/) || [, 1])[1];
+const chargeRateAt = curve => CHARGE_RATE *
+  (LOAD_FLOOR + (1 - LOAD_FLOOR) * Math.min(Math.abs(curve) / LOAD_FULL, 1));
 const TIERS = [[1.8, "mega"], [0.9, "super"], [0.35, "mini"]];
 const driftTarget = daring =>
   (daring > 0.85 ? 1.85 : daring > 0.62 ? 0.95 : 0.40) * (1.10 - DRIFT_STAT * 0.02);
 const tierOf = charge => (TIERS.find(t => charge > t[0]) || [, null])[1];
 
-function cornerSpeed(v, curve, precision) {
+// A drifted corner is a different corner: the field commits to a drift above
+// curvature DRIFT_CORNER, and while drifting the push is multiplied by
+// DRIFT_BITE and the steering by DRIFT_STEER. Modelling the brake against the
+// grip-limited speed while the kart is actually drifting through it is how the
+// AI ends up braking for a corner it was going to take flat.
+const DRIFT_BITE = +(PHYS_SRC.match(/local DRIFT_BITE = ([\d.]+)/) || [, 1])[1];
+const DRIFT_STEER = +(PHYS_SRC.match(/local DRIFT_STEER = ([\d.]+)/) || [, 1])[1];
+const DRIFT_CORNER = +(AI_SRC.match(/local DRIFT_CORNER = ([\d.]+)/) || [, 1.5])[1];
+
+// Grip at a point on the lap. Ice is steering 1.10 x traction 0.22 -- a QUARTER
+// of the authority the same kart has on tarmac -- and Ironforge is 47% ice.
+const TERRAIN_TABLE = require("./Art/terrain-table.js").readTerrain(__dirname);
+const gripOf = mat => {
+  const m = TERRAIN_TABLE[mat];
+  return m ? m.steering * m.traction : 1;
+};
+
+function cornerSpeed(v, curve, precision, drifting, grip = 1) {
   curve = Math.abs(curve);
   if (curve < 0.12) return Infinity;
   const weightFactor = 0.75 + v.weight * 0.05;
-  const authority = v.handling * 0.95;
-  return Math.sqrt(authority * v.maxSpeed / (CURVE_GAIN * PUSH * weightFactor * curve))
+  const authority = v.handling * 0.95 * (drifting ? DRIFT_STEER : 1) * grip;
+  const bite = drifting ? DRIFT_BITE : 1;
+  return Math.sqrt(authority * v.maxSpeed / (CURVE_GAIN * PUSH * weightFactor * curve * bite))
     * (0.82 + precision * 0.16);
 }
 
@@ -104,6 +133,13 @@ for (let i = 0; i < starts.length; i++) {
   const length = +(body.match(/length = (\d+), laps/) || [, 2600])[1];
   const cv = curveTable(body, length);
   const curveAt = d => cv.table[Math.floor(((d % length) + length) % length / cv.step) % cv.n];
+  const painted = [...body.matchAll(/\{ from = (\d+), to = (\d+), onRoad = "(\w+)" \}/g)]
+    .map(x => ({ from: +x[1], to: +x[2], grip: gripOf(x[3]) }));
+  const gripAt = d => {
+    const lapD = ((d % length) + length) % length;
+    for (const p of painted) if (lapD >= p.from && lapD <= p.to) return p.grip;
+    return 1;
+  };
 
   // Two laps, so the sim starts the second one at a realistic speed.
   // DARING=0.95 to check the mega-hunters, who hold out for the top tier and so
@@ -119,7 +155,9 @@ for (let i = 0; i < starts.length; i++) {
     for (let d = 0; d < length; d += 2) {
       let limit = null;
       for (let ahead = 6; ahead <= 110; ahead += 7) {
-        const l = cornerSpeed(KART, curveAt(d + ahead), precision);
+        const c = curveAt(d + ahead);
+        const l = cornerSpeed(KART, c, precision,
+          daring > 0.4 && Math.abs(c) > DRIFT_CORNER, gripAt(d + ahead));
         if (speed > l) {
           const needed = (speed * speed - l * l) / (2 * decel);
           if (needed >= ahead - margin) { limit = l; break; }
@@ -144,7 +182,7 @@ for (let i = 0; i < starts.length; i++) {
       if (!corner) wantDrift = false;
       if (wantDrift && charge >= target) { wantDrift = false; driftCool = 0.35; }
       if (wantDrift) {
-        charge = Math.min(2.5, charge + dt * CHARGE_RATE);
+        charge = Math.min(2.5, charge + dt * chargeRateAt(curveAt(d)));
         if (lap === 1) driftTime += dt;
       } else if (wasDrifting) {
         // Released -- either at the target or because the corner ran out. Both

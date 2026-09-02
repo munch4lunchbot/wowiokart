@@ -14,10 +14,16 @@ local Physics = AK.Physics
 -- Below 1, because a drift is how you get ROUND a corner you cannot grip. See
 -- the note at the use site. verify-drift.js reads these three by name.
 local DRIFT_BITE = 0.92
+-- How much more steering authority a drift gives. Named so the AI's own corner
+-- model can read the same number rather than assuming a grip-limited corner.
+local DRIFT_STEER = 1.30
 -- The share of the mini-turbo charge rate a drift earns off a corner, and the
 -- curvature at which it earns all of it. A straight banks almost nothing.
 local DRIFT_LOAD_FLOOR = 0.30
 local DRIFT_LOAD_FULL = 1.6
+-- Published, because Race/AI.lua works out how fast it can take a corner and
+-- has to use the same physics the corner is actually resolved with.
+AK.DRIFT_BITE, AK.DRIFT_STEER = DRIFT_BITE, DRIFT_STEER
 
 AK.WEIGHT_CLASSES = {
   light  = { accel = 1.22, top = 0.94, handling = 1.14, recovery = 1.35, mass = 0.68 },
@@ -461,7 +467,7 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
       else
         vehicle.skidding = 0
       end
-      local turnStrength = vehicle.handling * (vehicle.drifting and 1.30 or 1) * grip
+      local turnStrength = vehicle.handling * (vehicle.drifting and DRIFT_STEER or 1) * grip
       -- Ice barely slows you but takes away your ability to point the kart;
       -- mud does the opposite. Steering and traction are separate knobs.
       local surface = vehicle.material or AK.Terrain.TYPES.ROAD
