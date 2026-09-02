@@ -13,25 +13,30 @@ fs.mkdirSync(OUT, { recursive: true });
 // The offline preview used to multiply its tints past 1.0 to get a readable
 // image, which the game can never reproduce -- so the brightness the scene
 // needs is baked into the art itself and every tint stays inside [0,1].
-const OUTPUT_GAIN = {"rock.tga":1.4};
+// A target, not a gain: rock.tga was on x1.4 and 20.5% of it was pure white.
+// See Art/tga-level.js.
+const { levelTo } = require("./tga-level.js");
+const OUTPUT_LEVEL = { "rock.tga": [0.78, 0.115] };
 function writeTGA(name, w, h, fn) {
-  const gain = OUTPUT_GAIN[name] || 1;
   const header = Buffer.alloc(18);
   header[2] = 2;
   header.writeUInt16LE(w, 12);
   header.writeUInt16LE(h, 14);
   header[16] = 32;
   header[17] = 0x28;
+  const px = new Float64Array(w * h * 4);
+  for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i += 4) {
+    const [r, g, b, a] = fn(x, y, w, h);
+    px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = a;
+  }
+  const level = OUTPUT_LEVEL[name];
+  if (level) levelTo(px, w * h, level[0], level[1]);
   const body = Buffer.alloc(w * h * 4);
-  let i = 0;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const [r, g, b, a] = fn(x, y, w, h);
-      body[i++] = Math.max(0, Math.min(255, Math.round(b * gain * 255)));
-      body[i++] = Math.max(0, Math.min(255, Math.round(g * gain * 255)));
-      body[i++] = Math.max(0, Math.min(255, Math.round(r * gain * 255)));
-      body[i++] = Math.max(0, Math.min(255, Math.round(a * 255)));
-    }
+  for (let i = 0; i < w * h; i++) {
+    body[i * 4] = Math.max(0, Math.min(255, Math.round(px[i * 4 + 2] * 255)));
+    body[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(px[i * 4 + 1] * 255)));
+    body[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(px[i * 4] * 255)));
+    body[i * 4 + 3] = Math.max(0, Math.min(255, Math.round(px[i * 4 + 3] * 255)));
   }
   fs.writeFileSync(path.join(OUT, name), Buffer.concat([header, body]));
   console.log(name, w + "x" + h);

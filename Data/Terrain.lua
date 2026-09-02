@@ -21,7 +21,14 @@ Terrain.TYPES = {
   BOOST = {
     id = "BOOST", name = "Dash Panel",
     speed = 1.35, acceleration = 1.60, steering = 0.90, traction = 1.00,
+    -- The one material here that had no tint, and the one that least deserved
+    -- to be invisible: Oribos paints 230m of this across its road, worth +35%
+    -- top speed and +60% acceleration, and it looked exactly like tarmac. An
+    -- advantage nobody can see is not an advantage, it is a coincidence. Gold,
+    -- and the brightest thing on the surface, matching the dash pads the object
+    -- layer already draws.
     drift = 1.00, rumble = 0.05, drivable = true, boost = 1.4,
+    tint = { 1.00, 0.74, 0.20 },
   },
   -- Cuttable, but it costs you. This is the shortcut currency.
   GRASS = {

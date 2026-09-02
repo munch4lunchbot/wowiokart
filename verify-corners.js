@@ -74,10 +74,10 @@ const SPAN = +(BUILD.match(/local span = (\d+)/) || [, 15])[1];
 // on road. Its "easy" 1.6 sweepers are decisive corners; reporting them as
 // scenery would have had me flattening the one track whose whole idea is that
 // gentle corners become lethal.
-const TERRAIN = fs.readFileSync(path.join(ADDON, "Data", "Terrain.lua"), "utf8");
+const TERRAIN_TABLE = require("./Art/terrain-table.js").readTerrain(ADDON);
 const MATERIALS = {};
-for (const m of TERRAIN.matchAll(/(\w+) = \{\s*\n\s*id = "\w+", name = "[^"]*",\s*\n\s*speed = [\d.]+, acceleration = [\d.]+, steering = ([\d.]+), traction = ([\d.]+),/g))
-  MATERIALS[m[1]] = +m[2] * +m[3];
+for (const [id, mat] of Object.entries(TERRAIN_TABLE))
+  MATERIALS[id] = mat.steering * mat.traction;
 if (!MATERIALS.ICE) throw new Error("could not read the terrain table");
 
 const src = fs.readFileSync(path.join(ADDON, "Data", "Tracks.lua"), "utf8");

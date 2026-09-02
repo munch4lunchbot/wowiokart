@@ -412,6 +412,40 @@ const unscaled = [];
   }
 }
 
+// --- surfaces the physics can feel but the renderer never draws --------------
+//
+// Terrain:Painted has always been read by Physics -- it decides steering,
+// traction and grip -- and was never read by the renderer. Ironforge is 47% ice,
+// where steering authority drops to a QUARTER, and it looked exactly like dry
+// tarmac: half a circuit of invisible hazard. You cannot drive round what you
+// cannot see coming, and neither can the AI's excuse for hitting it.
+//
+// Two halves to the rule: the renderer has to ask, and every material a track
+// paints on its road has to have a colour to be drawn in.
+const invisibleSurfaces = [];
+{
+  const ui = path.join(ADDON, "UI", "RaceUI.lua");
+  if (fs.existsSync(ui)) {
+    const src = fs.readFileSync(ui, "utf8");
+    const i = src.indexOf("function RaceUI:RenderRoad");
+    const body = i === -1 ? "" : src.slice(i, src.indexOf("\nfunction RaceUI:", i + 10));
+    if (!/Terrain:Painted\(/.test(body))
+      invisibleSurfaces.push("UI/RaceUI.lua  RenderRoad never calls Terrain:Painted -- " +
+        "a surface the physics changes for is drawn as plain road");
+  }
+  const tracksFile = path.join(ADDON, "Data", "Tracks.lua");
+  if (fs.existsSync(path.join(ADDON, "Data", "Terrain.lua")) && fs.existsSync(tracksFile)) {
+    const terrain = require("./Art/terrain-table.js").readTerrain(ADDON);
+    const used = new Set();
+    for (const m of fs.readFileSync(tracksFile, "utf8").matchAll(/onRoad = "(\w+)"/g))
+      used.add(m[1]);
+    for (const id of used)
+      if (!terrain[id] || !terrain[id].tint)
+        invisibleSurfaces.push("Data/Terrain.lua  " + id +
+          " is painted on a road but has no tint, so it cannot be drawn");
+  }
+}
+
 console.log("files: " + toc.length + " listed, " + onDisk.length + " on disk");
 if (missing.length) console.log("  MISSING (in toc, not on disk): " + missing.join(", "));
 if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted.join(", "));
@@ -437,10 +471,12 @@ console.log("world renderers without an edge fade: " + unfaded.length);
 for (const u of unfaded) console.log("  " + u);
 console.log("screens that never fit themselves to the client: " + unscaled.length);
 for (const u of unscaled) console.log("  " + u);
+console.log("surfaces the physics feels but the renderer never draws: " + invisibleSurfaces.length);
+for (const u of invisibleSurfaces) console.log("  " + u);
 
 const bad = errors.length + leaks.size + missing.length + unlisted.length
   + tooNarrow.length + unanchored.length + clamped.length + tableCalls.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
-  + unfaded.length + unscaled.length;
+  + unfaded.length + unscaled.length + invisibleSurfaces.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);

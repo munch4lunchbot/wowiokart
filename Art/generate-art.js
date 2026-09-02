@@ -85,12 +85,25 @@ writeTGA("cloud.tga", 256, 128, (x, y, w, h) => {
 });
 
 // ---- conifer silhouette, so the treeline stops being green boxes ----
+//
+// NEUTRAL, deliberately. This used to return a hardcoded dark green -- canopy
+// (0.16, 0.34, 0.20), trunk (0.34, 0.26, 0.18) -- which meant every per-track
+// `treeTint` in RaceUI's SKYLINE table did nothing at all: multiplying dark
+// green by orange gives dark olive. Durotar's volcanic waste, Ironforge's
+// frost, the Deadmines' blue-grey and Stranglethorn's jungle were the same
+// green conifer with the brightness nudged. It is also why the treeline read as
+// a near-black cut-out on every track -- the art's own luminance was 0.24
+// BEFORE any tint was applied.
+//
+// A silhouette that exists to be tinted has to be pale and neutral, the way
+// hills.tga and mountain.tga already are. The colour lives in the track.
 writeTGA("tree.tga", 64, 128, (x, y, w, h) => {
   const u = (x + 0.5) / w, v = (y + 0.5) / h;
-  // Trunk below, canopy above.
+  // Trunk below, canopy above. A trunk reads as a trunk by being in shadow, not
+  // by being brown: brown baked in here would survive every tint.
   if (v > 0.82) {
     const trunk = Math.abs(u - 0.5) < 0.055 ? 1 : 0;
-    return [0.34, 0.26, 0.18, trunk];
+    return [0.52, 0.50, 0.48, trunk];
   }
   const t = v / 0.82;                       // 0 at tip, 1 at base
   const width = 0.06 + t * 0.42;
@@ -103,24 +116,16 @@ writeTGA("tree.tga", 64, 128, (x, y, w, h) => {
   if (!inside) return [0, 0, 0, 0];
   // Shade so the left side catches light.
   const shade = 0.55 + (0.5 - Math.abs(u - 0.42)) * 0.7 + fbm(x / 7, y / 7, 12, 11, 3) * 0.25;
-  return [0.16 * shade, 0.34 * shade, 0.20 * shade, 1];
+  const tone = Math.min(1, 0.50 + shade * 0.42);
+  return [tone, tone, tone, 1];
 });
 
-// ---- tileable road grit ----
-writeTGA("road.tga", 128, 128, (x, y) => {
-  const coarse = fbm(x / 16, y / 16, 8, 21, 4);
-  const fine = fbm(x / 4, y / 4, 32, 31, 3);
-  const v = 0.72 + coarse * 0.22 + fine * 0.16;
-  return [v, v, v, 1];
-});
-
-// ---- tileable grass / verge ----
-writeTGA("grass.tga", 128, 128, (x, y) => {
-  const clump = fbm(x / 20, y / 12, 6, 41, 4);
-  const blade = fbm(x / 3, y / 9, 42, 51, 2);
-  const v = 0.70 + clump * 0.26 + blade * 0.18;
-  return [v * 0.94, v, v * 0.86, 1];
-});
+// road.tga and grass.tga are NOT written here any more. They used to be, at
+// 128px and with no levelling, and generate-art-ground.js writes the real
+// 256px ones -- so whichever generator happened to run last decided which road
+// the game shipped with. Running this file alone silently replaced a levelled
+// road texture with a flat one that Art/verify-textures.js would then reject.
+// Art/build-art.js runs the whole set in order; there is one road now.
 
 // ---- vignette ----
 writeTGA("vignette.tga", 256, 256, (x, y, w, h) => {

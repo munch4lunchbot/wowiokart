@@ -144,6 +144,8 @@ const track = (function () {
     light: num(/light = ([\d.]+)/, 1), archSpacing: num(/archSpacing = (\d+)/, 0),
     style: (body.match(/style = "(\w+)"/) || [, null])[1],
     sweep: num(/sweep = ([\d.]+)/, 2.6), layout,
+    _painted: [...body.matchAll(/\{ from = (\d+), to = (\d+), onRoad = "(\w+)" \}/g)]
+      .map(x => ({ from: +x[1], to: +x[2], mat: x[3] })),
   };
 })();
 // Compile the layout exactly as TrackBuilder does.
@@ -189,7 +191,12 @@ const shade = (c, f) => [c[0] * f, c[1] * f, c[2] * f];
 // Mirrors RaceUI:RenderRoad -- lift the verge toward its own luminance rather
 // than by a per-channel multiply, which brightens by saturating.
 const grassLum = track.color[0]*0.30 + track.color[1]*0.59 + track.color[2]*0.11;
-const verge = track.color.map(c => (c * 0.58 + grassLum * 0.42) * 2.15 + .05);
+const verge = (() => {
+  const v = track.color.map(c => (c * 0.58 + grassLum * 0.42) * 2.15 + .05);
+  // Scaled, not clamped: SetVertexColor clamps per channel, which changes hue.
+  const peak = Math.max(...v);
+  return peak > 1 ? v.map(c => c / peak) : v;
+})();
 
 // Addon anchors from frame CENTRE with +y up; the framebuffer is +y down.
 const SX = x => HW + x, SY = y => HH - y;
@@ -321,17 +328,18 @@ if (tex.cloud) {
 // sizes are how the skyline shrank to nothing on larger client resolutions.
 const SKYLINE = {
   oribos:        {},
-  elwynn:        { mtn: { h: .12, tint: [.55, .64, .80], a: .85 }, hill: { h: .085, tint: [.34, .52, .30] } },
+  elwynn:        { mtn: { h: .12, tint: [.55, .64, .80], a: .85 }, hill: { h: .085, tint: [.34, .52, .30] },
+                   treeTint: [.26, .46, .27] },
   durotar:       { mtn: { h: .19, tint: [.60, .32, .22], a: .95 }, hill: { h: .07, tint: [.50, .30, .17] },
-                   treeTint: [1.0, .60, .34] },
+                   treeTint: [.46, .25, .13] },
   stranglethorn: { mtn: { h: .11, tint: [.38, .54, .52], a: .80 }, hill: { h: .10, tint: [.16, .36, .25] },
-                   treeTint: [.55, 1.0, .62] },
+                   treeTint: [.17, .42, .22] },
   ironforge:     { mtn: { h: .22, tint: [.80, .87, .97], a: 1.0 }, hill: { h: .08, tint: [.60, .70, .83] },
-                   treeTint: [.70, .82, 1.0] },
+                   treeTint: [.42, .55, .62] },
   deadmines:     { mtn: { h: .10, tint: [.20, .24, .40], a: .90 }, hill: { h: .06, tint: [.15, .19, .30] },
-                   treeTint: [.48, .55, .85] },
+                   treeTint: [.24, .28, .44] },
   netherstorm:   { mtn: { h: .15, tint: [.52, .33, .72], a: .90, float: .05 },
-                   treeArt: "shard", treeTint: [.80, .55, 1.15] },
+                   treeArt: "shard", treeTint: [.58, .38, .86] },
 };
 const skyline = SKYLINE[TRACK_ID] || {};
 // One full-width quad per layer, the ridge sliding inside it via texture
@@ -371,7 +379,7 @@ ridgeLayer(tex.hills, skyline.hill, -camX * 2.0);
 const spirey = track.style === "oribos" || skyline.treeArt === "shard";
 const skyArt = track.style === "oribos" ? tex.spire : (skyline.treeArt && tex[skyline.treeArt]) || tex.tree;
 if (skyArt) {
-  const tt = skyline.treeTint || [.80, 1, .86];
+  const tt = skyline.treeTint || [.30, .52, .31];
   const spread = HW * 2.4, slice = spread / TREES, drift = -camX * 3.4;
   const jit = (i, a, b) => { const v = Math.sin(i * a) * b; return v - Math.floor(v); };
   // Mirrors RaceUI:RenderSky's treeline: per-slot jitter, continuous depth, and
@@ -434,6 +442,15 @@ if (skyArt) {
   }
 }
 
+// Painted road surfaces, read from Data/Terrain.lua, so the preview shows the
+// ice the player has to be able to see coming.
+const PAINT = (() => {
+  const table = require("./terrain-table.js").readTerrain(path.join(__dirname, ".."));
+  const out = {};
+  for (const [id, mat] of Object.entries(table)) if (mat.tint) out[id] = mat.tint;
+  return out;
+})();
+
 // ---------- road ----------
 // Mirrors RaceUI:RenderRoad: under cover the whole scene loses its daylight,
 // and every ground surface washes toward the horizon as it recedes rather than
@@ -488,9 +505,15 @@ for (let r = rows.length - 1; r >= 0; r--) {
   if (tex.road) {
     const uR = T.roadHalf / ROAD_TILE;
     const band = Math.floor(row.segZ / 2.2) % 2 === 0;
+    // Mirrors RaceUI:RenderRoad -- a surface painted on the road is drawn.
+    const lapZ = ((row.segZ % track.length) + track.length) % track.length;
+    const zone = (track._painted || []).find(z => lapZ >= z.from && lapZ <= z.to);
+    const base = (zone && PAINT[zone.mat])
+      ? track.road.map((c, k) => c + (PAINT[zone.mat][k] - c) * 0.72)
+      : track.road;
     const tint = onRamp
       ? aerial([1.0, 0.74, 0.16], (band ? 1.0 : 0.55) * roadLight, mix)
-      : aerial(track.road, (dark ? .96 : 1) * roadLight, mix);
+      : aerial(base, (dark ? .96 : 1) * roadLight, mix);
     blit(tex.road, SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx,
       -uR, uR, v0 / ROAD_TILE, v1 / ROAD_TILE, tint, 1);
     if (tex.roadshade)

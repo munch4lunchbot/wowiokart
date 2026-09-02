@@ -5,23 +5,35 @@ const fs = require("fs"), path = require("path");
 const OUT = process.argv[2];
 fs.mkdirSync(OUT, { recursive: true });
 
-// In-game these textures are tinted with SetVertexColor, which CLAMPS at 1.0.
-// The offline preview used to multiply its tints past 1.0 to get a readable
-// image, which the game can never reproduce -- so the brightness the scene
-// needs is baked into the art itself and every tint stays inside [0,1].
-const OUTPUT_GAIN = {"road.tga":1.9,"grass.tga":1.65};
+// In-game these textures are tinted with SetVertexColor, which CLAMPS at 1.0,
+// so the brightness the scene needs is baked into the art itself and every tint
+// stays inside [0,1]. That baking is a TARGET, not a multiplier -- see
+// Art/tga-level.js for what happened when it was a multiplier.
+const { levelTo } = require("./tga-level.js");
+const OUTPUT_LEVEL = {
+  // name: [target mean luminance, target standard deviation]
+  "road.tga": [0.82, 0.090],
+  "grass.tga": [0.80, 0.110],
+};
 function writeTGA(name, w, h, fn) {
-  const gain = OUTPUT_GAIN[name] || 1;
   const header = Buffer.alloc(18);
   header[2] = 2; header.writeUInt16LE(w, 12); header.writeUInt16LE(h, 14);
   header[16] = 32; header[17] = 0x28;
-  const body = Buffer.alloc(w * h * 4); let i = 0;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+
+  const px = new Float64Array(w * h * 4);
+  for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i += 4) {
     const [r, g, b, a] = fn(x, y, w, h);
-    body[i++] = Math.round(Math.max(0, Math.min(1, b * gain)) * 255);
-    body[i++] = Math.round(Math.max(0, Math.min(1, g * gain)) * 255);
-    body[i++] = Math.round(Math.max(0, Math.min(1, r * gain)) * 255);
-    body[i++] = Math.round(Math.max(0, Math.min(1, a)) * 255);
+    px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = a;
+  }
+  const level = OUTPUT_LEVEL[name];
+  if (level) levelTo(px, w * h, level[0], level[1]);
+
+  const body = Buffer.alloc(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    body[i * 4] = Math.round(Math.max(0, Math.min(1, px[i * 4 + 2])) * 255);
+    body[i * 4 + 1] = Math.round(Math.max(0, Math.min(1, px[i * 4 + 1])) * 255);
+    body[i * 4 + 2] = Math.round(Math.max(0, Math.min(1, px[i * 4])) * 255);
+    body[i * 4 + 3] = Math.round(Math.max(0, Math.min(1, px[i * 4 + 3])) * 255);
   }
   fs.writeFileSync(path.join(OUT, name), Buffer.concat([header, body]));
   console.log(name, w + "x" + h);
@@ -72,18 +84,25 @@ writeTGA("road.tga", R, R, (x, y) => {
   // Per-slab tone, kept gentle: big flat patches of differing brightness read
   // as panelling. This is a hint of unevenness, not a chequerboard.
   const slab = hash(gx, gy, 4, 7);
-  let v = 0.70 + slab * 0.10;
+  let v = 0.70 + slab * 0.045;
 
-  // Coarse staining and fine aggregate -- now the main event.
-  v += (fbm(x / 30, y / 30, 8, 11, 4) - 0.5) * 0.20;
-  v += (fbm(x / 2.2, y / 2.2, 116, 23, 2) - 0.5) * 0.17;
+  // Coarse staining and fine aggregate -- the main event, and now by a wider
+  // margin. What the level pass fixes is the texture's total spread; what
+  // decides whether the road reads as PAVING or as a surface is how that spread
+  // is divided up. With the old blind gain clipping everything to white the
+  // split did not matter, because none of it survived. It does now: the first
+  // render with real detail showed a grid of slab edges converging on the
+  // vanishing point, on a dirt road. Slab-to-slab tone is halved and the seams
+  // softened; the aggregate carries the speed cue instead.
+  v += (fbm(x / 30, y / 30, 8, 11, 4) - 0.5) * 0.22;
+  v += (fbm(x / 2.2, y / 2.2, 116, 23, 2) - 0.5) * 0.21;
 
   // Seams, as a soft shading trough rather than a drawn line. Widened and
   // lightened together: a wide gentle dip disappears into the aggregate at
   // speed, where a narrow black line stays crisp and stripes the whole road.
   const wob = (fbm(x / 12, y / 12, 20, 31, 2) - 0.5) * 0.06;
   const dEdge = Math.min(lx, 1 - lx, ly, 1 - ly) + wob;
-  if (dEdge < 0.05) v *= 0.90 + dEdge * 2.0;
+  if (dEdge < 0.05) v *= 0.945 + dEdge * 1.1;
 
   // The old "worn tyre paths" were keyed to TEXTURE space, so they repeated
   // with the tile -- a pair of darker bands every 4.2m across the road, which
@@ -93,7 +112,7 @@ writeTGA("road.tga", R, R, (x, y) => {
   // Occasional crack, softened so it is a mark on the surface rather than a
   // seam competing with the slab edges.
   const crack = fbm(x / 18, y / 90, 14, 41, 3);
-  if (crack > 0.80) v *= 0.90;
+  if (crack > 0.84) v *= 0.93;
 
   v = Math.max(0.12, Math.min(1.35, v));
   // Very slight warm cast so grey does not read as dead.
@@ -109,7 +128,12 @@ writeTGA("grass.tga", R, R, (x, y) => {
   // Scattered darker tufts.
   if (fbm(x / 7, y / 5, 37, 81, 2) > 0.70) v *= 0.80;
   v = Math.max(0.10, Math.min(1.3, v));
-  return [v * 0.90, v, v * 0.80, 1];
+  // NEUTRAL, for the same reason tree.tga is: this is tinted per track, and any
+  // hue baked in here survives the tint. It used to be (0.90, 1.00, 0.80) x v --
+  // a green cast -- so Ironforge's snow and Tanaris's sand both came out sage
+  // green whenever the track's own colour clamped, which on a pale track is
+  // always. The colour belongs to the track.
+  return [v, v, v, 1];
 });
 
 // ---- road edge shading: dark at the verge, clear in the middle ----

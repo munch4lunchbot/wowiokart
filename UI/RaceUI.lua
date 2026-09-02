@@ -1241,19 +1241,30 @@ end
 -- `float` lifts the ridge off the horizon: Netherstorm's islands hang in the
 -- void. `treeArt`/`treeTint` restyle the near wall so a volcanic waste is not
 -- ringed by the same green conifers as a summer forest.
+-- `treeTint` is now the treeline's actual COLOUR, not a nudge.
+--
+-- tree.tga used to have dark green baked into it, so every entry here was
+-- multiplying a dark green by something and getting dark green back: Durotar's
+-- volcanic waste, Ironforge's frost and the Deadmines' blue-grey were all the
+-- same conifer, and the whole treeline read as a near-black cut-out on every
+-- track. The art is a pale neutral silhouette now (see Art/generate-art.js),
+-- so these values finally decide what a treeline looks like -- which means
+-- re-authoring them as real colours, dark enough to read against their own sky
+-- instead of as multipliers of something already dark.
 local SKYLINE = {
   oribos        = {},
-  elwynn        = { mtn = { h = .12, tint = { .55, .64, .80 }, a = .85 }, hill = { h = .085, tint = { .34, .52, .30 } } },
+  elwynn        = { mtn = { h = .12, tint = { .55, .64, .80 }, a = .85 }, hill = { h = .085, tint = { .34, .52, .30 } },
+                    treeTint = { .26, .46, .27 } },
   durotar       = { mtn = { h = .19, tint = { .60, .32, .22 }, a = .95 }, hill = { h = .07, tint = { .50, .30, .17 } },
-                    treeTint = { 1.0, .60, .34 } },
+                    treeTint = { .46, .25, .13 } },
   stranglethorn = { mtn = { h = .11, tint = { .38, .54, .52 }, a = .80 }, hill = { h = .10, tint = { .16, .36, .25 } },
-                    treeTint = { .55, 1.0, .62 } },
+                    treeTint = { .17, .42, .22 } },
   ironforge     = { mtn = { h = .22, tint = { .80, .87, .97 }, a = 1.0 }, hill = { h = .08, tint = { .60, .70, .83 } },
-                    treeTint = { .70, .82, 1.0 } },
+                    treeTint = { .42, .55, .62 } },
   deadmines     = { mtn = { h = .10, tint = { .20, .24, .40 }, a = .90 }, hill = { h = .06, tint = { .15, .19, .30 } },
-                    treeTint = { .48, .55, .85 } },
+                    treeTint = { .24, .28, .44 } },
   netherstorm   = { mtn = { h = .15, tint = { .52, .33, .72 }, a = .90, float = .05 },
-                    treeArt = "shard.tga", treeTint = { .80, .55, 1.15 } },
+                    treeArt = "shard.tga", treeTint = { .58, .38, .86 } },
 }
 
 --- Re-anchor everything pinned to the horizon. Called whenever the tuned
@@ -2167,7 +2178,10 @@ function RaceUI:RenderSky(race, camX)
     elseif treeTint then
       r, g, b = tone * treeTint[1], tone * treeTint[2], tone * treeTint[3]
     else
-      r, g, b = tone * 0.8, tone, tone * 0.86
+      -- Tracks with no treeTint of their own: a plain forest green. This was
+      -- (0.8, 1.0, 0.86), a near-white nudge that only worked at all because
+      -- the art underneath it was already dark green. It is not any more.
+      r, g, b = tone * 0.30, tone * 0.52, tone * 0.31
     end
     local haze = depth * 0.40
     tree:SetVertexColor(
@@ -2825,6 +2839,16 @@ function RaceUI:RenderRoad(race, player)
     (grassColor[2] * 0.58 + grassLum * 0.42) * 2.15 + .05,
     (grassColor[3] * 0.58 + grassLum * 0.42) * 2.15 + .05,
   }
+  -- SetVertexColor clamps each channel at 1.0 INDEPENDENTLY, which does not
+  -- dim a colour -- it changes its hue. Ironforge's pale blue snow lifts to
+  -- (1.49, 1.69, 1.82), all three clamp to white, and what you actually see is
+  -- whatever hue the grass texture has of its own. The track's colour is thrown
+  -- away entirely on every bright track. Scaling instead of clamping keeps the
+  -- hue and only costs brightness, which the lift had to spare anyway.
+  local vergePeak = math.max(vergeColor[1], vergeColor[2], vergeColor[3])
+  if vergePeak > 1 then
+    for c = 1, 3 do vergeColor[c] = vergeColor[c] / vergePeak end
+  end
 
   -- Derive the nearest sampled distance from the camera rather than fixing it:
   -- any tuned camera height or horizon must still put the first segment below
@@ -2941,8 +2965,25 @@ function RaceUI:RenderRoad(race, player)
         local hot = band and 1.0 or 0.55
         strip.road:SetVertexColor(aerial(1.0, 0.74, 0.16, hot * light, mix))
       else
-        strip.road:SetVertexColor(aerial(roadColor[1], roadColor[2], roadColor[3],
-          (dark and 0.96 or 1.0) * light, mix))
+        -- A SURFACE PAINTED ON THE ROAD HAS TO BE VISIBLE.
+        --
+        -- Terrain:Painted has always been read by the physics and never by the
+        -- renderer, so Ironforge's ice -- 47% of that lap, on which steering
+        -- authority drops to a QUARTER -- looked exactly like dry tarmac. Half
+        -- a circuit of invisible hazard, and the same for Elwynn's mud strip
+        -- and every water crossing in the game. You cannot drive round what you
+        -- cannot see coming.
+        local r, g, b = roadColor[1], roadColor[2], roadColor[3]
+        local paint = AK.Terrain:Painted(track, segZ, 0)
+        if paint and paint.tint then
+          -- Most of the way to the material's own colour: enough to read as a
+          -- different surface from a long way off, not so much that the track's
+          -- identity disappears under it.
+          r = r + (paint.tint[1] - r) * 0.72
+          g = g + (paint.tint[2] - g) * 0.72
+          b = b + (paint.tint[3] - b) * 0.72
+        end
+        strip.road:SetVertexColor(aerial(r, g, b, (dark and 0.96 or 1.0) * light, mix))
       end
       strip.road:Show()
 
