@@ -99,6 +99,31 @@ function Physics:UpdateRoute(race, vehicle)
   local track = race.track
   vehicle.route = vehicle.route or track
 
+  -- A kart another client owns does not get to choose its own road here: the
+  -- host decides, and the answer arrives in the snapshot. Guessing locally
+  -- would put it on a branch the host never took, and then every distance we
+  -- were sent would be measured against the wrong road.
+  if vehicle.remote then
+    vehicle.progress = AK.TrackBuilder:GlobalProgress(track, vehicle.route, vehicle.distance)
+    local previous = vehicle.lastProgress
+    if previous then
+      local delta = vehicle.progress - previous
+      if delta > track.length * 0.5 then
+        delta = delta - track.length
+      elseif delta < -track.length * 0.5 then
+        delta = delta + track.length
+      end
+      vehicle.odometer = (vehicle.odometer or 0) + delta
+    elseif vehicle.odometer == nil then
+      vehicle.odometer = vehicle.distance
+    end
+    vehicle.lastProgress = vehicle.progress
+    vehicle.lapProgress = vehicle.odometer
+    vehicle.lapsDone = math.max(0, math.floor(vehicle.odometer / track.length))
+    vehicle.lap = vehicle.lapsDone + 1
+    return
+  end
+
   if vehicle.route == track then
     -- Approaching a fork: your lateral position at the split decides your line.
     -- Committing by where you already are is what makes the choice a driving

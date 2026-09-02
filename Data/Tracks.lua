@@ -540,6 +540,132 @@ AK.Tracks = {
       },
     },
   },
+  -- ================================================================
+  -- ZANGARMARSH SPORE RUN -- The WATER track. Every other circuit treats
+  -- water as a hazard at the edge; here it is painted across the road four
+  -- times a lap, so the racing line is a series of decisions about which
+  -- crossing to take wide and which to take slow. Flat -- the least
+  -- elevation of any track -- because the surface is doing the work.
+  -- MK64 analogue: Koopa Troopa Beach.
+  -- ================================================================
+  {
+    id = "zangarmarsh", name = "Zangarmarsh Spore Run", subtitle = "The bog always wins", theme = "ZANGARMARSH",
+    sweep = 3.0,
+    length = 2300, laps = 3, color = { 0.16, 0.34, 0.38 }, road = { 0.40, 0.44, 0.42 },
+    skyTop = { 0.08, 0.18, 0.26 }, skyLow = { 0.34, 0.62, 0.60 }, glow = { 0.55, 0.95, 0.85 },
+    weather = "rain", light = 0.86,
+    hazardPlan = {
+      { kind = "static", name = "Spore Cloud", count = 4, at = 0.24, spacing = 170, lateral = 0.45, radius = 3.0, slow = 1.2,
+        icon = "Interface\\Icons\\Spell_Nature_Regenerate" },
+    },
+    offroad = "WATER",
+    surfaces = {
+      { from = 300, to = 430, onRoad = "WATER" },
+      { from = 900, to = 1010, onRoad = "MUD" },
+      { from = 1420, to = 1560, onRoad = "WATER" },
+      { from = 1980, to = 2080, onRoad = "MUD" },
+    },
+    layout = {
+      { len = 250, curve = 0, name = "Telredor Straight", width = 1.26 },
+      { len = 190, curve = 1.6, name = "Sporeggar Sweep", width = 1.10 },
+      { len = 120, curve = -1.0, name = "Bog Road", width = 1.06 },
+      { len = 90, curve = -3.2, name = "Marsh Hairpin", width = 0.82 },
+      { len = 160, curve = 0.8, name = "Fen Crossing", width = 1.04 },
+      { len = 130, curve = 1.4, grade = 2.2, name = "Cap Climb", width = 1.00 },
+      -- Under a giant mushroom cap rather than through rock.
+      { len = 180, curve = -1.2, name = "Under the Cap", width = 0.94, tunnel = true },
+      { len = 110, curve = 0.6, grade = -2.0, name = "Cap Exit", width = 1.02, tunnel = true },
+      { len = 50, curve = 0, grade = 4.4, ramp = true, name = "Root Launch", width = 1.18 },
+      { len = 85, curve = 0, grade = -3.4, name = "Root Landing", width = 1.10 },
+      { len = 210, curve = 2.0, name = "Serpent Lake", width = 1.06 },
+      { len = 140, curve = -1.6, name = "Lagoon Bend", width = 1.08 },
+      { len = 70, curve = 3.4, name = "Reed Kink", width = 0.84 },
+      { len = 70, curve = -3.4, name = "Reed Kink II", width = 0.84 },
+      { len = 180, curve = 0.8, name = "Umbrafen Run", width = 1.14 },
+      { len = 240, curve = 0, name = "Home Straight", width = 1.28 },
+    },
+    hazards = { "Spore Cloud", "Marsh Strider", "Naga Patrol" },
+    shortcut = "Wade the shallows instead of going round the lagoon.",
+    branches = {
+      {
+        id = "the_shallows", name = "The Shallows", side = -1,
+        from = 0.550, to = 0.680, length = 225, sweep = 1.6,
+        offroad = "WATER",
+        surfaces = {
+          { from = 0, to = 225, onRoad = "WATER" },
+        },
+        layout = {
+          { len = 46, curve = -1.8, name = "The Shallows", width = 0.68 },
+          { len = 50, curve = -2.6, width = 0.62 },
+          { len = 42, curve = 1.6, width = 0.66 },
+          { len = 47, curve = 2.4, width = 0.64 },
+          { len = 40, curve = -1.0, width = 0.72 },
+        },
+      },
+    },
+  },
+  -- ================================================================
+  -- ICECROWN SPIRE DESCENT -- The ELEVATION track. Two long falls and two
+  -- hard climbs, so more of this lap is spent going up or down than on the
+  -- level -- the crest hides the road ahead more often than anywhere else,
+  -- and a corner you cannot see yet is the whole difficulty.
+  -- MK64 analogue: Wario Stadium's big rises, on a gothic circuit.
+  -- ================================================================
+  {
+    id = "icecrown", name = "Icecrown Spire Descent", subtitle = "All downhill. Twice.", theme = "ICECROWN",
+    sweep = 2.7,
+    length = 2250, laps = 3, color = { 0.16, 0.20, 0.30 }, road = { 0.42, 0.46, 0.54 },
+    skyTop = { 0.02, 0.04, 0.10 }, skyLow = { 0.20, 0.30, 0.46 }, glow = { 0.58, 0.86, 1.00 },
+    weather = "snow", light = 0.76,
+    hazardPlan = {
+      { kind = "patrol", name = "Gargoyle", count = 3, at = 0.16, spacing = 200, sweep = 0.85, radius = 3.1, reaction = "launch",
+        icon = "Interface\\Icons\\Spell_Shadow_RaiseDead" },
+    },
+    offroad = "SNOW",
+    surfaces = {
+      { from = 260, to = 560, onRoad = "ICE" },
+      { from = 1470, to = 1690, onRoad = "ICE" },
+    },
+    layout = {
+      { len = 260, curve = 0, name = "Ramparts Straight", width = 1.26 },
+      -- First fall: 320m of descent, on ice.
+      { len = 150, curve = -1.8, grade = -2.6, name = "First Descent", width = 1.10 },
+      { len = 170, curve = -1.2, grade = -3.0, name = "Falling Ramp", width = 1.06 },
+      { len = 80, curve = 3.6, name = "Gargoyle Hairpin", width = 0.80 },
+      { len = 130, curve = 0.6, grade = 4.2, name = "Spire Climb", width = 1.00 },
+      { len = 190, curve = 1.4, name = "Frozen Arches", width = 0.94, tunnel = true },
+      { len = 120, curve = -0.8, grade = -2.4, name = "Arch Exit", width = 1.02, tunnel = true },
+      { len = 55, curve = 0, grade = 5.2, ramp = true, name = "Saronite Jump", width = 1.18 },
+      { len = 95, curve = 0, grade = -4.4, name = "Saronite Landing", width = 1.10 },
+      -- Second fall, and the longest single descent in the game.
+      { len = 220, curve = -1.6, grade = -2.2, name = "The Long Fall", width = 1.12 },
+      { len = 60, curve = -3.8, name = "Crypt Kink", width = 0.80 },
+      { len = 60, curve = 3.8, name = "Crypt Kink II", width = 0.80 },
+      { len = 175, curve = 1.2, grade = 3.4, name = "Return Climb", width = 1.04 },
+      { len = 140, curve = -1.0, name = "Upper Terrace", width = 1.10 },
+      { len = 90, curve = 2.8, name = "Throne Bend", width = 0.88 },
+      { len = 250, curve = 0, name = "The Approach", width = 1.24 },
+    },
+    hazards = { "Gargoyle", "Ice Shard", "Saronite Chunk" },
+    shortcut = "Drop down the broken stair instead of taking the terrace.",
+    branches = {
+      {
+        id = "broken_stair", name = "Broken Stair", side = 1,
+        from = 0.240, to = 0.370, length = 220, sweep = 1.5,
+        offroad = "SNOW",
+        surfaces = {
+          { from = 60, to = 150, onRoad = "ICE" },
+        },
+        layout = {
+          { len = 44, curve = 2.0, name = "Broken Stair", width = 0.66, tunnel = true },
+          { len = 48, curve = 0, grade = -4.2, width = 0.62, tunnel = true },
+          { len = 42, curve = -2.4, width = 0.64, tunnel = true },
+          { len = 46, curve = 1.8, width = 0.66, tunnel = true },
+          { len = 40, curve = -1.2, width = 0.72, tunnel = true },
+        },
+      },
+    },
+  },
 }
 
 function AK:GetTrack(id)
@@ -549,10 +675,15 @@ function AK:GetTrack(id)
   return AK.TrackBuilder:Compile(self.Tracks[1])
 end
 
+-- Every track appears in at least one cup. Zangarmarsh and Icecrown were
+-- reachable only from QUICK RACE when they were added, which makes a circuit
+-- half-shipped: the Grand Prix is where a track is actually driven in anger.
+-- Twelve slots over ten tracks means two repeats; they are the two that suit
+-- being run twice at different points in a season.
 AK.Cups = {
   { id = "eastern", name = "Eastern Kingdoms Cup", tracks = { "oribos", "stranglethorn", "ironforge", "deadmines" } },
-  { id = "wild", name = "Wild Worlds Cup", tracks = { "durotar", "netherstorm", "elwynn", "stranglethorn" } },
-  { id = "frontier", name = "Frontier Cup", tracks = { "thousandneedles", "netherstorm", "oribos", "deadmines" } },
+  { id = "wild", name = "Wild Worlds Cup", tracks = { "durotar", "elwynn", "zangarmarsh", "netherstorm" } },
+  { id = "frontier", name = "Frontier Cup", tracks = { "thousandneedles", "icecrown", "oribos", "durotar" } },
 }
 
 function AK:GetCup(id)

@@ -93,46 +93,93 @@ function Net:SendInput(race)
   self:Send({ "INPUT", race.network.session, self:PlayerName(), c.left and "1" or "0", c.right and "1" or "0", c.drift and "1" or "0", c.itemPulse and "1" or "0" }, "WHISPER", race.network.host)
 end
 
+-- WoW drops an addon message over 255 bytes on the floor, silently. The
+-- snapshot used to flush every THREE vehicles regardless of how long those
+-- three actually were, which is not a size limit -- it is a guess that happens
+-- to hold for short names and short item ids. A full-length character name plus
+-- two eighteen-character item ids ("triple_green_shell") puts one entry at 89
+-- bytes; three of those plus the header is 292, and the whole snapshot vanishes
+-- with no error anywhere. The player just sees the field stop moving.
+--
+-- So: items go on the wire as their AK.ItemIndex number rather than their name,
+-- and the batch is flushed on MEASURED length instead of a count.
+-- The cap applies to the whole message body, which is "STATE", the session id
+-- and the batch joined by tabs -- NOT to the batch alone. Budgeting only the
+-- batch is how a first attempt at this still overflowed: 240 bytes of entries
+-- plus a 23-byte header is 263. Derived from the real session id rather than
+-- assumed, since that is the part whose length is not known up front. 250
+-- leaves a few bytes of margin under the hard 255.
+local MAX_MESSAGE = 250
+
 function Net:BroadcastSnapshot(race)
   if not race.network or not race.network.isHost then return end
   self.snapshotClock = self.snapshotClock + race.delta
   if self.snapshotClock < .10 then return end
   self.snapshotClock = 0
-  local batch = {}
+  local batch, size = {}, 0
+  local session = race.network.session
+  -- "STATE" + tab + session + tab
+  local budget = MAX_MESSAGE - (5 + 1 + #tostring(session) + 1)
+  local function flush()
+    if #batch == 0 then return end
+    self:Send({ "STATE", session, table.concat(batch, "~") })
+    wipe(batch)
+    size = 0
+  end
   for _, vehicle in ipairs(race.vehicles) do
     -- Held item and the hit-reaction timers ride along, or none of the new
     -- mechanics (trailing shields, spin-outs, airtime, shrinking) are visible
     -- to anyone but the host.
-    table.insert(batch, table.concat({
+    local entry = table.concat({
       vehicle.networkId, math.floor(vehicle.distance), math.floor(vehicle.lateral * 100),
-      math.floor(vehicle.speed * 10), vehicle.item or "-", math.floor((vehicle.boostTime or 0) * 10),
-      vehicle.finished and "1" or "0", vehicle.held or "-",
+      math.floor(vehicle.speed * 10),
+      vehicle.item and AK.ItemIndex[vehicle.item] or 0,
+      math.floor((vehicle.boostTime or 0) * 10),
+      vehicle.finished and "1" or "0",
+      vehicle.held and AK.ItemIndex[vehicle.held] or 0,
       math.floor((vehicle.spin or 0) * 10), math.floor((vehicle.air or 0) * 10),
       math.floor((vehicle.shrunk or 0) * 10),
-    }, ","))
-    if #batch == 3 then
-      self:Send({ "STATE", race.network.session, table.concat(batch, "~") })
-      wipe(batch)
-    end
+      -- WHICH ROAD that distance is measured along. `distance` is route-local
+      -- and resets to 0 the moment a kart commits to a branch, so without this
+      -- a racer taking a shortcut was drawn on everyone else's screen at the
+      -- same number of metres along the MAIN line -- flung back to near the
+      -- start and then snapping forward again when they rejoined. Harmless
+      -- while three tracks had branches and nobody used them; now every track
+      -- has one.
+      (vehicle.route and vehicle.route ~= race.track and vehicle.route.index) or 0,
+    }, ",")
+    -- +1 for the "~" this entry will need once it is not the first.
+    if size > 0 and size + #entry + 1 > budget then flush() end
+    batch[#batch + 1] = entry
+    size = size + #entry + 1
   end
-  if #batch > 0 then self:Send({ "STATE", race.network.session, table.concat(batch, "~") }) end
+  flush()
 end
 
 function Net:ApplySnapshot(race, data)
   if not race.network or race.network.isHost then return end
   for entry in string.gmatch(data or "", "([^~]+)") do
     local owner, distance, lateral, speed, item, boost, finished,
-      held, spin, air, shrunk = strsplit(",", entry)
+      held, spin, air, shrunk, routeIndex = strsplit(",", entry)
     local vehicle = race.byNetworkId[owner]
     if vehicle then
+      -- Set the road BEFORE the distance, since the distance is measured along
+      -- it. A packet from an older build has no route field, which reads as 0
+      -- and puts the kart on the main line -- the old behaviour exactly.
+      local branchIndex = tonumber(routeIndex) or 0
+      local branches = race.track.branches
+      vehicle.route = (branchIndex > 0 and branches and branches[branchIndex]) or race.track
       vehicle.distance = tonumber(distance) or vehicle.distance
       vehicle.lateral = (tonumber(lateral) or 0) / 100
       vehicle.speed = (tonumber(speed) or 0) / 10
-      vehicle.item = item ~= "-" and item or nil
+      -- Items arrive as an AK.ItemIndex number; 0 is "none". A packet from an
+      -- older build carrying a raw id or "-" tonumbers to nil and reads as no
+      -- item, which is a cosmetic miss rather than a desync.
+      vehicle.item = AK.ItemOrder[tonumber(item) or 0]
       vehicle.boostTime = (tonumber(boost) or 0) / 10
       vehicle.finished = finished == "1"
       -- Newer fields are optional so a client on an older build still races.
-      vehicle.held = (held and held ~= "-") and held or nil
+      vehicle.held = AK.ItemOrder[tonumber(held) or 0]
       vehicle.spin = (tonumber(spin) or 0) / 10
       vehicle.air = (tonumber(air) or 0) / 10
       vehicle.shrunk = (tonumber(shrunk) or 0) / 10

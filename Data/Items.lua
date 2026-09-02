@@ -117,6 +117,15 @@ AK.ItemOrder = {
   "fake_box", "spiny_shell", "boo", "star", "bolt",
 }
 
+-- Reverse lookup, for anything that has to say WHICH item in as few characters
+-- as possible. The multiplayer snapshot is the caller that matters: it used to
+-- put the raw id on the wire, and "triple_green_shell" is eighteen bytes of a
+-- 255-byte addon message, twice over (carried item and held item). check.js
+-- verifies this covers every entry in AK.Items, because an item missing from
+-- the order would encode as nothing and arrive as nothing.
+AK.ItemIndex = {}
+for index, id in ipairs(AK.ItemOrder) do AK.ItemIndex[id] = index end
+
 -- Each power-up gets its own voice, so you can tell what fired without looking.
 AK.ITEM_SOUND = {
   mushroom = "boost",

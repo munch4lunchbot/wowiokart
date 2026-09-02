@@ -319,6 +319,28 @@ const orphanAchievements = [];
   }
 }
 
+// --- items missing from AK.ItemOrder ----------------------------------------
+//
+// ItemOrder is not just the roulette's display order any more: Network.lua puts
+// an item on the wire as its index into it. An item absent from the list encodes
+// as 0, which decodes as "no item" -- so a shell nobody can see, held by a racer
+// who appears to be carrying nothing. It also silently drops out of the pickup
+// reel. Both failures are invisible until someone wonders where their item went.
+const unorderedItems = [];
+{
+  const file = path.join(ADDON, "Data", "Items.lua");
+  if (fs.existsSync(file)) {
+    const src = fs.readFileSync(file, "utf8");
+    const itemsBlock = (src.match(/AK\.Items\s*=\s*\{([\s\S]*?)\n\}/) || [, ""])[1];
+    const ids = [...itemsBlock.matchAll(/^\s{2}(\w+)\s*=\s*\{/gm)].map(m => m[1]);
+    const orderBlock = (src.match(/AK\.ItemOrder\s*=\s*\{([\s\S]*?)\}/) || [, ""])[1];
+    const ordered = new Set([...orderBlock.matchAll(/"(\w+)"/g)].map(m => m[1]));
+    for (const id of ids) {
+      if (!ordered.has(id)) unorderedItems.push(id + "  -- in AK.Items but not AK.ItemOrder");
+    }
+  }
+}
+
 console.log("files: " + toc.length + " listed, " + onDisk.length + " on disk");
 if (missing.length) console.log("  MISSING (in toc, not on disk): " + missing.join(", "));
 if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted.join(", "));
@@ -338,9 +360,11 @@ console.log("lap-relative distances in absolute space: " + lapRelative.length);
 for (const l of lapRelative) console.log("  " + l);
 console.log("unearnable achievements: " + orphanAchievements.length);
 for (const a of orphanAchievements) console.log("  " + a);
+console.log("items missing from ItemOrder: " + unorderedItems.length);
+for (const i of unorderedItems) console.log("  " + i);
 
 const bad = errors.length + leaks.size + missing.length + unlisted.length
   + tooNarrow.length + unanchored.length + clamped.length + tableCalls.length
-  + lapRelative.length + orphanAchievements.length;
+  + lapRelative.length + orphanAchievements.length + unorderedItems.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);

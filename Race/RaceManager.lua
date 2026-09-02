@@ -135,10 +135,19 @@ function Race:BuildRace(mode, options)
   race.rngAI = AK.RNG:New(race.seed + 0x9E3779B9)
   local localName = race.network and AK.Net:PlayerName() or "player"
   if race.network then
+    -- SORTED, because pairs() has no order and every client builds its own grid
+    -- from its own copy of the roster. Unsorted, each machine dealt the starting
+    -- slots differently -- AddVehicle spaces the grid by index, so the same
+    -- racer sat in a different place on every screen until the host's first
+    -- snapshot arrived and yanked everyone into line. Sorting by name is
+    -- arbitrary but identical everywhere, which is the only property that
+    -- matters here.
     local roster = options.roster or {}
-    local count = 0
-    for owner, entry in pairs(roster) do
-      count = count + 1
+    local owners = {}
+    for owner in pairs(roster) do owners[#owners + 1] = owner end
+    table.sort(owners)
+    for count, owner in ipairs(owners) do
+      local entry = roster[owner]
       self:AddVehicle(race, AK:GetRacer(entry.racer), AK:GetKart(entry.kart), owner, owner == localName, count)
     end
     -- Filler bots for the empty grid slots nobody joined. This used to index
@@ -1238,6 +1247,31 @@ function Race:CheckCollisions(race)
   end
 end
 
+--- Carry a kart somebody else owns forward between snapshots.
+---
+--- A client simulates nothing but its own racer: every other kart moved ONLY
+--- when a packet landed, so at a snapshot every 0.10s the entire field advanced
+--- in ten visible steps a second while the player's own kart ran smooth. The
+--- host stays authoritative -- this only fills the gap between its packets with
+--- the last speed it reported, and the next snapshot corrects whatever drifted.
+---
+--- Marked `remote` so Physics:UpdateRoute does not try to make route decisions
+--- on this kart's behalf: which road it is on is the host's call, and it comes
+--- down in the snapshot.
+function Race:DeadReckon(race, vehicle, dt)
+  vehicle.remote = true
+  vehicle.distance = vehicle.distance + (vehicle.speed or 0) * dt
+  -- Recompute progress, lap and odometer from the new distance, so standings
+  -- and the minimap keep moving between packets instead of stepping too.
+  AK.Physics:UpdateRoute(race, vehicle)
+  -- Reaction timers have to run down locally or a spin-out freezes mid-spin
+  -- until the next packet happens to arrive.
+  vehicle.spin = math.max(0, (vehicle.spin or 0) - dt)
+  vehicle.air = math.max(0, (vehicle.air or 0) - dt)
+  vehicle.boostTime = math.max(0, (vehicle.boostTime or 0) - dt)
+  vehicle.shrunk = math.max(0, (vehicle.shrunk or 0) - dt)
+end
+
 function Race:UpdateRacing(race, dt)
   race.elapsed = race.elapsed + dt
   local hostOrSolo = not race.network or race.network.isHost
@@ -1260,9 +1294,15 @@ function Race:UpdateRacing(race, dt)
           AK.Physics:UpdateVehicle(race, vehicle, self.controls, dt)
         end
       elseif vehicle.owner then
-        if hostOrSolo then AK.Physics:UpdateVehicle(race, vehicle, race.remoteInputs[vehicle.owner] or {}, dt) end
+        if hostOrSolo then
+          AK.Physics:UpdateVehicle(race, vehicle, race.remoteInputs[vehicle.owner] or {}, dt)
+        else
+          self:DeadReckon(race, vehicle, dt)
+        end
       elseif hostOrSolo then
         AK.Physics:UpdateVehicle(race, vehicle, AK.AI:Controls(race, vehicle, dt), dt)
+      else
+        self:DeadReckon(race, vehicle, dt)
       end
       -- Distance alone is not enough: the lap only counts if the checkpoint
       -- ring was completed in order.
