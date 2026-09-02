@@ -1,0 +1,35 @@
+## Interface: 120100
+## Title: Azeroth Kart
+## Notes: Kart racing in Azeroth. Party and raid multiplayer.
+## Author: munch
+## Version: 0.2.0
+## SavedVariables: AzerothKartDB
+
+Core\RNG.lua
+Core\FixedStep.lua
+Constants.lua
+Utils\Math.lua
+Audio.lua
+Tuning.lua
+Data\TrackBuilder.lua
+Data\Terrain.lua
+Data\Models.lua
+Data\Racers.lua
+Data\Karts.lua
+Data\Roster.lua
+Data\Tracks.lua
+Data\Items.lua
+Data\Achievements.lua
+Database.lua
+Network.lua
+Race\Physics.lua
+Race\AI.lua
+Race\RaceManager.lua
+Race\Ghost.lua
+UI\MainMenu.lua
+UI\RaceUI.lua
+UI\Debug.lua
+UI\Results.lua
+UI\SoundEditor.lua
+UI\Workshop.lua
+Core.lua

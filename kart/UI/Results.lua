@@ -1,0 +1,295 @@
+local _, AK = ...
+
+AK.Results = {}
+local Results = AK.Results
+local UI = AK.UI
+local ART = "Interface\\AddOns\\kart\\Art\\"
+
+local ORDINALS = { "1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH" }
+local ROW_HEIGHT, ROW_GAP = 38, 4
+
+function Results:Build()
+  if self.frame then return end
+  local frame = CreateFrame("Frame", "AzerothKartResults", UIParent)
+  frame:SetAllPoints(UIParent)
+  -- Above everything the race puts up. The race frame's children climb to +500
+  -- for depth sorting, so results has to clear that bar or the finish line and
+  -- the karts paint straight over this screen.
+  frame:SetFrameStrata("FULLSCREEN_DIALOG")
+  frame:SetFrameLevel(900)
+  frame:EnableMouse(true)
+  frame:Hide()
+  self.frame = frame
+
+  -- Opaque ground. Anything left showing through reads as a bug.
+  local backdrop = frame:CreateTexture(nil, "BACKGROUND")
+  backdrop:SetTexture("Interface\\Buttons\\WHITE8x8")
+  backdrop:SetVertexColor(0.020, 0.028, 0.052, 1)
+  backdrop:SetAllPoints()
+  local wash = frame:CreateTexture(nil, "BACKGROUND", nil, 1)
+  wash:SetTexture(ART .. "glow.tga")
+  wash:SetBlendMode("ADD")
+  wash:SetVertexColor(0.30, 0.22, 0.55, 1)
+  wash:SetPoint("CENTER", 0, 120)
+  wash:SetSize(1500, 900)
+  wash:SetAlpha(0.30)
+  local vignette = frame:CreateTexture(nil, "OVERLAY", nil, 5)
+  vignette:SetTexture(ART .. "vignette.tga")
+  vignette:SetAllPoints()
+
+  -- Header.
+  self.title = UI:NewText(frame, "RACE RESULTS", 42, AK.COLORS.gold, "CENTER")
+  self.title:SetPoint("TOP", 0, -46)
+  self.title:SetShadowColor(0, 0, 0, 1)
+  self.title:SetShadowOffset(3, -3)
+  local rule = frame:CreateTexture(nil, "ARTWORK")
+  rule:SetTexture(ART .. "hairline.tga")
+  rule:SetPoint("TOP", self.title, "BOTTOM", 0, -6)
+  rule:SetSize(520, 3)
+  rule:SetVertexColor(1, 0.76, 0.20, 0.75)
+  self.subtitle = UI:NewText(frame, "", 16, AK.COLORS.muted, "CENTER")
+  self.subtitle:SetPoint("TOP", rule, "BOTTOM", 0, -8)
+
+  -- Winner podium, left of the table.
+  self.podium = UI:NewPanel(frame, 300, 400, { .05, .08, .14, .96 })
+  self.podium:SetPoint("TOPLEFT", 120, -170)
+  self.winner = AK.Model:New(self.podium, 260, 260, -0.45, 1)
+  self.winner:SetPoint("TOP", 0, -14)
+  self.winnerName = UI:NewText(self.podium, "", 18, AK.COLORS.gold, "CENTER")
+  self.winnerName:SetPoint("BOTTOM", 0, 58)
+  self.winnerName:SetShadowColor(0, 0, 0, 1)
+  self.winnerName:SetShadowOffset(1, -1)
+  self.winnerTag = UI:NewText(self.podium, "WINNER", 12, AK.COLORS.muted, "CENTER")
+  self.winnerTag:SetPoint("BOTTOM", 0, 34)
+
+  -- Standings table.
+  self.table = UI:NewPanel(frame, 760, 400, { .05, .08, .14, .96 })
+  self.table:SetPoint("TOPLEFT", self.podium, "TOPRIGHT", 22, 0)
+  self.rows = {}
+  for i = 1, AK.MAX_RACERS do
+    local row = CreateFrame("Frame", nil, self.table)
+    row:SetSize(724, ROW_HEIGHT)
+    row:SetPoint("TOPLEFT", 18, -14 - (i - 1) * (ROW_HEIGHT + ROW_GAP))
+    row.bg = row:CreateTexture(nil, "BACKGROUND")
+    row.bg:SetTexture(ART .. "panel.tga")
+    row.bg:SetAllPoints()
+    row.accent = row:CreateTexture(nil, "ARTWORK")
+    row.accent:SetTexture("Interface\\Buttons\\WHITE8x8")
+    row.accent:SetPoint("TOPLEFT")
+    row.accent:SetPoint("BOTTOMLEFT")
+    row.accent:SetWidth(4)
+    row.place = UI:NewText(row, "", 17, AK.COLORS.gold, "LEFT")
+    row.place:SetPoint("LEFT", 14, 0)
+    row.name = UI:NewText(row, "", 15, { .92, .95, 1 }, "LEFT")
+    row.name:SetPoint("LEFT", 76, 0)
+    row.kart = UI:NewText(row, "", 12, AK.COLORS.muted, "LEFT")
+    row.kart:SetPoint("LEFT", 76, -13)
+    row.time = UI:NewText(row, "", 15, { .95, .96, 1 }, "RIGHT")
+    row.time:SetPoint("RIGHT", -16, 7)
+    row.best = UI:NewText(row, "", 11, AK.COLORS.muted, "RIGHT")
+    row.best:SetPoint("RIGHT", -16, -8)
+    row:Hide()
+    self.rows[i] = row
+  end
+
+  -- Stat strip, inside the layout rather than dangling off the bottom.
+  self.statPanel = UI:NewPanel(frame, 1082, 62, { .04, .065, .11, .96 })
+  self.statPanel:SetPoint("TOP", self.table, "BOTTOM", -161, -14)
+  self.stats = UI:NewText(self.statPanel, "", 14, { .88, .93, 1 }, "CENTER")
+  self.stats:SetPoint("TOP", 0, -10)
+  self.splits = UI:NewText(self.statPanel, "", 12, AK.COLORS.muted, "CENTER")
+  self.splits:SetPoint("BOTTOM", 0, 10)
+
+  self.reward = UI:NewText(frame, "", 15, AK.COLORS.lime, "CENTER")
+  self.reward:SetPoint("TOP", self.statPanel, "BOTTOM", 0, -14)
+
+  self.primary = UI:NewButton(frame, "RACE AGAIN", 240, 44, function()
+    local race = AK.Race.current
+    if self.grandPrixComplete then AK.Race:Stop(true); self:Hide()
+    elseif race and race.grandPrix then AK.Race:NextGrandPrix()
+    elseif race and race.mode == "multiplayer" then AK.Race:Stop(true); self:Hide()
+    else AK.Race:Start(race and race.mode or "quick") end
+  end)
+  self.primary:SetPoint("BOTTOM", -132, 40)
+  self.back = UI:NewButton(frame, "MAIN MENU", 240, 44, function()
+    AK.Race:Stop(true); self:Hide()
+  end)
+  self.back:SetPoint("BOTTOM", 132, 40)
+  -- This screen covers the whole display at frame level 900, so the chat
+  -- window is behind it -- a slash command could never be typed OR read here.
+  -- The telemetry needs a button and its own panel above this one.
+  self.aiReport = UI:NewButton(frame, "AI REPORT", 150, 24, function() AK.AI:Report() end)
+  self.aiReport:SetPoint("BOTTOM", 0, 10)
+  self.aiReport:SetRestStyle({ .10, .16, .26, .95 }, { .38, .55, .78 })
+  self.aiReport.tooltip = "What the AI field actually did: drifts completed, braking, mistakes and how much catch-up assistance they were given."
+
+  -- Rows fly in one at a time; the ticker drives that.
+  self.ticker = CreateFrame("Frame", nil, frame)
+  self.ticker:Hide()
+  self.ticker:SetScript("OnUpdate", function(_, elapsed) self:Animate(elapsed) end)
+end
+
+--- Staggered entrance. A standings table that simply appears reads as a debug
+--- dump; revealing it a line at a time reads as a results screen.
+function Results:Animate(elapsed)
+  self.animTime = (self.animTime or 0) + elapsed
+  local revealed = math.floor(self.animTime / 0.085)
+  if revealed > (self.revealed or 0) then
+    for index = (self.revealed or 0) + 1, math.min(revealed, self.rowCount or 0) do
+      local row = self.rows[index]
+      if row then
+        row:Show()
+        row:SetAlpha(0)
+        row.slide = 1
+        if AK.PlaySfx then AK:PlaySfx(index == 1 and "overtake" or "item") end
+      end
+    end
+    self.revealed = revealed
+  end
+  local done = true
+  for index = 1, (self.rowCount or 0) do
+    local row = self.rows[index]
+    if row and row.slide and row.slide > 0 then
+      row.slide = math.max(0, row.slide - elapsed * 5.5)
+      local t = 1 - row.slide
+      row:SetAlpha(t)
+      row:ClearAllPoints()
+      row:SetPoint("TOPLEFT", 18 + row.slide * 90, -14 - (index - 1) * (ROW_HEIGHT + ROW_GAP))
+      if row.slide > 0 then done = false end
+    end
+  end
+  if done and revealed >= (self.rowCount or 0) then self.ticker:Hide() end
+end
+
+local function styleRow(row, place, isPlayer)
+  if isPlayer then
+    row.bg:SetVertexColor(0.16, 0.42, 0.28, 1)
+    row.accent:SetVertexColor(unpack(AK.COLORS.lime))
+  elseif place == 1 then
+    row.bg:SetVertexColor(0.42, 0.32, 0.10, 1)
+    row.accent:SetVertexColor(unpack(AK.COLORS.gold))
+  elseif place <= 3 then
+    row.bg:SetVertexColor(0.16, 0.22, 0.34, 1)
+    row.accent:SetVertexColor(0.55, 0.68, 0.88, 1)
+  else
+    row.bg:SetVertexColor(0.11, 0.14, 0.21, 1)
+    row.accent:SetVertexColor(0.28, 0.33, 0.42, 1)
+  end
+end
+
+function Results:Show(race)
+  self:Build()
+  self.grandPrixComplete = false
+  local position = race.positions[race.player] or #race.vehicles
+  self.title:SetText(position == 1 and "VICTORY" or (position <= 3 and "PODIUM FINISH" or "RACE COMPLETE"))
+  self.title:SetTextColor(unpack(position == 1 and AK.COLORS.gold or (position <= 3 and AK.COLORS.lime or { .86, .90, 1 })))
+  self.subtitle:SetText(("%s  /  finished %s of %d"):format(
+    race.track.name, ORDINALS[position] or (position .. "TH"), #race.vehicles))
+
+  local ordered = {}
+  for _, vehicle in ipairs(race.vehicles) do table.insert(ordered, vehicle) end
+  table.sort(ordered, function(a, b) return (race.positions[a] or 99) < (race.positions[b] or 99) end)
+
+  local champion = ordered[1]
+  if champion then AK.Model:SetSpec(self.winner, AK:GetRacerModel(champion)) end
+  AK.Model:SetSeat(self.winner, champion and champion.racer)
+  AK.Model:Reframe(self.winner)
+  self.winner:SetShown(champion ~= nil and AK.Model:IsReady(self.winner))
+  self.winnerName:SetText(champion and champion.racer.name or "")
+
+  self.rowCount = 0
+  for index, row in ipairs(self.rows) do
+    local vehicle = ordered[index]
+    if vehicle then
+      local place = race.positions[vehicle] or index
+      row.place:SetText(ORDINALS[place] or (place .. "TH"))
+      row.name:SetText(vehicle.racer.name)
+      row.kart:SetText(vehicle.kart.name)
+      row.time:SetText(vehicle.finishTime and string.format("%.2fs", vehicle.finishTime) or "DNF")
+      row.best:SetText(vehicle.bestLap and ("best " .. AK.RaceUI:FormatTime(vehicle.bestLap)) or "")
+      styleRow(row, place, vehicle == race.player)
+      row:Hide()
+      row.slide = nil
+      self.rowCount = index
+    else
+      row:Hide()
+      row.slide = nil
+    end
+  end
+
+  local player = race.player
+  self.stats:SetText(("TOP SPEED  |cff%s%d km/h|r      DRIFTING  |cff%s%.1fs|r      HITS TAKEN  |cff%s%d|r"):format(
+    AK:ColorHex(AK.COLORS.gold), math.floor((player.topSpeed or 0) * 2.2),
+    AK:ColorHex(AK.COLORS.gold), player.driftTime or 0,
+    AK:ColorHex(AK.COLORS.gold), player.hazardHits or 0))
+  local splits = {}
+  for lap, split in ipairs(player.lapTimes or {}) do
+    table.insert(splits, ("L%d %s"):format(lap, AK.RaceUI:FormatTime(split)))
+  end
+  self.splits:SetText(table.concat(splits, "     "))
+  self.reward:SetText(("+%d RACE TOKENS   /   GARAGE TOTAL: %d"):format(
+    race.rewardCoins or 0, AK.db.progress.coins))
+
+  if race.grandPrix then
+    local isFinal = race.grandPrix.index >= #race.grandPrix.cup.tracks
+    self.primary.label:SetText(isFinal and "CLAIM TROPHY" or "NEXT RACE")
+  elseif race.mode == "multiplayer" then
+    self.primary.label:SetText("RETURN TO PITS")
+  else
+    self.primary.label:SetText("RACE AGAIN")
+  end
+
+  self.animTime, self.revealed = 0, 0
+  self.ticker:Show()
+  self.frame:Show()
+  if AK.PlayStinger then AK:PlayStinger(position <= 3 and "victory" or "defeat", position == 1 and 3 or 1, 0.07) end
+end
+
+function Results:ShowGrandPrix(gp)
+  self:Build()
+  self.grandPrixComplete = true
+  self.title:SetText(gp.cup.name:upper() .. " COMPLETE")
+  self.title:SetTextColor(unpack(AK.COLORS.gold))
+  self.subtitle:SetText("Trophy added to your garage.")
+
+  local standings = {}
+  for name, points in pairs(gp.points) do table.insert(standings, { name = name, points = points }) end
+  table.sort(standings, function(a, b) return a.points > b.points end)
+
+  AK.Model:Reframe(self.winner)
+  self.winner:SetShown(AK.Model:IsReady(self.winner))
+  self.winnerName:SetText(standings[1] and standings[1].name or "")
+  self.winnerTag:SetText("CUP CHAMPION")
+
+  self.rowCount = 0
+  for index, row in ipairs(self.rows) do
+    local entry = standings[index]
+    if entry then
+      row.place:SetText(ORDINALS[index] or (index .. "TH"))
+      row.name:SetText(entry.name)
+      row.kart:SetText("")
+      row.time:SetText(entry.points .. " pts")
+      row.best:SetText("")
+      styleRow(row, index, false)
+      row:Hide()
+      row.slide = nil
+      self.rowCount = index
+    else
+      row:Hide()
+      row.slide = nil
+    end
+  end
+  self.stats:SetText("")
+  self.splits:SetText("")
+  self.reward:SetText("CUP TROPHY UNLOCKED")
+  self.primary.label:SetText("BACK TO GARAGE")
+  self.animTime, self.revealed = 0, 0
+  self.ticker:Show()
+  self.frame:Show()
+  if AK.PlayStinger then AK:PlayStinger("victory", 3, 0.07) end
+end
+
+function Results:Hide()
+  if self.frame then self.frame:Hide() end
+  if self.ticker then self.ticker:Hide() end
+end

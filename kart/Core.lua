@@ -1,0 +1,86 @@
+local addonName, AK = ...
+
+function AK:Initialize()
+  if self.initialized then return end
+  self.initialized = true
+  self:InitDatabase()
+  self.Net:Init()
+  self.Race:Init()
+  self:Print("Ready. |cff" .. self:ColorHex(self.COLORS.gold) .. "/kart|r to race, |cff" .. self:ColorHex(self.COLORS.gold) .. "/kart tune|r to adjust the camera live.")
+end
+
+SLASH_AZEROTHKART1 = "/kart"
+SLASH_AZEROTHKART2 = "/azerothkart"
+SlashCmdList["AZEROTHKART"] = function(message)
+  message = (message or ""):lower():match("^%s*(.-)%s*$")
+  if message == "race" then
+    AK.Race:Start("quick")
+  elseif message == "stop" then
+    AK.Race:Stop(true)
+  elseif message == "tune" then
+    AK.Workshop:Toggle()
+  elseif message == "aireport" then
+    AK.AI:Report()
+  elseif message == "beats" then
+    AK.RaceUI:PlayBeats()
+  elseif message == "sound" or message == "sfxedit" then
+    AK.SoundEditor:Toggle()
+  elseif message == "sfx" then
+    AK:AuditionSfx()
+  elseif message:match("^sfx%s+%a+$") then
+    AK:AuditionSfx(message:match("^sfx%s+(%a+)$"))
+  elseif message == "sfxstop" then
+    AK:StopPreview()
+  elseif message:match("^sfxdensity%s+%d+$") then
+    AK:SoundDensity(message:match("^sfxdensity%s+(%d+)$"), 200)
+  elseif message:match("^sfxtest%s+%d+$") then
+    AK:TestSound(message:match("^sfxtest%s+(%d+)$"))
+  elseif message:match("^sfxrate%s+%w+$") then
+    -- Hear a cue at its own worst-case density, which is the only way to judge
+    -- whether it is repetitive.
+    AK:AuditionRate(message:match("^sfxrate%s+(%w+)$"))
+  elseif message == "sfxreport" then
+    AK:DebugSfx()
+  elseif message:match("^sfxid%s+%d+$") then
+    -- Explore the game's own audio library by ear. Anything worth keeping gets
+    -- bound to a cue with sfxset.
+    AK:TrySoundFile(tonumber(message:match("(%d+)")))
+  elseif message:match("^sfxset%s+%a+%s+%d+$") then
+    local cue, id = message:match("^sfxset%s+(%a+)%s+(%d+)$")
+    AK:SetCueSound(cue, tonumber(id))
+  elseif message:match("^sfxclear%s+%a+$") then
+    AK:SetCueSound(message:match("^sfxclear%s+(%a+)$"), nil)
+  elseif message == "debug" then
+    AK.Debug:Toggle()
+  elseif message == "battle" then
+    AK.Race:StartBattle()
+  elseif message == "trial" then
+    AK.Race:Start("time_trial")
+  elseif message == "roster" then
+    AK:ReportRoster()
+  elseif message:match("^npc%s+%d+$") then
+    -- Preview any creature id, so new racer models can be found without a
+    -- reload. Whatever looks good can be pasted into Data\Racers.lua.
+    AK:PreviewNPC(tonumber(message:match("(%d+)")))
+  elseif message == "help" then
+    AK:Print("/kart - garage  |  race  |  stop  |  tune - live render tuning  |  roster  |  debug  |  battle  |  trial  |  beats - replay every race moment  |  npc <id> - preview a creature model")
+    AK:Print("race: |cffffd100aireport|r what the AI field actually did (read it at the results screen)  |  |cffffd100beats|r - replay every race moment")
+    AK:Print("sound: |cffffd100sound|r the editor  |  |cffffd100sfx|r audition every cue  |  |cffffd100sfx <cue>|r one cue  |  |cffffd100sfxrate <cue>|r hear it 8x at its real density -- the only way to judge 'repetitive'")
+    AK:Print("sound: |cffffd100sfxid <fileID>|r try any game sound  |  |cffffd100sfxset <cue> <fileID>|r bind it  |  |cffffd100sfxclear <cue>|r  |  |cffffd100sfxreport|r what resolved")
+  else
+    AK.Menu:Show()
+  end
+end
+
+local events = CreateFrame("Frame")
+events:RegisterEvent("ADDON_LOADED")
+events:RegisterEvent("CHAT_MSG_ADDON")
+events:SetScript("OnEvent", function(_, event, ...)
+  if event == "ADDON_LOADED" then
+    local loadedName = ...
+    if loadedName == addonName then AK:Initialize() end
+  elseif event == "CHAT_MSG_ADDON" then
+    local prefix, message, _, sender = ...
+    if prefix == AK.Net.prefix then AK.Net:HandleMessage(message, sender) end
+  end
+end)
