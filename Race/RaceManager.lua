@@ -372,6 +372,12 @@ function Race:CheckBattleEnd(race)
   end
   if alive <= 1 then
     if last then last.finishTime = race.elapsed end
+    -- Last one standing, and never touched: the battle equivalent of a clean
+    -- sheet. Balloons are only ever decremented by PopBalloon, so three left
+    -- means nothing ever landed on you.
+    if last and last == race.player and (last.balloons or 0) >= 3 then
+      AK:UnlockAchievement("flawless_battle")
+    end
     self:FinishRace(race)
   end
 end
@@ -393,6 +399,7 @@ function Race:NextGrandPrix()
   gp.index = gp.index + 1
   if gp.index > #gp.cup.tracks then
     AK.db.progress.trophies[gp.cup.id] = true
+    AK:UnlockAchievement("cup_champion")
     AK.Results:ShowGrandPrix(gp)
     return
   end
@@ -604,6 +611,7 @@ function Race:UpdateProjectiles(race, dt)
               spent = true
               vehicle.immune = 0.8
               if vehicle == race.player then
+                AK:UnlockAchievement("boost_dodge")
                 AK.RaceUI:Announce("BOOSTED CLEAR!", AK.COLORS.gold)
                 AK.RaceUI:Flash(AK.COLORS.gold, .18)
                 AK.RaceUI:Shake(10)
@@ -998,6 +1006,7 @@ function Race:UpdateSlipstream(race, dt)
           AK.RaceUI:Announce("SLINGSHOT!", AK.COLORS.gold)
           AK.RaceUI:Feel("push", 2.4)
           AK.RaceUI:Shake(8)
+          AK:UnlockAchievement("slingshot")
           if AK.PlaySfx then AK:PlaySfx("boost") end
         end
       end
@@ -1335,6 +1344,8 @@ function Race:FinishRace(race)
         rival = rival.racer and (rival.racer.tag or rival.racer.name) or "a rival",
         won = mine < theirs,
       }
+      -- Only for taking it, not for losing it by the same margin.
+      if race.photoFinish.won then AK:UnlockAchievement("photo_finish") end
       break
     end
   end
@@ -1347,6 +1358,7 @@ function Race:FinishRace(race)
     local data = AK.Ghost:Finish(race.recorder, race.player.finishTime)
     if AK.Ghost:Store(data) then
       AK.RaceUI:Announce("NEW RECORD!", AK.COLORS.gold)
+      AK:UnlockAchievement("trial_record")
     end
   end
   -- Freeze the AI telemetry now, while the race still exists: Stop() throws it
@@ -1400,6 +1412,7 @@ function Race:RecordProgress(race, position)
   race.rewardCoins = math.max(5, 55 - position * 6)
   progress.races = progress.races + 1
   progress.coins = progress.coins + race.rewardCoins
+  if progress.races >= 25 then AK:UnlockAchievement("veteran") end
   if position == 1 then
     progress.wins = progress.wins + 1
     AK:UnlockAchievement("first_win")

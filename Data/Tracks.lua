@@ -252,6 +252,27 @@ AK.Tracks = {
     },
     hazards = { "Raptor", "Pirate Barrel", "Murloc" },
     shortcut = "A narrow ruin path skips the river bend.",
+    branches = {
+      -- The route that line of HUD text has been promising since the track
+      -- shipped. Cuts the corner off River Road through the troll ruins: much
+      -- narrower, floored with mud so a missed apex costs more than the cut
+      -- saves, and it rejoins before the Cape.
+      {
+        id = "ruin_path", name = "Ruin Path", side = 1,
+        from = 0.620, to = 0.750, length = 250, sweep = 1.8,
+        offroad = "MUD",
+        surfaces = {
+          { from = 96, to = 168, onRoad = "MUD" },
+        },
+        layout = {
+          { len = 48, curve = 1.8, name = "Ruin Path", width = 0.68 },
+          { len = 54, curve = -2.6, width = 0.62 },
+          { len = 46, curve = 0, grade = -2.4, width = 0.66 },
+          { len = 52, curve = 2.2, width = 0.64 },
+          { len = 50, curve = -1.2, width = 0.72 },
+        },
+      },
+    },
   },
   -- ================================================================
   -- IRONFORGE ICE CIRCUIT -- Wide mountain highway, treacherous on ice.
@@ -296,6 +317,28 @@ AK.Tracks = {
     },
     hazards = { "Mine Cart", "Ice Patch", "Steam Valve" },
     shortcut = "A frozen tunnel is fast but very slippery.",
+    branches = {
+      -- Tunnelled end to end, which on a BRANCH is the honest shape: unlike a
+      -- closed lap, you genuinely enter at 0 and leave at the far end, so the
+      -- two mouths the fade math finds are real openings rather than a seam.
+      -- Iced the whole way, so it is quicker only if you can still point the
+      -- kart -- ICE barely slows you but takes your steering away.
+      {
+        id = "frozen_tunnel", name = "Frozen Tunnel", side = -1,
+        from = 0.300, to = 0.420, length = 215, sweep = 1.5,
+        offroad = "SNOW",
+        surfaces = {
+          { from = 0, to = 215, onRoad = "ICE" },
+        },
+        layout = {
+          { len = 44, curve = -1.6, name = "Frozen Tunnel", width = 0.70, tunnel = true },
+          { len = 48, curve = -2.8, width = 0.64, tunnel = true },
+          { len = 40, curve = 1.4, width = 0.66, tunnel = true },
+          { len = 45, curve = 2.4, width = 0.68, tunnel = true },
+          { len = 38, curve = -0.8, width = 0.74, tunnel = true },
+        },
+      },
+    },
   },
   -- ================================================================
   -- THE DEADMINES RUN -- The claustrophobic maze. Narrow everywhere,
@@ -353,6 +396,24 @@ AK.Tracks = {
     },
     hazards = { "Falling Rock", "Mine Cart", "Powder Keg" },
     shortcut = "Blast through the unstable side shaft.",
+    branches = {
+      -- The narrowest road in the game, on the track that is already the
+      -- narrowest. Deadmines' whole identity is claustrophobia, so its
+      -- shortcut is not a fast open cut -- it is a squeeze that punishes any
+      -- line that is not exactly right.
+      {
+        id = "side_shaft", name = "Side Shaft", side = 1,
+        from = 0.400, to = 0.520, length = 225, sweep = 1.4,
+        offroad = "SCREE",
+        layout = {
+          { len = 42, curve = 2.2, name = "Side Shaft", width = 0.62, tunnel = true },
+          { len = 50, curve = -3.0, width = 0.58, tunnel = true },
+          { len = 44, curve = 0, grade = -3.0, width = 0.62, tunnel = true },
+          { len = 48, curve = 2.6, width = 0.60, tunnel = true },
+          { len = 41, curve = -1.4, width = 0.68, tunnel = true },
+        },
+      },
+    },
   },
   -- ================================================================
   -- NETHERSTORM TURBO CIRCUIT -- The speed track. Widest road, longest
@@ -394,6 +455,27 @@ AK.Tracks = {
     },
     hazards = { "Mana Storm", "Void Spark", "Arcane Mine" },
     shortcut = "Blink through a portal at maximum speed.",
+    branches = {
+      -- Netherstorm is the speed track, so its shortcut is the only one that
+      -- is FAST rather than technical: wide for a branch, gently swept, and
+      -- floored with a boost strip. The cost is that it is a committed line at
+      -- the speeds this circuit is driven at.
+      {
+        id = "portal_run", name = "Portal Run", side = -1,
+        from = 0.340, to = 0.460, length = 245, sweep = 1.6,
+        offroad = "SCREE",
+        surfaces = {
+          { from = 90, to = 180, onRoad = "BOOST" },
+        },
+        layout = {
+          { len = 56, curve = -1.4, name = "Portal Run", width = 0.78 },
+          { len = 52, curve = 0, grade = 2.0, width = 0.74 },
+          { len = 48, curve = 2.2, width = 0.70 },
+          { len = 50, curve = -2.0, width = 0.72 },
+          { len = 39, curve = 0.8, width = 0.80 },
+        },
+      },
+    },
   },
   -- ================================================================
   -- THOUSAND NEEDLES MESA RUN -- The jump track. THREE ramps, the most in
@@ -440,6 +522,23 @@ AK.Tracks = {
     },
     hazards = { "Rockslide", "Naga Ambush", "Harpy" },
     shortcut = "Cut across the canyon rim and hope the wind is with you.",
+    branches = {
+      -- The jump track's shortcut is, of course, a jump: a rim gap taken off a
+      -- ramp, which is the one branch in the game you can fail by being too
+      -- SLOW rather than too fast.
+      {
+        id = "canyon_rim", name = "Canyon Rim", side = 1,
+        from = 0.300, to = 0.440, length = 220, sweep = 1.7,
+        offroad = "SCREE",
+        layout = {
+          { len = 46, curve = 1.6, name = "Canyon Rim", width = 0.66 },
+          { len = 42, curve = 0, grade = 3.2, width = 0.62 },
+          { len = 44, curve = 0, grade = -4.0, ramp = true, name = "Rim Gap", width = 0.80 },
+          { len = 48, curve = -2.4, width = 0.64 },
+          { len = 40, curve = 1.2, width = 0.70 },
+        },
+      },
+    },
   },
 }
 

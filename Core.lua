@@ -50,6 +50,12 @@ SlashCmdList["AZEROTHKART"] = function(message)
     AK:SetCueSound(cue, tonumber(id))
   elseif message:match("^sfxclear%s+%a+$") then
     AK:SetCueSound(message:match("^sfxclear%s+(%a+)$"), nil)
+  elseif message == "sfxmute" or message:match("^sfxmute%s+%a+$") then
+    -- The blunt instrument, for when the sound set is being worked on and the
+    -- race needs to shut up first. Bare `sfxmute` silences everything.
+    AK:MuteCue(message:match("^sfxmute%s+(%a+)$") or "all")
+  elseif message == "sfxunmute" then
+    AK:UnmuteAll()
   elseif message == "debug" then
     AK.Debug:Toggle()
   elseif message == "battle" then
@@ -67,6 +73,7 @@ SlashCmdList["AZEROTHKART"] = function(message)
     AK:Print("race: |cffffd100aireport|r what the AI field actually did (read it at the results screen)  |  |cffffd100beats|r - replay every race moment")
     AK:Print("sound: |cffffd100sound|r the editor  |  |cffffd100sfx|r audition every cue  |  |cffffd100sfx <cue>|r one cue  |  |cffffd100sfxrate <cue>|r hear it 8x at its real density -- the only way to judge 'repetitive'")
     AK:Print("sound: |cffffd100sfxid <fileID>|r try any game sound  |  |cffffd100sfxset <cue> <fileID>|r bind it  |  |cffffd100sfxclear <cue>|r  |  |cffffd100sfxreport|r what resolved")
+    AK:Print("sound: |cffffd100sfxmute|r silence every cue  |  |cffffd100sfxmute <cue>|r just one  |  |cffffd100sfxunmute|r bring them all back  |  |cffffd100sfxstop|r cut what is playing")
   else
     AK.Menu:Show()
   end

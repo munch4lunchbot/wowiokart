@@ -66,6 +66,11 @@ Tuning.defs = {
   { key = "camBack", label = "Chase distance", default = 6.0, rev = 8, step = 0.4, min = 2.0, max = 18.0,
     hint = "How far behind the kart the camera sits.\nRaising this shrinks your kart AND slides it up toward the horizon; 6 keeps it low and present." },
   { key = "horizon", label = "Horizon height", default = 150, step = 10, min = -200, max = 400 },
+  -- Lives with the camera, not with the AI. Workshop builds one TAB per
+  -- section, so sitting in the AI block put "how far down the road is drawn"
+  -- on the opponents tab, where nobody tuning the view would ever look for it.
+  { key = "drawDistance", label = "See ahead (m)", default = 330, rev = 6, step = 20, min = 120, max = 620,
+    hint = "How far down the road is drawn. Higher gives more warning before a corner arrives, which is most of what makes a circuit readable." },
   { key = "shakeScale", label = "Camera shake", default = 1.0, step = 0.1, min = 0, max = 3.0 },
   { key = "boostFov", label = "Speed lens kick", default = 0.075, step = 0.01, min = 0, max = 0.3 },
   { key = "camYaw", label = "Turn into corners", default = 1.0, step = 0.1, min = 0, max = 3.0,
@@ -89,9 +94,6 @@ Tuning.defs = {
   { section = "AI" },
   { key = "aiRubberBand", label = "Catch-up cap", default = 0.07, rev = 15, step = 0.005, min = 0, max = 0.25,
     hint = "Ceiling on the top-speed nudge the AI gets from the gap to you.\n0 makes them entirely honest. Being reeled in is capped at a third of this, so a leader never yo-yos.\nDifficulty scales it: Easy x1.4, Normal x1, Hard x0.35." },
-
-  { key = "drawDistance", label = "See ahead (m)", default = 330, rev = 6, step = 20, min = 120, max = 620,
-    hint = "How far down the road is drawn. Higher gives more warning before a corner arrives, which is most of what makes a circuit readable." },
 
   { section = "TRACK" },
   { key = "roadHalf", label = "Road width", default = 9.0, rev = 9, step = 0.2, min = 2.0, max = 18.0,
@@ -221,214 +223,16 @@ function Tuning:Report()
   end
 end
 
-function Tuning:Build()
-  if self.frame then return end
-  local UI = AK.UI
-
-  -- Lay out by SECTION, never by raw row index.
-  --
-  -- Splitting on a row count stranded the CORNERS header at the foot of the
-  -- first column while its rows appeared at the top of the second under no
-  -- heading at all -- "Brake strength" floated above the TRACK header looking
-  -- like it belonged to it.
-  local sections, current = {}, nil
-  for _, def in ipairs(self.defs) do
-    if def.section then
-      current = { header = def, rows = {} }
-      sections[#sections + 1] = current
-    elseif current then
-      current.rows[#current.rows + 1] = def
-    end
-  end
-  local total = 0
-  for _, section in ipairs(sections) do total = total + 1 + #section.rows end
-
-  -- Fill the first column to roughly half the total, but only ever break
-  -- BETWEEN sections, so a heading always travels with its rows.
-  local entries, column, slot, used, tallest = {}, 0, 0, 0, 0
-  for _, section in ipairs(sections) do
-    local cost = 1 + #section.rows
-    if column == 0 and used > 0 and used + cost > math.ceil(total / 2) then
-      column, slot = 1, 0
-    end
-    for position, def in ipairs({ section.header, unpack(section.rows) }) do
-      slot = slot + (position == 1 and 1 or 1)
-      entries[#entries + 1] = { def = def, column = column, slot = slot }
-      if slot > tallest then tallest = slot end
-    end
-    if column == 0 then used = used + cost end
-  end
-
-  local rowHeight, columnWidth = 26, 320
-  local height = 132 + tallest * rowHeight
-
-  local frame = CreateFrame("Frame", "AzerothKartTuning", UIParent, "BackdropTemplate")
-  frame:SetSize(columnWidth * 2 + 24, height)
-  frame:SetPoint("CENTER", 0, -60)
-  -- FULLSCREEN_DIALOG, not TOOLTIP: GameTooltip itself lives at TOOLTIP strata,
-  -- so a panel parked there drew OVER its own tooltips and every hint in this
-  -- window was unreadable. Level 900 clears the race (max 500) and the main
-  -- menu (700) while leaving the tooltip strata to tooltips.
-  frame:SetFrameStrata("FULLSCREEN_DIALOG")
-  frame:SetFrameLevel(900)
-  frame:SetMovable(true)
-  frame:EnableMouse(true)
-  frame:RegisterForDrag("LeftButton")
-  frame:SetScript("OnDragStart", frame.StartMoving)
-  frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-  frame:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 },
-  })
-  frame:SetBackdropColor(0.03, 0.05, 0.09, 0.96)
-  frame:SetBackdropBorderColor(unpack(AK.COLORS.gold))
-  frame:Hide()
-  self.frame = frame
-  self.rows = {}
-
-  local title = UI:NewText(frame, "RENDER TUNING", 14, AK.COLORS.gold, "CENTER")
-  title:SetPoint("TOP", 0, -9)
-  local hint = UI:NewText(frame, "drag to move  /  changes apply live  /  gold = changed", 10, AK.COLORS.muted, "CENTER")
-  hint:SetPoint("TOP", title, "BOTTOM", 0, -2)
-
-  for _, entry in ipairs(entries) do
-    local def, column, slot = entry.def, entry.column, entry.slot
-    local x = 12 + column * columnWidth
-    local y = -40 - (slot - 1) * rowHeight
-
-    if def.section then
-      local header = UI:NewText(frame, def.section, 11, AK.COLORS.blue, "LEFT")
-      header:SetPoint("TOPLEFT", x, y - 4)
-      local rule = frame:CreateTexture(nil, "ARTWORK")
-      rule:SetTexture("Interface\\Buttons\\WHITE8x8")
-      rule:SetVertexColor(0.13, 0.56, 0.93, 0.45)
-      rule:SetHeight(1)
-      rule:SetPoint("TOPLEFT", x + 68, y - 10)
-      rule:SetPoint("TOPRIGHT", frame, "TOPLEFT", x + columnWidth - 16, y - 10)
-    else
-      local label = UI:NewText(frame, def.label, 11, { .84, .90, 1 }, "LEFT")
-      label:SetPoint("TOPLEFT", x + 6, y)
-      if def.hint then
-        -- Covers the label and the value, and STOPS before the steppers.
-        -- Stretching it the full column width put an invisible frame on top of
-        -- the - and + buttons, so half the panel stopped responding to clicks.
-        local zone = CreateFrame("Frame", nil, frame)
-        zone:SetPoint("TOPLEFT", x, y)
-        zone:SetSize(250, rowHeight)
-        zone:SetScript("OnEnter", function(self)
-          GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
-          GameTooltip:SetText(def.hint, 1, 1, 1, 1, true)
-          GameTooltip:Show()
-        end)
-        zone:SetScript("OnLeave", function() GameTooltip:Hide() end)
-      end
-
-      -- A thin bar showing where the value sits inside its range.
-      local track = frame:CreateTexture(nil, "ARTWORK")
-      track:SetTexture("Interface\\Buttons\\WHITE8x8")
-      track:SetVertexColor(0.14, 0.19, 0.28, 1)
-      track:SetSize(60, 3)
-      track:SetPoint("TOPLEFT", x + 150, y - 7)
-      local fill = frame:CreateTexture(nil, "OVERLAY")
-      fill:SetTexture("Interface\\Buttons\\WHITE8x8")
-      fill:SetVertexColor(unpack(AK.COLORS.lime))
-      fill:SetSize(1, 3)
-      fill:SetPoint("TOPLEFT", x + 150, y - 7)
-
-      local value = UI:NewText(frame, "", 11, AK.COLORS.lime, "RIGHT")
-      value:SetPoint("TOPRIGHT", frame, "TOPLEFT", x + 256, y)
-      self.rows[def.key] = { value = value, fill = fill }
-
-      local minus = UI:NewButton(frame, "-", 20, 17, function()
-        self:Set(def, AK.db.tuning[def.key] - def.step)
-      end)
-      minus:SetPoint("TOPLEFT", x + 264, y + 3)
-      minus.quiet = true
-      local plus = UI:NewButton(frame, "+", 20, 17, function()
-        self:Set(def, AK.db.tuning[def.key] + def.step)
-      end)
-      plus:SetPoint("TOPLEFT", x + 288, y + 3)
-      plus.quiet = true
-      -- Right-click either stepper to restore just this value.
-      for _, button in ipairs({ minus, plus }) do
-        button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        button:HookScript("OnClick", function(_, mouseButton)
-          if mouseButton == "RightButton" then self:Set(def, def.default) end
-        end)
-        button.tooltip = (def.hint and def.hint .. "\n" or "") .. "Right-click to reset this value."
-      end
-    end
-  end
-
-  -- Seat row for whoever is selected, along the bottom of the panel.
-  self.seatRows = {}
-  self.seatTitle = UI:NewText(frame, "", 11, AK.COLORS.gold, "LEFT")
-  self.seatTitle:SetPoint("BOTTOMLEFT", 14, 62)
-  -- Right-aligned value with room before the steppers; the old spacing let a
-  -- negative value such as "-0.15" run under the minus button.
-  local seatX = 180
-  for _, def in ipairs(self.seatDefs) do
-    local label = UI:NewText(frame, def.label, 11, { .84, .90, 1 }, "LEFT")
-    label:SetPoint("BOTTOMLEFT", seatX, 62)
-    local value = UI:NewText(frame, "", 11, AK.COLORS.lime, "RIGHT")
-    value:SetPoint("BOTTOMRIGHT", frame, "BOTTOMLEFT", seatX + 148, 62)
-    self.seatRows[def.key] = value
-    local minus = UI:NewButton(frame, "-", 20, 17, function()
-      local racer = self:SelectedRacer()
-      self:SetSeat(def, (racer[def.key] or def.default) - def.step)
-    end)
-    minus:SetPoint("BOTTOMLEFT", seatX + 156, 60)
-    minus.quiet = true
-    local plus = UI:NewButton(frame, "+", 20, 17, function()
-      local racer = self:SelectedRacer()
-      self:SetSeat(def, (racer[def.key] or def.default) + def.step)
-    end)
-    plus:SetPoint("BOTTOMLEFT", seatX + 180, 60)
-    plus.quiet = true
-    seatX = seatX + 230
-  end
-  frame:HookScript("OnShow", function() self:RefreshSeat() end)
-
-  -- Four footer buttons, spaced from the panel's real width. Hard-coded points
-  -- had them totalling 640px inside a 624px panel, so RESET overlapped SOUND
-  -- EDITOR and PRINT CHANGES overlapped CLOSE -- they could not have fitted at
-  -- any position.
-  local footer = {
-    { "RESET ALL", function() self:Reset() end,
-      "Put every value in this panel back to its shipped default." },
-    { "SOUND EDITOR", function() AK.SoundEditor:Toggle() end,
-      "Audition every cue, browse the game's audio library and bind your own sounds." },
-    { "PRINT CHANGES", function() self:Report() end,
-      "Prints every value you have changed, so it can be shared and baked in as a new default." },
-    { "CLOSE", function() frame:Hide() end, nil },
-  }
-  local footerWidth = 142
-  local footerGap = (frame:GetWidth() - #footer * footerWidth) / (#footer + 1)
-  for index, spec in ipairs(footer) do
-    local button = UI:NewButton(frame, spec[1], footerWidth, 22, spec[2])
-    button.label:SetFont(STANDARD_TEXT_FONT, 13, "OUTLINE")
-    button:SetPoint("BOTTOMLEFT", footerGap * index + footerWidth * (index - 1), 8)
-    button.tooltip = spec[3]
-  end
-
-  -- Paint initial values through Set so bars and colours match the saved state.
-  for _, def in ipairs(self.defs) do
-    if def.key then self:Set(def, AK.db.tuning[def.key]) end
-  end
-end
-
-function Tuning:RefreshSeat()
-  local racer = self:SelectedRacer()
-  if not racer or not self.seatTitle then return end
-  self.seatTitle:SetText("SEAT: " .. racer.name)
-  for _, def in ipairs(self.seatDefs) do
-    local row = self.seatRows[def.key]
-    if row then row:SetText(string.format("%.2f", racer[def.key] or def.default)) end
-  end
-end
-
-function Tuning:Toggle()
-  self:Build()
-  self:RefreshSeat()
-  self.frame:SetShown(not self.frame:IsShown())
-end
+-- The standalone RENDER TUNING window that used to live here is gone.
+--
+-- Nothing called Tuning:Toggle(). UI/Workshop.lua superseded this panel: it
+-- reuses everything ABOVE -- Tuning.defs, Set, Reset, Report, seatDefs,
+-- SelectedRacer, SetSeat -- and builds its own tabbed UI over them, so the
+-- window here had been unreachable dead weight, a second copy of the same
+-- panel that could drift out of step with the one people actually see.
+-- Workshop:RefreshModels repaints the seat rows, which is what RefreshSeat
+-- existed for.
+--
+-- What that panel did own was the only in-UI link to the sound editor. That
+-- link now lives on the Workshop's SOUND tab, where the rest of the audio
+-- tools already are.

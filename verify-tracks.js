@@ -110,7 +110,35 @@ function grabTrack(id) {
 
 const AVG_SPEED = 65; // metres/second, from the 40s lap target
 let fail = 0;
-for (const id of ["oribos", "elwynn", "durotar"]) {
+
+// Every track in the file, not a hand-written list. The old form named three
+// ids -- which happened to be exactly the three that had branches -- so adding
+// a branch to a fourth track silently went unchecked, and the geometry bugs
+// this harness exists to catch could ship freely on any track added later.
+const ALL_IDS = [...SRC.matchAll(/\n  \{\n    id = "(\w+)"/g)].map(m => m[1]);
+
+// A track that ADVERTISES a shortcut must actually have one.
+//
+// RaceUI draws "SHORTCUT: <text>" on the HUD from `track.shortcut`, and five of
+// the eight tracks carried that text with no `branches` table behind it -- the
+// game told the player about a route through the Deadmines side shaft, a portal
+// on Netherstorm and a frozen tunnel on Ironforge, none of which existed. That
+// is not a missing feature so much as the HUD lying, and it is exactly the kind
+// of thing that is invisible in review and obvious in play.
+const advertised = [];
+for (const id of ALL_IDS) {
+  const start = SRC.indexOf(`id = "${id}"`);
+  const next = SRC.indexOf("\n  {", start);
+  const body = SRC.slice(start, next === -1 ? SRC.length : next);
+  if (/shortcut = "/.test(body) && !/branches = \{/.test(body)) advertised.push(id);
+}
+if (advertised.length) {
+  console.log("\nFAIL  these tracks show a SHORTCUT on the HUD but have no branch to take:");
+  for (const id of advertised) console.log("        " + id);
+  fail += advertised.length;
+}
+
+for (const id of ALL_IDS) {
   const t = grabTrack(id);
   const main = compile(t);
   console.log(`\n${id}  (${t.length}m main lap)`);

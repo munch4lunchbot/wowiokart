@@ -588,6 +588,14 @@ function Workshop:BuildSoundPane(pane)
   stop:SetRestStyle({ .22, .08, .08, .95 }, AK.COLORS.danger)
   stop.tooltip = "Cut whatever is currently playing. Some library entries are minutes long."
 
+  -- The only link to the focused editor used to sit on the standalone tuning
+  -- window, which nothing opened -- so in practice it was reachable solely by
+  -- typing /kart sound. This bench is for sweeping every cue at once; that one
+  -- is for hunting a single sound through the file library.
+  local editor = UI:NewButton(pane, "SOUND EDITOR", 140, 22, function() AK.SoundEditor:Toggle() end)
+  editor:SetPoint("TOPRIGHT", -146, -2)
+  editor.tooltip = "Open the focused editor: one cue at a time, with a scanner for the game's file library."
+
   local heading = UI:NewText(pane,
     "Nobody building this can hear these, so choosing a sound is a SEARCH. Step an id, "
     .. "play it, keep it. Silence means that id has no file.\n"

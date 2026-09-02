@@ -371,7 +371,11 @@ function AK:UpdateEngine(vehicle, dt)
     if material ~= "ROAD" and material ~= "BOOST" then self:PlaySfx("surfaceEnter") end
   end
 
-  if not (AK.db.settings.engineNote ~= false) then return end
+  -- Written plainly: the engine is OFF unless switched on. The old double
+  -- negative (`not (engineNote ~= false)`) turned a MISSING setting into "on",
+  -- which is the opposite of the off-by-default this whole section argues for
+  -- -- it only behaved because Database.lua happens to seed the key.
+  if not AK.db.settings.engineNote then return end
   local now = GetTime()
   if now - lastImportant < ENGINE_DUCK then return end
   if now < engineNext then return end
@@ -459,13 +463,32 @@ end
 
 --- Play a bare FileDataID so the game's own audio library can be explored.
 --- Anything that sounds right can be bound to a cue with sfxset.
+---
+--- Judged on the HANDLE, never on willPlay. This function used to accept
+--- `willPlay ~= false` as success, which is precisely the trap documented at
+--- emit() above: PlaySoundFile answers true for practically any number and
+--- returns a ZERO handle when there is nothing behind it. So `/kart sfxid` and
+--- the editor's PLAY ID both reported "played" for every id anyone typed, and
+--- the one tool for telling a real sound from a dead number always said yes.
 function AK:TrySoundFile(id)
-  local ok, willPlay = pcall(PlaySoundFile, id, "SFX")
-  if ok and willPlay ~= false then
-    self:Print("|cff6bf06bplayed|r " .. id)
-  else
-    self:Print("|cffff5555no such file|r " .. id)
+  local ok, _, handle = pcall(PlaySoundFile, id, "SFX")
+  if ok and handle and handle ~= 0 then
+    self.lastSoundHandle = handle
+    self:Print("|cff6bf06bplayed|r file " .. id)
+    return true
   end
+  -- Nearly everything that has ever actually worked in this addon is a SOUNDKIT
+  -- id, so a file miss is worth one try through the kit path -- and the kit
+  -- space is named, so a hit there can say what it found.
+  local kitOk, _, kitHandle = pcall(PlaySound, id, "SFX")
+  if kitOk and kitHandle and kitHandle ~= 0 then
+    self.lastSoundHandle = kitHandle
+    local name = self:SoundName(id)
+    self:Print(("|cff6bf06bplayed|r kit %d%s"):format(id, name and ("  " .. name) or ""))
+    return true
+  end
+  self:Print("|cffff5555nothing plays at|r " .. id)
+  return false
 end
 
 function AK:SetCueSound(name, id)
@@ -490,13 +513,40 @@ function AK:SetCueSound(name, id)
 end
 
 --- Silence one cue, or every cue at once.
+---
+--- Reachable now. Nothing called this -- no button, no slash command -- so the
+--- one blunt instrument for "the sounds are too much, quiet down while I sort
+--- them out" existed only as text in this file. `/kart sfxmute` runs it.
 function AK:MuteCue(name)
   if name == "all" then
-    for _, entry in ipairs(self:CueList()) do self:SetCueSound(entry.cue, 0) end
-    self:Print("Every cue muted. Use the workshop's DEFAULT to bring one back.")
+    self.db.sfxOverride = self.db.sfxOverride or {}
+    local muted = 0
+    -- Written straight to the override rather than through SetCueSound, which
+    -- prints a line per cue: thirty-odd chat lines is its own kind of noise.
+    for _, entry in ipairs(self:CueList()) do
+      self.db.sfxOverride[entry.cue] = 0
+      chosen[entry.cue] = nil
+      muted = muted + 1
+    end
+    self:Print(("Muted all %d cues. |cffffd100/kart sfxclear <cue>|r or the workshop's DEFAULT brings one back."):format(muted))
     return
   end
   self:SetCueSound(name, 0)
+end
+
+--- Unmute everything muted by `sfxmute all`, without disturbing real bindings.
+function AK:UnmuteAll()
+  local overrides = self.db and self.db.sfxOverride
+  if not overrides then return end
+  local cleared = 0
+  for cue, value in pairs(overrides) do
+    if value == 0 then
+      overrides[cue] = nil
+      chosen[cue] = nil
+      cleared = cleared + 1
+    end
+  end
+  self:Print(("Unmuted %d cues."):format(cleared))
 end
 
 -- ---------------------------------------------------------------------------
@@ -731,14 +781,19 @@ end
 --- PlaySoundFile is the only way to ask, and it answers by starting playback --
 --- so each hit is stopped again immediately. That leaves a scan audible as a
 --- short flurry rather than as every sound in the range playing in full.
+--- Judged on the HANDLE, for the same reason TrySoundFile is: willPlay is true
+--- for practically any number, so the old test kept EVERY id in the range and
+--- reported "200 of 200 playable". That is the scanner's entire job done
+--- backwards -- it turned "here are the real ones" back into "guess a number",
+--- and every PREV/NEXT step through the results then played silence.
 function AK:ScanSoundFiles(startID, count)
   local found = {}
   count = math.min(count or 100, 400)
   for id = startID, startID + count - 1 do
-    local ok, willPlay, handle = pcall(PlaySoundFile, id, "SFX")
-    if ok and willPlay then
+    local ok, _, handle = pcall(PlaySoundFile, id, "SFX")
+    if ok and handle and handle ~= 0 then
       found[#found + 1] = id
-      if handle then pcall(StopSound, handle) end
+      if StopSound then pcall(StopSound, handle) end
     end
   end
   return found

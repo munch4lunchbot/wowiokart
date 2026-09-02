@@ -213,6 +213,7 @@ function Menu:BuildHome()
     { "TIME TRIAL", "No rivals, no items, race your own ghost.", function() AK.Race:Start("time_trial") end },
     { "BATTLE", "Three balloons each. Last one standing wins.", function() AK.Race:StartBattle() end },
     { "PRACTICE", "Learn the course without a finish pressure.", function() AK.Race:Start("practice") end },
+    { "TROPHY ROOM", "Every achievement, and which ones you have.", function() self:ShowAchievements() end },
     { "SETTINGS", "Adjust this tiny game's options.", function() self:ShowSettings() end },
   }
   local ROW, GAP, TOP = 36, 7, 22
@@ -409,6 +410,75 @@ function Menu:ShowSelection(kind)
       detail:SetText(("%s\n%s\n3 laps / %dm"):format(entry.subtitle, entry.shortcut, entry.length))
     end
   end
+  page:Show()
+end
+
+--- The trophy room.
+---
+--- Achievements were write-only: unlocking one printed a single chat line that
+--- scrolled away, and nothing anywhere ever listed them again. The player could
+--- not see what existed, what they had, or what was left -- so the whole system
+--- may as well not have been there. This is that list.
+function Menu:ShowAchievements()
+  self:HideDynamic()
+  local page = self:AddDynamic(CreateFrame("Frame", nil, self.content))
+  page:SetAllPoints()
+  local header = UI:NewText(page, "TROPHY ROOM", 25, AK.COLORS.gold, "CENTER")
+  header:SetPoint("TOP", 0, -28)
+  local back = UI:NewButton(page, "BACK", 120, 32, function() self:ShowHome() end)
+  back:SetPoint("TOPLEFT", 25, -25)
+
+  local progress = AK.db.progress
+  local earned = progress.achievements or {}
+  local order = AK.AchievementOrder or {}
+  local have = 0
+  for _, id in ipairs(order) do if earned[id] then have = have + 1 end end
+
+  local summary = UI:NewText(page,
+    ("%d of %d earned"):format(have, #order), 14, AK.COLORS.lime, "CENTER")
+  summary:SetPoint("TOP", header, "BOTTOM", 0, -4)
+
+  -- Two columns, sized from the entry count rather than hard-coded, so adding
+  -- an achievement re-flows instead of spilling off the panel.
+  local COLUMNS, MARGIN, TOP, GAP = 2, 40, 92, 6
+  local cardWidth = math.floor((960 - MARGIN * 2 - GAP * (COLUMNS - 1)) / COLUMNS)
+  local rows = math.ceil(#order / COLUMNS)
+  local cardHeight = math.min(52, math.floor((520 - TOP - 56 - GAP * (rows - 1)) / math.max(1, rows)))
+
+  for index, id in ipairs(order) do
+    local achievement = AK.Achievements[id]
+    if achievement then
+      local got = earned[id] and true or false
+      local column, row = (index - 1) % COLUMNS, math.floor((index - 1) / COLUMNS)
+      local card = UI:NewPanel(page, cardWidth, cardHeight,
+        got and { .10, .18, .12, .96 } or { .07, .09, .14, .94 })
+      card:SetPoint("TOPLEFT", MARGIN + column * (cardWidth + GAP), -TOP - row * (cardHeight + GAP))
+
+      -- A filled versus hollow marker, so earned reads at a glance without
+      -- relying on colour alone.
+      local mark = UI:NewText(card, got and "*" or "-", 16,
+        got and AK.COLORS.gold or { .34, .38, .46 }, "LEFT")
+      mark:SetPoint("LEFT", 12, 0)
+
+      local name = UI:NewText(card, achievement.name, 14,
+        got and AK.COLORS.gold or { .62, .66, .74 }, "LEFT")
+      name:SetPoint("TOPLEFT", 30, -7)
+      local description = UI:NewText(card, achievement.description, 11,
+        got and { .78, .86, .78 } or { .44, .48, .56 }, "LEFT")
+      description:SetPoint("TOPLEFT", 30, -25)
+      description:SetWidth(cardWidth - 42)
+      description:SetJustifyH("LEFT")
+    end
+  end
+
+  local trophies = 0
+  for _ in pairs(progress.trophies or {}) do trophies = trophies + 1 end
+  local stats = UI:NewText(page,
+    ("RACES %d      WINS %d      PODIUMS %d      CUPS %d      TOKENS %d")
+      :format(progress.races or 0, progress.wins or 0, progress.podiums or 0,
+        trophies, progress.coins or 0),
+    13, AK.COLORS.muted, "CENTER")
+  stats:SetPoint("BOTTOM", 0, 18)
   page:Show()
 end
 

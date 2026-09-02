@@ -75,6 +75,9 @@ function Physics:ReleaseDrift(race, vehicle)
       -- spark colour you were just watching and the boost you actually got can
       -- never disagree with each other.
       local tier = vehicle.driftCharge > 1.8 and 3 or (vehicle.driftCharge > .9 and 2 or 1)
+      -- Purple sparks. Most players cash out at orange and never see the top
+      -- rung, so this is the achievement that teaches the drift ladder exists.
+      if tier >= 3 then AK:UnlockAchievement("mega_turbo") end
       -- Burst, shove, sound -- in that order, same frame.
       AK.RaceUI:DriftRelease(tier)
       AK.RaceUI:Announce(boost > 1.2 and "MEGA BOOST!" or (boost > .7 and "SUPER BOOST!" or "MINI BOOST!"), boost > 1.2 and AK.COLORS.gold or AK.COLORS.lime)
@@ -109,6 +112,7 @@ function Physics:UpdateRoute(race, vehicle)
       if vehicle.branchIntent == branch.id then committed = true end
       if vehicle.branchIntent and vehicle.branchIntent ~= branch.id then committed = false end
       if committed then
+        if vehicle == race.player then AK:UnlockAchievement("shortcut_run") end
         vehicle.route = branch
         vehicle.routeReturn = vehicle.distance
         vehicle.distance = 0

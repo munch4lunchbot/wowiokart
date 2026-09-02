@@ -287,6 +287,38 @@ for (const rel of onDisk) {
   }
 }
 
+// --- achievements that can never be earned ----------------------------------
+//
+// "That's Mine!" (late_pass) sat in Data/Achievements.lua for the addon's whole
+// life with no code path anywhere that called UnlockAchievement for it. It had
+// a name, a description and a slot on the list, and it was simply impossible --
+// which is worse than not shipping it, because the player can see it.
+//
+// Nothing about that is visible at runtime: an achievement that never fires
+// looks exactly like one you have not earned yet.
+const orphanAchievements = [];
+{
+  const file = path.join(ADDON, "Data", "Achievements.lua");
+  if (fs.existsSync(file)) {
+    const src = fs.readFileSync(file, "utf8");
+    // Keys are one indent inside `AK.Achievements = {`.
+    const ids = [...src.matchAll(/^\s{2}(\w+)\s*=\s*\{/gm)].map(m => m[1]);
+    const everything = onDisk.map(rel => fs.readFileSync(absPath(rel), "utf8")).join("\n");
+    // The trophy room draws from AK.AchievementOrder, not from the map, because
+    // pairs() has no order. An achievement missing from that list is earnable
+    // but never shown, which is the same invisibility bug wearing a hat.
+    const orderBlock = (src.match(/AK\.AchievementOrder\s*=\s*\{([\s\S]*?)\}/) || [, ""])[1];
+    const ordered = new Set([...orderBlock.matchAll(/"(\w+)"/g)].map(m => m[1]));
+    for (const id of ids) {
+      if (!new RegExp('UnlockAchievement\\(\\s*"' + id + '"').test(everything)) {
+        orphanAchievements.push(id + "  -- defined, but nothing ever unlocks it");
+      } else if (ordered.size && !ordered.has(id)) {
+        orphanAchievements.push(id + "  -- earnable, but missing from AK.AchievementOrder so it never shows");
+      }
+    }
+  }
+}
+
 console.log("files: " + toc.length + " listed, " + onDisk.length + " on disk");
 if (missing.length) console.log("  MISSING (in toc, not on disk): " + missing.join(", "));
 if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted.join(", "));
@@ -304,9 +336,11 @@ console.log("widget calls on plain tables: " + tableCalls.length);
 for (const t of tableCalls) console.log("  " + t);
 console.log("lap-relative distances in absolute space: " + lapRelative.length);
 for (const l of lapRelative) console.log("  " + l);
+console.log("unearnable achievements: " + orphanAchievements.length);
+for (const a of orphanAchievements) console.log("  " + a);
 
 const bad = errors.length + leaks.size + missing.length + unlisted.length
   + tooNarrow.length + unanchored.length + clamped.length + tableCalls.length
-  + lapRelative.length;
+  + lapRelative.length + orphanAchievements.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);

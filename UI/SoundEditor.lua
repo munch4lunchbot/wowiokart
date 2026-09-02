@@ -92,8 +92,14 @@ function Editor:Refresh()
     self.detailKit:SetText("")
   end
 
-  self.scanLabel:SetText(self.found and #self.found > 0
-    and ("%d found  -  showing %d"):format(#self.found, (self.foundIndex or 0) + 1)
+  -- Say WHICH id is being auditioned, and name it when the kit knows the name.
+  -- "showing 3" tells you nothing you can write down or bind later.
+  local shownId = self.found and self.found[(self.foundIndex or 0) + 1]
+  local shownName = shownId and AK:SoundName(shownId)
+  self.scanLabel:SetText(shownId
+    and ("%d found  -  %d of %d: |cffffd100%d|r%s"):format(#self.found,
+      (self.foundIndex or 0) + 1, #self.found, shownId,
+      shownName and ("  " .. shownName) or "")
     or "no scan yet")
 end
 
@@ -206,11 +212,23 @@ function Editor:Build()
   -- The button that actually answers the question the player is asking. One
   -- play tells you the timbre; eight at the cue's own minimum gap tells you
   -- whether it will drive you mad, and that is the complaint being tuned out.
-  local rate = UI:NewButton(frame, "HEAR IT REPEATED", 246, 20, function()
+  local rate = UI:NewButton(frame, "HEAR IT REPEATED", 180, 20, function()
     if self.selected then AK:AuditionRate(self.selected) end
   end)
   rate:SetPoint("TOPLEFT", dx, -122)
   rate.tooltip = "Play this cue eight times at the fastest rate it is allowed.\nA sample that is fine once can still be unbearable at its real density -- this is the worst case you will actually hear in a race."
+
+  -- Silencing one cue was implemented and had no way in: the sentinel-0
+  -- override existed, AK:MuteCue existed, and nothing anywhere called either.
+  -- A toggle, because a mute you cannot undo is a trap.
+  local mute = UI:NewButton(frame, "MUTE", 60, 20, function()
+    if not self.selected then AK:Print("Pick a cue on the left first.") return end
+    local bound = AK.db.sfxOverride and AK.db.sfxOverride[self.selected]
+    AK:SetCueSound(self.selected, bound == 0 and nil or 0)
+    self:Refresh()
+  end)
+  mute:SetPoint("TOPLEFT", dx + 186, -122)
+  mute.tooltip = "Silence this cue. Press again to bring it back."
 
   -- ---- file id browser ----
   local browseTitle = UI:NewText(frame, "GAME AUDIO LIBRARY", 11, AK.COLORS.blue, "LEFT")
@@ -277,6 +295,14 @@ function Editor:Build()
   local report = UI:NewButton(frame, "PRINT BINDINGS", 170, 22, function() AK:DebugSfx() end)
   report:SetPoint("BOTTOMLEFT", 12, 8)
   report.tooltip = "Prints every cue and what it resolved to, ready to paste back."
+  -- The one control this window most needed and did not have. Scanning plays
+  -- whatever it finds, and the library is full of minute-long ambience beds --
+  -- without a stop you sit through it or reload. The workshop's sound bench has
+  -- had one at the top of the pane the whole time.
+  local stop = UI:NewButton(frame, "STOP SOUND", 130, 22, function() AK:StopPreview() end)
+  stop:SetPoint("BOTTOM", 0, 8)
+  stop:SetRestStyle({ .22, .08, .08, .95 }, AK.COLORS.danger)
+  stop.tooltip = "Cut whatever is playing right now."
   local close = UI:NewButton(frame, "CLOSE", 130, 22, function() frame:Hide() end)
   close:SetPoint("BOTTOMRIGHT", -12, 8)
 
