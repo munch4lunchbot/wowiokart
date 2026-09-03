@@ -192,6 +192,22 @@ local function applyItemTint(texture, item)
   end
 end
 
+--- Apply `fn` to every argument that is not nil -- INCLUDING past the nils.
+---
+--- `ipairs` stops dead at the first nil, so `ipairs({ a, b, c })` where `a`
+--- happens to be nil silently skips b and c too. Both callers below guard each
+--- element with `if region then`, which is proof the author expected the list to
+--- hold nils, and proof that guard could never be reached: the loop had already
+--- stopped. One renamed widget would have quietly stopped hiding every widget
+--- after it in the list -- the HUD left on screen over the title menu, with no
+--- error to say why. `select("#", ...)` counts the arguments as written.
+local function forEachPresent(fn, ...)
+  for i = 1, select("#", ...) do
+    local value = select(i, ...)
+    if value then fn(value) end
+  end
+end
+
 local function shade(color, factor, alpha)
   return { color[1] * factor, color[2] * factor, color[3] * factor, alpha or 1 }
 end
@@ -1532,13 +1548,12 @@ function RaceUI:SetHudShown(shown)
   self:Build()
   self.hudShown = shown
   self:SetModelsEnabled(shown)
-  for _, region in ipairs({ self.hudLayer, self.tagLayer, self.minimapPanel,
+  forEachPresent(function(region) region:SetShown(shown) end,
+    self.hudLayer, self.tagLayer, self.minimapPanel,
     self.headerPanel, self.clockPanel, self.itemPanel, self.driftPanel,
     self.placeGlow, self.position, self.positionOf, self.status,
     self.controlBar, self.trackName, self.shortcut, self.countdown,
-    self.lightRig }) do
-    if region then region:SetShown(shown) end
-  end
+    self.lightRig)
   for _, button in ipairs(self.raceButtons or {}) do button:SetShown(shown) end
   -- Any beat still counting down when the race ended stays up over the results
   -- and then over the menu -- "LAP 2" was sitting on the title screen. Announce
@@ -1584,10 +1599,9 @@ function RaceUI:ClearPresentation()
   -- These are driven purely by ALPHA in UpdatePresentation and never by
   -- SetShown, so hiding them would leave them permanently invisible -- the beat
   -- would fire again and set an alpha on a hidden widget forever after.
-  for _, region in ipairs({ self.finishCard, self.splitText, self.wrongWay,
-    self.beatLabel, self.urgency, self.flash, self.spinyWarn }) do
-    if region then region:SetAlpha(0) end
-  end
+  forEachPresent(function(region) region:SetAlpha(0) end,
+    self.finishCard, self.splitText, self.wrongWay,
+    self.beatLabel, self.urgency, self.flash, self.spinyWarn)
   -- These two manage their own shown state, so they have to actually be hidden:
   -- UpdatePresentation only runs during a race, and between races nothing would
   -- take them down. `checker` is a LIST of 24 cells, not a single texture --
@@ -2525,18 +2539,85 @@ end
 --- Deterministic from the track id, so the world is identical every lap and
 --- every session -- scenery that reshuffles is worse than none, because you
 --- stop trusting what you are looking at. Built once and cached on the route.
+-- The scenery you actually drive PAST, keyed per track.
+--
+-- Two separate things went wrong here and they hid each other. First, this was
+-- keyed on `track.style`, which only Oribos sets -- so every other circuit in
+-- the game got the same `default` entry: green conifers beside the lava in
+-- Durotar, beside the ice in Ironforge, and in the middle of the Netherstorm's
+-- void. Second, these tints were authored to multiply a tree texture that had
+-- dark green baked into it. That texture is a pale neutral silhouette now (see
+-- Art/generate-art.js), so the same numbers came out as washed-out sage.
+--
+-- Worth being clear about how this was missed: the skyline treeline was fixed
+-- last pass and these are a DIFFERENT table -- the small trees on the horizon
+-- versus the big ones rushing past your wheels -- and the gameplay footage
+-- showed the second, which I read as the first.
 local PROP_KINDS = {
   oribos = {
     { art = "spire.tga", w = 0.30, h = 1.00, tint = { 0.62, 0.55, 0.85 }, min = 5.5, max = 13.0 },
     { art = "shard.tga", w = 0.70, h = 0.70, tint = { 0.45, 0.85, 1.00 }, min = 1.4, max = 3.0 },
   },
+  elwynn = {
+    { art = "tree.tga",  w = 0.55, h = 1.00, tint = { 0.26, 0.48, 0.28 }, min = 4.5, max = 11.0 },
+    { art = "tree.tga",  w = 0.60, h = 0.90, tint = { 0.19, 0.38, 0.22 }, min = 6.0, max = 14.0 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.46, 0.44, 0.38 }, min = 1.2, max = 2.6 },
+  },
+  -- Scorched stumps and red rock. Sparse and low: it is a wasteland.
+  durotar = {
+    { art = "tree.tga",  w = 0.60, h = 0.85, tint = { 0.44, 0.24, 0.12 }, min = 3.4, max = 8.0 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.58, 0.29, 0.18 }, min = 1.6, max = 4.2 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.40, 0.21, 0.15 }, min = 2.2, max = 5.5 },
+  },
+  -- Dense, dark and tall. The jungle closes over the road.
+  stranglethorn = {
+    { art = "tree.tga",  w = 0.62, h = 1.05, tint = { 0.16, 0.40, 0.21 }, min = 7.0, max = 16.0 },
+    { art = "tree.tga",  w = 0.55, h = 1.00, tint = { 0.22, 0.50, 0.26 }, min = 5.0, max = 12.0 },
+    { art = "sporecap.tga", w = 1.00, h = 1.00, tint = { 0.66, 0.50, 0.32 }, min = 1.4, max = 3.0 },
+  },
+  -- Snow-laden firs and ice. Pale, and it reads against the white ground.
+  ironforge = {
+    { art = "tree.tga",  w = 0.58, h = 1.00, tint = { 0.40, 0.54, 0.58 }, min = 4.0, max = 10.0 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.70, 0.84, 0.95 }, min = 1.8, max = 4.5 },
+  },
+  -- Underground: no trees at all, just cut rock and timber.
+  deadmines = {
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.32, 0.33, 0.42 }, min = 1.6, max = 4.4 },
+    { art = "spire.tga", w = 0.34, h = 1.00, tint = { 0.36, 0.32, 0.28 }, min = 3.0, max = 7.0 },
+  },
+  -- Void crystal. Nothing grows here.
+  netherstorm = {
+    { art = "shard.tga", w = 0.75, h = 1.00, tint = { 0.62, 0.36, 0.92 }, min = 2.2, max = 6.5 },
+    { art = "spire.tga", w = 0.30, h = 1.00, tint = { 0.44, 0.34, 0.70 }, min = 4.0, max = 10.0 },
+  },
+  -- Sandstone pillars, and the odd dead thing.
+  thousandneedles = {
+    { art = "spire.tga", w = 0.36, h = 1.00, tint = { 0.74, 0.52, 0.30 }, min = 6.0, max = 15.0 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.68, 0.50, 0.32 }, min = 1.4, max = 3.4 },
+    { art = "tree.tga",  w = 0.58, h = 0.80, tint = { 0.42, 0.32, 0.20 }, min = 2.6, max = 6.0 },
+  },
+  -- Giant mushrooms, which is the entire point of Zangarmarsh.
+  zangarmarsh = {
+    { art = "sporecap.tga", w = 1.00, h = 1.00, tint = { 0.38, 0.70, 0.70 }, min = 3.5, max = 9.0 },
+    { art = "sporecap.tga", w = 1.00, h = 1.00, tint = { 0.60, 0.48, 0.76 }, min = 2.0, max = 5.0 },
+    { art = "tree.tga",  w = 0.55, h = 1.00, tint = { 0.24, 0.46, 0.40 }, min = 4.0, max = 9.0 },
+  },
+  -- Bone and black spire.
+  icecrown = {
+    { art = "spire.tga", w = 0.32, h = 1.00, tint = { 0.30, 0.32, 0.40 }, min = 5.0, max = 13.0 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.72, 0.76, 0.82 }, min = 1.6, max = 4.0 },
+  },
   default = {
-    { art = "tree.tga",  w = 0.55, h = 1.00, tint = { 0.72, 0.92, 0.70 }, min = 4.5, max = 11.0 },
-    { art = "tree.tga",  w = 0.60, h = 0.90, tint = { 0.50, 0.74, 0.52 }, min = 6.0, max = 14.0 },
-    { art = "shard.tga", w = 0.90, h = 0.75, tint = { 0.62, 0.58, 0.52 }, min = 1.2, max = 2.6 },
+    { art = "tree.tga",  w = 0.55, h = 1.00, tint = { 0.26, 0.48, 0.28 }, min = 4.5, max = 11.0 },
+    { art = "tree.tga",  w = 0.60, h = 0.90, tint = { 0.19, 0.38, 0.22 }, min = 6.0, max = 14.0 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.46, 0.44, 0.38 }, min = 1.2, max = 2.6 },
   },
 }
 
+--- @param route the road being decorated (main line or a branch)
+--- @param style the track's own id, so scenery is per CIRCUIT rather than per
+---   "style" -- only Oribos ever set a style, so keying on it gave nine of the
+---   ten tracks the same green conifers.
 function RaceUI:BuildProps(route, style)
   if route.props then return route.props end
   local kinds = PROP_KINDS[style or "default"] or PROP_KINDS.default
@@ -2582,7 +2663,8 @@ end
 function RaceUI:RenderProps(race, camX, camZ)
   local tuning = self.T
   local route = self.route or race.track
-  local props = self:BuildProps(route, race.track.style)
+  -- The track's ID, with `style` as a fallback so Oribos keeps its own entry.
+  local props = self:BuildProps(route, race.track.style or race.track.id)
   local light = (self.light or 1) * tuning.nightBoost
   local shown = 0
   local length = route.length

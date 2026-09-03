@@ -150,7 +150,9 @@ function Workshop:TuningRow(parent, def, y)
   reset:SetPoint("TOPLEFT", 572, y + 3)
   reset.quiet = true
   reset.tooltip = ("Back to %s."):format(tostring(def.default))
-  for _, button in ipairs({ minus, plus }) do
+  -- pairs, not ipairs: see the note on forEachPresent in UI/RaceUI.lua. These
+  -- two cannot be nil today, but the idiom is the trap, not the instance.
+  for _, button in pairs({ minus, plus }) do
     button.tooltip = (def.hint and def.hint .. "\n" or "") .. "Right-click to reset this value."
     button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button:HookScript("OnClick", function(_, mouseButton)

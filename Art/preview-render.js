@@ -566,6 +566,75 @@ for (let r = rows.length - 1; r >= 0; r--) {
   }
 }
 
+// ---------- roadside props ----------
+//
+// This harness had NO prop renderer at all, which is why it could not show the
+// bug the gameplay footage showed in its first frame: conifers standing inside
+// the Frozen Tunnel. Props are child FRAMES in the addon, so they draw above
+// the tunnel rock rather than behind it -- and this file draws its rock fill in
+// a completely different place in the order, so even adding them naively would
+// have mirrored the wrong thing. They are drawn here after the surround, which
+// is where the game puts them, and gated exactly as RaceUI:RenderProps gates
+// them: per prop, on the cover where that prop stands.
+const PROP_KINDS = (() => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "UI", "RaceUI.lua"), "utf8");
+  const table = src.slice(src.indexOf("local PROP_KINDS = {"));
+  const out = {};
+  const heads = [...table.slice(0, table.indexOf("\n}\n")).matchAll(/^  (\w+) = \{$/gm)];
+  for (let i = 0; i < heads.length; i++) {
+    const body = table.slice(heads[i].index,
+      i + 1 < heads.length ? heads[i + 1].index : table.indexOf("\n}\n"));
+    out[heads[i][1]] = [...body.matchAll(
+      /art = "([\w.]+)", w = ([\d.]+), h = ([\d.]+), tint = \{ ([\d.]+), ([\d.]+), ([\d.]+) \}, min = ([\d.]+), max = ([\d.]+)/g)]
+      .map(m => ({ art: m[1].replace(".tga", ""), w: +m[2], h: +m[3],
+        tint: [+m[4], +m[5], +m[6]], min: +m[7], max: +m[8] }));
+  }
+  return out;
+})();
+{
+  const PROP_SPACING = 9;
+  const kinds = PROP_KINDS[track.style || TRACK_ID] || PROP_KINDS.default;
+  // Mirrors AK.RNG's xorshift32 and RaceUI:BuildProps' seeding, so the preview
+  // stands the same trees in the same places the game does.
+  let seed = Math.floor(track.length);
+  for (const ch of TRACK_ID) seed = (seed * 31 + ch.charCodeAt(0)) % 2147483647;
+  let st = seed >>> 0 || 1;
+  const rnd = () => { st ^= st << 13; st >>>= 0; st ^= st >>> 17; st ^= st << 5; st >>>= 0; return st / 4294967296; };
+  const props = [];
+  for (let d = 0; d < track.length; d += PROP_SPACING) {
+    for (const side of [-1, 1]) {
+      if (rnd() <= 0.22) continue;
+      const kind = kinds[Math.floor(rnd() * kinds.length) % kinds.length];
+      props.push({
+        distance: (d + rnd() * PROP_SPACING) % track.length, side,
+        offset: 1.35 + rnd() * (rnd() < 0.3 ? 3.2 : 0.9),
+        size: kind.min + rnd() * (kind.max - kind.min),
+        kind, shade: 0.82 + rnd() * 0.36,
+      });
+    }
+  }
+  // Far to near, so a nearer tree occludes a further one.
+  const drawable = props
+    .map(pr => ({ pr, dz: ((pr.distance - (camZ % track.length)) % track.length + track.length) % track.length }))
+    .filter(o => o.dz > 0.8 && o.dz < FAR_Z && tunnelDepth(o.pr.distance) < 0.5)
+    .sort((a, b) => b.dz - a.dz);
+  for (const { pr, dz } of drawable) {
+    const art = tex[pr.kind.art];
+    if (!art) continue;
+    const propZ = camZ + dz;
+    const edge = roadWidth(propZ);
+    const lat = pr.side * (edge + pr.offset) * T.roadHalf;
+    const [x, y, ppm] = project(dz, bend(dz) + lat, roadHeight(propZ));
+    const height = ppm * pr.size;
+    if (height <= 2 || x < -HW * 2.2 || x > HW * 2.2) continue;
+    const width = height * (pr.kind.w / pr.kind.h);
+    const fog = clamp(1 - (dz / FAR_Z) * T.fogStrength, 0.20, 1) * light;
+    const shade = pr.shade * fog;
+    blit(art, SX(x - width / 2), SY(y) - height, width, height, 0, 1, 0, 1,
+      pr.kind.tint.map(c => c * shade), 1);
+  }
+}
+
 // ---------- arches ----------
 if (tex.arch && track.archSpacing) {
   const first = Math.ceil(camZ / track.archSpacing);

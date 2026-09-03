@@ -62,6 +62,56 @@ writeTGA("shard.tga", 64, 64, (x, y, w, h) => {
   return [lit, lit, lit, 1];
 });
 
+// ---- boulder: a rounded lump of rock, for roadside scenery ----
+//
+// shard.tga was being used for this and it is a crystal: a downward-tapering
+// spike. Rendered as a rock beside a road it reads as an upside-down cone
+// hovering over the ground, which is what the Durotar preview showed. A rock is
+// wider than it is tall and sits ON something.
+//
+// NEUTRAL, like tree.tga: this is tinted per circuit, so any colour baked in
+// here would survive every tint and every biome would get the same rock.
+writeTGA("boulder.tga", 96, 64, (x, y, w, h) => {
+  const u = (x + .5) / w, v = (y + .5) / h;
+  // Two overlapping domes, so the silhouette is a lump rather than an egg.
+  const dome = (cx, cy, rx, ry) => {
+    const dx = (u - cx) / rx, dy = (v - cy) / ry;
+    return dx * dx + dy * dy;
+  };
+  const inside = Math.min(dome(0.44, 0.92, 0.42, 0.78), dome(0.68, 0.95, 0.28, 0.52));
+  if (inside > 1 || v > 0.99) return [0, 0, 0, 0];
+  // Lit from the upper left, with a coarse facet break so it is not a pebble.
+  const lit = 0.58 + (1 - v) * 0.34 + (0.5 - Math.abs(u - 0.34)) * 0.30
+    + hash(x >> 3, y >> 3, 11) * 0.16;
+  const tone = Math.max(0.25, Math.min(1, lit));
+  return [tone, tone, tone, 1];
+});
+
+// ---- spore cap: the giant mushroom that IS Zangarmarsh ----
+//
+// Not mushroom.tga -- that is the ITEM, and it is red-and-white on purpose,
+// which means a per-track tint cannot restyle it: Zangarmarsh's teal and violet
+// caps came out as the same Mario mushroom with a colour cast. Scenery needs its
+// own neutral silhouette.
+writeTGA("sporecap.tga", 96, 96, (x, y, w, h) => {
+  const u = (x + .5) / w, v = (y + .5) / h;
+  // Stem below, cap above.
+  if (v > 0.46) {
+    const waist = 0.085 + (v - 0.46) * 0.10;
+    if (Math.abs(u - 0.5) > waist) return [0, 0, 0, 0];
+    const lit = 0.52 + (0.5 - Math.abs(u - 0.44)) * 0.7;
+    const tone = Math.max(0.25, Math.min(1, lit));
+    return [tone, tone, tone, 1];
+  }
+  // A wide, low dome with a soft underside lip.
+  const dx = (u - 0.5) / 0.48, dy = (v - 0.46) / 0.42;
+  if (dx * dx + dy * dy > 1) return [0, 0, 0, 0];
+  const lit = 0.60 + (0.46 - v) * 0.55 + (0.5 - Math.abs(u - 0.36)) * 0.34
+    + hash(x >> 3, y >> 3, 17) * 0.12;
+  const tone = Math.max(0.25, Math.min(1, lit));
+  return [tone, tone, tone, 1];
+});
+
 // ---- speed streak with soft ends, for boost lines ----
 writeTGA("streak.tga", 16, 128, (x, y, w, h) => {
   const u = (x + .5) / w, v = (y + .5) / h;

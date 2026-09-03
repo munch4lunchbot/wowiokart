@@ -1378,7 +1378,12 @@ function Race:FinishRace(race)
   -- still to hand and hand it to the presentation layer as a moment.
   local ahead = race.ordered and race.ordered[position - 1]
   local behind = race.ordered and race.ordered[position + 1]
-  for _, rival in ipairs({ ahead, behind }) do
+  -- NOT ipairs. `ipairs` stops at the first nil, and when the player WINS there
+  -- is nobody ahead -- so `{ nil, behind }` iterated zero times and a photo
+  -- finish was never detected for the one case this whole block exists for.
+  -- Winning by two tenths is the best thing that can happen in a kart game, and
+  -- the achievement below is explicitly "only for taking it".
+  for _, rival in pairs({ ahead, behind }) do
     local mine, theirs = race.player.finishTime, rival and rival.finishTime
     if mine and theirs and math.abs(mine - theirs) <= 0.30 then
       race.photoFinish = {

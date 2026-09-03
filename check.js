@@ -482,6 +482,60 @@ const sameLookingItems = [];
   }
 }
 
+// --- ipairs over a list that can hold a nil ----------------------------------
+//
+// `ipairs` stops dead at the first nil. `ipairs({ ahead, behind })` in the
+// photo-finish check therefore iterated ZERO times whenever the player won,
+// because nobody is ahead of first place -- and winning by two tenths is the
+// one case that block exists for. Two more in RaceUI listed sixteen widgets
+// each and guarded every one with `if region then`, which is proof the author
+// expected nils and proof the guard could never be reached.
+//
+// A table of LITERALS is fine -- `ipairs({ -1, 1 })` cannot have a hole. A table
+// of expressions is the trap. Use pairs, or select("#", ...).
+const nilProneLoops = [];
+// onDisk holds toc-style paths with backslashes.
+for (const rel of onDisk.map(r => r.replace(/\\/g, "/"))) {
+  const raw = fs.readFileSync(path.join(ADDON, rel), "utf8");
+  // Comments explaining the trap are not the trap. Blank them, keeping the
+  // line count so the reported line number still points at the real code.
+  const src = raw.replace(/--[^\n]*/g, "");
+  for (const m of src.matchAll(/ipairs\(\{([^}]*)\}\)/gs)) {
+    const items = m[1].split(",").map(x => x.replace(/--.*$/gm, "").trim()).filter(Boolean);
+    if (items.length < 2) continue;
+    const literal = /^(-?[\d.]+|"[^"]*"|'[^']*'|true|false)$/;
+    if (items.every(x => literal.test(x))) continue;
+    const line = src.slice(0, m.index).split("\n").length;
+    nilProneLoops.push(rel + ":" + line + "  ipairs over { " + items.join(", ").slice(0, 60) +
+      (items.join(", ").length > 60 ? "..." : "") +
+      " } -- stops at the first nil; use pairs");
+  }
+}
+
+// --- circuits wearing another circuit's scenery ------------------------------
+//
+// PROP_KINDS -- the trees and rocks you drive PAST, as opposed to the treeline
+// on the horizon -- was keyed on `track.style`, and only Oribos sets a style.
+// Nine of the ten circuits therefore silently took the `default` entry: green
+// conifers beside the lava in Durotar, beside the ice in Ironforge, and in the
+// middle of the Netherstorm's void. Silently is the problem; a new track should
+// not be able to inherit somebody else's forest without saying so.
+const borrowedScenery = [];
+{
+  const ui = path.join(ADDON, "UI", "RaceUI.lua");
+  const tracksFile = path.join(ADDON, "Data", "Tracks.lua");
+  if (fs.existsSync(ui) && fs.existsSync(tracksFile)) {
+    const src = fs.readFileSync(ui, "utf8");
+    const table = src.slice(src.indexOf("local PROP_KINDS = {"));
+    const end = table.indexOf("\n}\n");
+    const keys = new Set([...table.slice(0, end).matchAll(/^  (\w+) = \{$/gm)].map(m => m[1]));
+    const tracks = fs.readFileSync(tracksFile, "utf8");
+    for (const m of tracks.matchAll(/\n  \{\n    id = "(\w+)"/g))
+      if (!keys.has(m[1]))
+        borrowedScenery.push(m[1] + "  has no PROP_KINDS entry, so it wears the default forest");
+  }
+}
+
 console.log("files: " + toc.length + " listed, " + onDisk.length + " on disk");
 if (missing.length) console.log("  MISSING (in toc, not on disk): " + missing.join(", "));
 if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted.join(", "));
@@ -511,10 +565,15 @@ console.log("surfaces the physics feels but the renderer never draws: " + invisi
 for (const u of invisibleSurfaces) console.log("  " + u);
 console.log("items the player cannot tell apart: " + sameLookingItems.length);
 for (const u of sameLookingItems) console.log("  " + u);
+console.log("ipairs over a list that can hold a nil: " + nilProneLoops.length);
+for (const u of nilProneLoops) console.log("  " + u);
+console.log("circuits wearing another circuit's scenery: " + borrowedScenery.length);
+for (const u of borrowedScenery) console.log("  " + u);
 
 const bad = errors.length + leaks.size + missing.length + unlisted.length
   + tooNarrow.length + unanchored.length + clamped.length + tableCalls.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
-  + unfaded.length + unscaled.length + invisibleSurfaces.length + sameLookingItems.length;
+  + unfaded.length + unscaled.length + invisibleSurfaces.length + sameLookingItems.length
+  + nilProneLoops.length + borrowedScenery.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);
