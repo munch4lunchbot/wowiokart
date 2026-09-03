@@ -590,6 +590,40 @@ const camouflagedRoads = [];
   }
 }
 
+// --- locals used above the line that declares them ---------------------------
+//
+// Lua scopes a local from its DECLARATION onward, so a function body written
+// earlier in the file that names it compiles as a global lookup -- and reads
+// nil at runtime, every time, no matter what order the two are called in. It is
+// invisible to luac, which parses both quite happily.
+//
+// `fadeIn` was declared just above Menu:AddDynamic and called from
+// Menu:ShowHome a hundred lines higher: eight harness checks went red at once.
+// The language server would have caught it, and the language server is not on
+// every machine -- which is exactly the case this file already learned to stop
+// treating as "nothing wrong".
+const usedTooEarly = [];
+for (const rel of onDisk.map((r) => r.replace(/\\/g, "/"))) {
+  if (/^verify-/.test(path.basename(rel))) continue;
+  const raw = fs.readFileSync(path.join(ADDON, rel), "utf8");
+  // Blank comments and strings so a name inside either cannot look like a call.
+  const src = raw.replace(/--\[\[[\s\S]*?\]\]/g, "").replace(/--[^\n]*/g, "")
+    .replace(/"(\\.|[^"\\])*"/g, '""').replace(/'(\\.|[^'\\])*'/g, "''");
+  const declaredAt = new Map();
+  for (const m of src.matchAll(/^\s*local\s+function\s+(\w+)\s*\(/gm))
+    if (!declaredAt.has(m[1])) declaredAt.set(m[1], src.slice(0, m.index).split("\n").length);
+  for (const [name, line] of declaredAt) {
+    for (const m of src.matchAll(new RegExp("(?<![\\w.:])" + name + "\\s*\\(", "g"))) {
+      const at = src.slice(0, m.index).split("\n").length;
+      if (at < line) {
+        usedTooEarly.push(rel + ":" + at + "  calls local `" + name +
+          "`, declared at line " + line + " -- it reads as a nil global here");
+        break;
+      }
+    }
+  }
+}
+
 // --- screens still made of BackdropTemplate ----------------------------------
 //
 // BackdropTemplate gives you a filled quad with a one-pixel square border for
@@ -645,6 +679,8 @@ if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted
 if (!languageServerRan)
   console.log("  NOTE: the Lua language server is not on this machine, so the " +
     "syntax and leaked-local checks below looked at nothing. Set LUA_LS.");
+console.log("locals used above their declaration: " + usedTooEarly.length);
+for (const u of usedTooEarly) console.log("  " + u);
 console.log("screens still made of BackdropTemplate: " + addonLookingWindows.length);
 for (const a of addonLookingWindows) console.log("  " + a);
 console.log("will not compile: " + wontCompile.length);
@@ -687,6 +723,6 @@ const bad = errors.length + leaks.size + missing.length + unlisted.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
   + unfaded.length + unscaled.length + invisibleSurfaces.length + sameLookingItems.length
   + nilProneLoops.length + borrowedScenery.length + camouflagedRoads.length
-  + wontCompile.length + addonLookingWindows.length;
+  + wontCompile.length + addonLookingWindows.length + usedTooEarly.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);

@@ -434,6 +434,25 @@ end
 AK.Menu = {}
 local Menu = AK.Menu
 
+--- Pages ARRIVE rather than appearing.
+---
+--- Every menu screen in the addon was swapped by hiding one frame and showing
+--- another on the same tick, which is instant and free and reads as a form
+--- being replaced. An eighth of a second of fade is the whole difference
+--- between a page change and a screen transition; it is the cheapest polish
+--- there is and it was simply never done.
+local function fadeIn(frame, seconds)
+  frame.akFade = 0
+  frame:SetAlpha(0)
+  frame:SetScript("OnUpdate", function(self, elapsed)
+    self.akFade = math.min(1, (self.akFade or 0) + elapsed / (seconds or 0.13))
+    -- Ease out, so it settles rather than stopping.
+    self:SetAlpha(1 - (1 - self.akFade) * (1 - self.akFade))
+    if self.akFade >= 1 then self:SetScript("OnUpdate", nil) end
+  end)
+end
+
+
 -- The size the menu is authored at, and the size it therefore needs: a 960x520
 -- panel centred a little low, with the title stack above it and the exit button
 -- in the corner. That leaves the panel's top edge 215 units below the screen's
@@ -514,10 +533,19 @@ function Menu:Build()
   titleGlow:SetPoint("TOP", 0, 20)
   titleGlow:SetSize(900, 300)
   titleGlow:SetAlpha(0.22)
-  local title = UI:NewText(stage, "AZEROTH KART", 54, AK.COLORS.gold, "CENTER")
-  title:SetPoint("TOP", 0, -56)
-  title:SetShadowColor(0, 0, 0, 1)
-  title:SetShadowOffset(4, -4)
+  -- A WORDMARK, not a word. This was a 54pt gold FontString with a drop shadow;
+  -- every game has a logo, and the difference between a logo and a label is the
+  -- clearest single signal of whether a thing was designed. Drawn chunky and
+  -- sheared into italic to match the rest of the art, which is low-resolution
+  -- on purpose -- see Art/generate-art-ui.js.
+  local title = stage:CreateTexture(nil, "ARTWORK")
+  title:SetTexture(ART .. "logo.tga")
+  -- 520x104 keeps the wordmark's 5:1 aspect and leaves the tagline clear of
+  -- the content panel below. The 54pt FontString this replaced was shorter, so
+  -- sizing the logo to look right in isolation put the tagline underneath the
+  -- panel's top edge -- which is what Art/preview-ui.js is for.
+  title:SetSize(520, 104)
+  title:SetPoint("TOP", 0, -26)
   local titleRule = stage:CreateTexture(nil, "ARTWORK")
   titleRule:SetTexture(ART .. "hairline.tga")
   titleRule:SetPoint("TOP", title, "BOTTOM", 0, -2)
@@ -771,11 +799,13 @@ end
 function Menu:ShowHome()
   self:HideDynamic()
   self.home:Show()
+  fadeIn(self.home)
   self:UpdateSummary()
 end
 
 function Menu:AddDynamic(frame)
   table.insert(self.dynamic, frame)
+  fadeIn(frame)
   return frame
 end
 

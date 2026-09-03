@@ -177,10 +177,28 @@ function blitUV(t, x0, y0, bw, bh, u0, u1, v0, v1, tint, alpha) {
   }
 }
 
-// The menu is authored at 960x520 inside a 1120x790 stage; this sheet is the
-// content panel alone, at 1:1, which is what there is to judge.
+// The whole stage: wordmark, rule, tagline and the content panel below, laid
+// out the way Menu:Build does it against a 1120x790 authored size.
 const CW = home.contentW, CH = home.contentH;
-const OX = Math.round((W - CW) / 2), OY = Math.round((H - CH) / 2);
+// Menu:Build puts the content panel at CENTER, 0, -45 on the stage. WoW's y
+// grows UPWARD, so a -45 offset moves it 45px DOWN the screen -- the opposite
+// of the sign a top-left framebuffer wants, and getting it backwards is how
+// this sheet first drew the panel 90px too high and hid the very collision it
+// exists to find.
+const OY = Math.round(H / 2 + 45 - CH / 2);
+const OX = Math.round((W - CW) / 2);
+{
+  const logoW = 520, logoH = 104, lx = Math.round((W - logoW) / 2), ly = 26;
+  blitUV(tex.logo, lx, ly, logoW, logoH, 0, 1, 0, 1, [1, 1, 1], 1);
+  blitUV(tex.hairline, Math.round((W - 560) / 2), ly + logoH + 2, 560, 3, 0, 1, 0, 1,
+    [1, .76, .20], 0.8);
+  label(W / 2, ly + logoH + 13, "THE MOST QUESTIONABLY SANCTIONED RACE IN AZEROTH",
+    12, MUTED, "center");
+  if (ly + logoH + 13 + 12 > OY) {
+    throw new Error("preview-ui: the tagline runs under the content panel by "
+      + Math.ceil(ly + logoH + 25 - OY) + "px");
+  }
+}
 panel(OX, OY, CW, CH, [0.045, 0.075, 0.125], 0.97);
 
 const M = home.margin;

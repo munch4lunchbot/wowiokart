@@ -206,3 +206,120 @@ writeTGA("panelgleam.tga", PANEL, 4, (x, y, w, h) => {
   const down = Math.pow(1 - v, 2.2);
   return [1, 1, 1, across * down];
 });
+
+// ---- THE LOGO --------------------------------------------------------------
+//
+// "AZEROTH KART" was a 54pt gold FontString with a drop shadow: a word, not a
+// logo. Every game has a wordmark, and the difference between the two is the
+// clearest single signal of whether something was designed or merely labelled.
+//
+// Drawn from letterforms authored here rather than set in a font, because the
+// rest of this game's art is chunky and low-resolution on purpose -- the karts,
+// the props, the skyline -- and a smooth typeface floating above it would
+// belong to a different product. Slab-bold, sheared into italic because it is a
+// racing game, bevelled and outlined so it reads on any background.
+const LOGO_GLYPHS = {
+  A: ["00111100", "01111110", "11000011", "11000011", "11111111", "11111111",
+      "11000011", "11000011", "11000011", "11000011", "11000011"],
+  Z: ["11111111", "11111111", "00000110", "00001100", "00011000", "00110000",
+      "01100000", "11000000", "11000000", "11111111", "11111111"],
+  E: ["11111111", "11111111", "11000000", "11000000", "11111100", "11111100",
+      "11000000", "11000000", "11000000", "11111111", "11111111"],
+  R: ["11111100", "11111110", "11000011", "11000011", "11111110", "11111100",
+      "11011000", "11001100", "11000110", "11000011", "11000011"],
+  O: ["00111100", "01111110", "11000011", "11000011", "11000011", "11000011",
+      "11000011", "11000011", "11000011", "01111110", "00111100"],
+  T: ["11111111", "11111111", "00011000", "00011000", "00011000", "00011000",
+      "00011000", "00011000", "00011000", "00011000", "00011000"],
+  H: ["11000011", "11000011", "11000011", "11000011", "11111111", "11111111",
+      "11000011", "11000011", "11000011", "11000011", "11000011"],
+  K: ["11000110", "11001100", "11011000", "11110000", "11100000", "11110000",
+      "11011000", "11001100", "11000110", "11000011", "11000011"],
+  " ": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000",
+        "00000000", "00000000", "00000000", "00000000", "00000000"],
+};
+
+{
+  const WORD = "AZEROTH KART";
+  const S = 5;                       // pixels per authored bit
+  const GW = 8 * S, GH = 11 * S;     // glyph box
+  const GAP = S;
+  const SHEAR = 0.20;                // italic lean, in x per y
+  const LOGO_W = 640, LOGO_H = 128;
+  // A full glyph box for the word space put 55px of nothing in the middle of a
+  // twelve-letter wordmark, which reads as two words rather than one title.
+  const advance = GW + GAP;
+  const spaceAdvance = Math.round(advance * 0.45);
+  const advanceOf = (ch) => (ch === " " ? spaceAdvance : advance);
+  let wordW = -GAP;
+  for (const ch of WORD) wordW += advanceOf(ch);
+  const x0 = Math.round((LOGO_W - wordW - GH * SHEAR) / 2);
+  const y0 = Math.round((LOGO_H - GH) / 2);
+
+  // The solid mask first; the bevel and the outline are both derived from it,
+  // which is what keeps them consistent across every letter.
+  const mask = new Float32Array(LOGO_W * LOGO_H);
+  let pen = 0;
+  for (let i = 0; i < WORD.length; i++) {
+    const rows = LOGO_GLYPHS[WORD[i]] || LOGO_GLYPHS[" "];
+    const penX = pen;
+    pen += advanceOf(WORD[i]);
+    for (let r = 0; r < rows.length; r++) {
+      for (let c = 0; c < 8; c++) {
+        if (rows[r][c] !== "1") continue;
+        for (let dy = 0; dy < S; dy++) {
+          const py = y0 + r * S + dy;
+          // Lean from the BASELINE, so the letters stand on the same line.
+          const lean = Math.round((GH - (r * S + dy)) * SHEAR);
+          for (let dx = 0; dx < S; dx++) {
+            const px = x0 + penX + c * S + dx + lean;
+            if (px >= 0 && px < LOGO_W && py >= 0 && py < LOGO_H) mask[py * LOGO_W + px] = 1;
+          }
+        }
+      }
+    }
+  }
+  // Distance outward from the mask, for the outline; and inward, for the bevel.
+  function spread(src, radius) {
+    let cur = Float32Array.from(src);
+    const out = Float32Array.from(src);
+    for (let step = 1; step <= radius; step++) {
+      const next = Float32Array.from(cur);
+      for (let y = 0; y < LOGO_H; y++) {
+        for (let x = 0; x < LOGO_W; x++) {
+          if (cur[y * LOGO_W + x] > 0) continue;
+          const near = (cur[(y - 1 >= 0 ? y - 1 : 0) * LOGO_W + x] > 0)
+            || (cur[(y + 1 < LOGO_H ? y + 1 : y) * LOGO_W + x] > 0)
+            || (cur[y * LOGO_W + (x - 1 >= 0 ? x - 1 : 0)] > 0)
+            || (cur[y * LOGO_W + (x + 1 < LOGO_W ? x + 1 : x)] > 0);
+          if (near) { next[y * LOGO_W + x] = 1; out[y * LOGO_W + x] = Math.max(out[y * LOGO_W + x], 1 - step / (radius + 1)); }
+        }
+      }
+      cur = next;
+    }
+    return out;
+  }
+  const outline = spread(mask, 4);
+
+  writeTGA("logo.tga", LOGO_W, LOGO_H, (x, y, w, h) => {
+    const i = y * w + x;
+    const solid = mask[i];
+    const halo = outline[i];
+    if (solid <= 0 && halo <= 0) return [0, 0, 0, 0];
+    if (solid <= 0) {
+      // Outline: near-black, fading out, so the wordmark holds against the live
+      // race running behind the menu.
+      return [0.03, 0.03, 0.05, Math.min(1, halo * 1.6)];
+    }
+    // Face: a warm vertical gradient, gold at the top into a deeper amber.
+    const v = clamp((y - y0) / GH, 0, 1);
+    let r = 1.00 - v * 0.20, g = 0.86 - v * 0.42, b = 0.36 - v * 0.28;
+    // Top-lit bevel. Anything within two pixels of the top of the letterform is
+    // catching light; the bottom two are in shadow.
+    const above = mask[(y - 3 >= 0 ? y - 3 : 0) * w + x];
+    const below = mask[(y + 3 < h ? y + 3 : y) * w + x];
+    if (above <= 0) { r = Math.min(1, r + 0.30); g = Math.min(1, g + 0.34); b = Math.min(1, b + 0.40); }
+    if (below <= 0) { r *= 0.52; g *= 0.42; b *= 0.36; }
+    return [r, g, b, 1];
+  });
+}
