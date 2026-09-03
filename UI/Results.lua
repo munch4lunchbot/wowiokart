@@ -88,11 +88,18 @@ function Results:Build()
   self.winner = AK.Model:New(self.podium, 260, 260, -0.45, 1)
   self.winner:SetPoint("TOP", 0, -14)
   self.winnerName = UI:NewText(self.podium, "", 18, AK.COLORS.gold, "CENTER")
-  self.winnerName:SetPoint("BOTTOM", 0, 58)
+  self.winnerName:SetPoint("BOTTOM", 0, 62)
   self.winnerName:SetShadowColor(0, 0, 0, 1)
   self.winnerName:SetShadowOffset(1, -1)
-  self.winnerTag = UI:NewText(self.podium, "WINNER", 12, AK.COLORS.muted, "CENTER")
-  self.winnerTag:SetPoint("BOTTOM", 0, 34)
+  -- The kart, where the word "WINNER" used to be. A caption reading "winner"
+  -- under the winner's model on the podium panel is a label on a thing that is
+  -- already unambiguous; which kart took it is not written anywhere else on
+  -- this screen at that size.
+  --
+  -- Anchored to the name's top rather than to a second measurement from the
+  -- bottom edge, so the two can never be laid out into each other.
+  self.winnerTag = UI:NewText(self.podium, "", 12, AK.COLORS.muted, "CENTER")
+  self.winnerTag:SetPoint("BOTTOM", self.winnerName, "TOP", 0, 4)
 
   -- Standings table.
   self.table = UI:NewPanel(content, 760, 400, { .05, .08, .14, .96 })
@@ -258,6 +265,7 @@ function Results:Show(race)
   AK.Model:Reframe(self.winner)
   self.winner:SetShown(champion ~= nil and AK.Model:IsReady(self.winner))
   self.winnerName:SetText(champion and champion.racer.name or "")
+  self.winnerTag:SetText(champion and champion.kart.name:upper() or "")
 
   self.rowCount = 0
   for index, row in ipairs(self.rows) do

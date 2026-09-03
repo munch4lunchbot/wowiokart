@@ -357,23 +357,41 @@ end
 --- real course instead of a generic ring. Total heading is normalised to a full
 --- turn, which is what makes the path close back on itself.
 function Builder:BuildMapPath(track, layout, scale, samples)
-  local totalTurn = 0
+  -- THE PLAN VIEW HAS TO CLOSE, AND IT HAS TO LOOK LIKE THE CIRCUIT.
+  --
+  -- This used to scale every corner by (2*pi / the layout's total turn), which
+  -- closes the loop by construction and is fine right up until a circuit turns
+  -- nearly as far one way as the other. Durotar does: +3.4, -4.2, +3.8, -0.6,
+  -- a switchback climb followed by triple esses. Its total turn is close to
+  -- zero, the gain that normalises it is therefore enormous, and the map
+  -- spiralled into an unreadable scribble. Eight of the ten circuits did.
+  --
+  -- Instead: turn by the road's OWN curvature, and spread whatever turn is
+  -- left over to make 2*pi evenly along the lap. Corners then appear where the
+  -- track actually corners, the shape still closes, and nothing blows up when
+  -- the curves cancel.
+  --
+  -- MAP_GAIN is deliberately twice the road's real CURVE_GAIN. A faithful plan
+  -- view of a 2.5km lap at these corner rates is a sliver, so the turn is
+  -- exaggerated to make ten circuits ten recognisable SHAPES at 56 pixels.
+  --
+  -- Twice, and not more. At three times the shapes have far more character --
+  -- real hairpins, proper kinks -- and they also start CROSSING THEMSELVES,
+  -- which invents junctions the road does not have. A course map is a thing you
+  -- orient by: a crossing asks "am I on the near strand or the far one" about
+  -- a place where the question is meaningless. Character loses to legibility.
+  local MAP_GAIN = 0.0042
+  local turnAtGain = 0
   for _, piece in ipairs(layout) do
-    totalTurn = totalTurn + (piece.curve or 0) * piece.len * scale
+    turnAtGain = turnAtGain + (piece.curve or 0) * piece.len * scale * MAP_GAIN
   end
-  -- A layout that turns equally both ways has no net rotation and cannot be
-  -- laid out as a loop; fall back to a gentle constant turn in that case.
-  local gain = (math.abs(totalTurn) > 1e-3) and ((math.pi * 2) / totalTurn) or 0
+  local spread = (math.pi * 2 - turnAtGain) / track.length
   local path = {}
   local angle, px, py = 0, 0, 0
   local pieceIndex, pieceLeft = 1, layout[1].len * scale
   for i = 1, samples do
     local piece = layout[pieceIndex]
-    if gain == 0 then
-      angle = angle + (math.pi * 2 / samples)
-    else
-      angle = angle + (piece.curve or 0) * STEP * gain
-    end
+    angle = angle + (piece.curve or 0) * STEP * MAP_GAIN + spread * STEP
     px = px + math.cos(angle) * STEP
     py = py + math.sin(angle) * STEP
     path[i] = { x = px, y = py }

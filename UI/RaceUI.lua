@@ -883,7 +883,10 @@ function RaceUI:Build()
   self.minimap = self.minimapPanel
   self.minimap:SetPoint(HUD.map.point, HUD.map.x, HUD.map.y)
   self.mapRoute = {}
-  for i = 1, 48 do
+  -- 72 rather than 48. Forty-eight dots were plenty around the ellipse the map
+  -- used to be; the circuits have real shapes now, with hairpins and esses, and
+  -- at 48 those read as a scatter of marks rather than as a route.
+  for i = 1, 72 do
     local node = self.minimap:CreateTexture(nil, "ARTWORK")
     node:SetTexture("Interface\\Buttons\\WHITE8x8")
     node:SetVertexColor(.32, .44, .58, .95)

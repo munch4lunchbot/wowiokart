@@ -89,12 +89,74 @@ function stretch(t, x0, y0, bw, bh, tint, alpha, mode) {
 }
 
 const { textWidth, drawText } = require("./hud-font.js");
+/** Wrapped to a width, the way a FontString with two horizontal anchors wraps.
+ *  Returns the y just below the last line, so what follows can flow from it. */
+function labelWrapped(cx, y, str, size, colour, maxWidth) {
+  const words = str.split(" ");
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const candidate = line ? line + " " + word : word;
+    if (textWidth(candidate, size) > maxWidth && line) { lines.push(line); line = word; }
+    else line = candidate;
+  }
+  if (line) lines.push(line);
+  const step = Math.round(size * 1.45);
+  lines.forEach((l, i) => label(cx, y + i * step, l, size, colour, "center"));
+  return y + lines.length * step;
+}
+
 function label(x, y, s, size, colour, align) {
   const wpx = textWidth(s, size);
   const sx = align === "center" ? Math.round(x - wpx / 2)
     : (align === "right" ? Math.round(x - wpx) : x);
   drawText((px, py, r, g, b, a) => blend(px, py, r, g, b, a), s, sx, y, size, colour, 1);
 }
+
+// THE PLAN VIEW, exactly as Builder:Compile builds it.
+//
+// The first version of this integrated the raw authored turn rate and drew
+// ten open squiggles -- which looked like a bug in the game and was a bug in
+// the mirror. Compile normalises the layout's TOTAL turn to exactly 2*pi, so
+// whatever a circuit is authored as, its map path closes into a loop. Any
+// mirror that does not do that is drawing a different game.
+const STEP = 2;
+function planOf(t) {
+  const authored = t.layout.reduce((a, p) => a + p[0], 0);
+  const scale = t.len / authored;
+  const samples = Math.floor(t.len / STEP) + 1;
+  // The residual turn, spread evenly, rather than a multiplicative gain.
+  const base = +(process.env.MAPGAIN || 0.0042);   // Builder.MAP_GAIN
+  let turnAtBase = 0;
+  for (const [len, curve] of t.layout) turnAtBase += curve * len * scale * base;
+  const spread = (Math.PI * 2 - turnAtBase) / t.len;
+  const path = [];
+  let angle = 0, px = 0, py = 0, pieceIndex = 0;
+  let pieceLeft = t.layout[0][0] * scale;
+  for (let i = 0; i < samples; i++) {
+    const curve = t.layout[pieceIndex][1];
+    angle += curve * STEP * base + spread * STEP;
+    px += Math.cos(angle) * STEP; py += Math.sin(angle) * STEP;
+    path.push([px, py]);
+    pieceLeft -= STEP;
+    while (pieceLeft <= 0 && pieceIndex < t.layout.length - 1) {
+      pieceIndex++; pieceLeft += t.layout[pieceIndex][0] * scale;
+    }
+  }
+  // Close the residual gap, then fit into a unit box centred on zero.
+  const dx = path[samples - 1][0] - path[0][0], dy = path[samples - 1][1] - path[0][1];
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < samples; i++) {
+    const tt = i / (samples - 1);
+    path[i][0] -= dx * tt; path[i][1] -= dy * tt;
+    minX = Math.min(minX, path[i][0]); maxX = Math.max(maxX, path[i][0]);
+    minY = Math.min(minY, path[i][1]); maxY = Math.max(maxY, path[i][1]);
+  }
+  const span = Math.max(Math.max(1e-3, maxX - minX), Math.max(1e-3, maxY - minY));
+  const midX = (minX + maxX) / 2, midY = (minY + maxY) / 2;
+  return path.map(([x, y]) => [(x - midX) / span, (y - midY) / span]);
+}
+
 
 // ---- the real home screen, parsed from UI/MainMenu.lua ---------------------
 //
@@ -120,7 +182,7 @@ function parseHome() {
 const { modes, garage, home } = parseHome();
 
 const GOLD = [1.0, 0.78, 0.24], MUTED = [0.50, 0.56, 0.66];
-const PALE = [0.86, 0.90, 1.0], LIT = [1, 0.95, 0.80];
+const PALE = [0.86, 0.90, 1.0], LIT = [1, 0.95, 0.80], LIME = [0.45, 0.92, 0.45];
 const REST = [0.18, 0.28, 0.42], LEAD = [0.42, 0.31, 0.08], QUIETB = [0.13, 0.17, 0.25];
 const PANEL = [0.055, 0.10, 0.17];
 
@@ -265,6 +327,138 @@ panel(OX + CW - M - previewW, OY + 66, previewW, 400, PANEL, 0.98);
   label(bx, py + 308, "ELWYNN FOREST", 12, GOLD);
   label(bx, py + 326, "Cut the river ford", 12, MUTED);
   label(bx, py + 360, "TOKENS 240     WINS 12", 12, GOLD);
+}
+
+// ---- the track grid, on demand: SCREEN=tracks --------------------------------
+//
+// The circuit shapes are computed the way Data/TrackBuilder.lua computes them,
+// from the same authored layout, so this shows the shapes the cards will draw.
+if (process.env.SCREEN === "tracks") {
+  for (let i = 0; i < W * H; i++) { fb[i * 3] = 0.030; fb[i * 3 + 1] = 0.040; fb[i * 3 + 2] = 0.070; }
+  panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);
+  label(OX + CW / 2, OY - 12, "CHOOSE YOUR TRACK", 20, GOLD, "center");
+
+  const TRACKS = fs.readFileSync(path.join(__dirname, "..", "Data", "Tracks.lua"), "utf8");
+  const tracks = [];
+  for (const block of TRACKS.split(/\n  \{\n    id = "/).slice(1)) {
+    const id = block.slice(0, block.indexOf('"'));
+    const name = (block.match(/name = "([^"]+)"/) || [])[1] || id;
+    const sub = (block.match(/subtitle = "([^"]+)"/) || [])[1] || "";
+    const len = +((block.match(/length = (\d+)/) || [])[1] || 2400);
+    const sweep = +((block.match(/sweep = ([\d.]+)/) || [])[1] || 3);
+    const layout = [...block.slice(block.indexOf("layout = {")).matchAll(
+      /len = ([\d.]+), curve = (-?[\d.]+)/g)].map((m) => [+m[1], +m[2]]);
+    if (layout.length) tracks.push({ id, name, sub, len, sweep, layout });
+  }
+
+  // Menu:ShowSelection grows the column count until the cards are tall enough,
+  // rather than fixing it -- so a preview that hardcodes three columns reports
+  // overflowing cards the game does not have.
+  const MARGIN = 42, TOP = 82, BOTTOM = 22, GAP = 18, MIN_CARD = 150;
+  const availableH = CH - TOP - BOTTOM;
+  const heightFor = (n) => Math.floor((availableH - GAP * (Math.ceil(tracks.length / n) - 1))
+    / Math.ceil(tracks.length / n));
+  let columns = 3;
+  while (columns < 5 && heightFor(columns) < MIN_CARD) columns++;
+  const cardW = Math.floor((CW - MARGIN * 2 - GAP * (columns - 1)) / columns);
+  const cardH = heightFor(columns);
+  tracks.forEach((t, i) => {
+    const col = i % columns, row = Math.floor(i / columns);
+    const x = OX + MARGIN + col * (cardW + GAP), y = OY - 40 + TOP + row * (cardH + GAP);
+    const chosen = t.id === "elwynn";
+    slice(tex.btn, x, y, cardW, cardH, chosen ? [0.44, 0.33, 0.09] : REST, 1);
+    if (chosen && tex.chevron) blitUV(tex.chevron, x + 9, y + 9, 12, 16, 0, 1, 0, 1, LIT, 1);
+    // The circuit's shape, 56 nodes with the start line marked.
+    const plan = planOf(t), radius = 56 * 0.42;
+    for (let n = 0; n < 56; n++) {
+      const [px, py] = plan[Math.floor(n / 56 * plan.length)];
+      const sx = Math.round(x + cardW / 2 + px * radius * 2);
+      const sy = Math.round(y + 8 + 32 - py * radius * 2);
+      const size = n === 0 ? 5 : 3;
+      const col2 = n === 0 ? [1, 0.82, 0.25] : [0.42, 0.56, 0.72];
+      for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++)
+        blend(sx + dx - (size >> 1), sy + dy - (size >> 1), col2[0], col2[1], col2[2], 0.95);
+    }
+    let ny = labelWrapped(x + cardW / 2, y + 68, t.name, 13, chosen ? LIT : GOLD, cardW - 14);
+    ny = labelWrapped(x + cardW / 2, ny + 7, t.sub, 10, MUTED, cardW - 18);
+    ny = labelWrapped(x + cardW / 2, ny + 2, "3 LAPS  /  " + t.len + "M", 10, MUTED, cardW - 18);
+    ny = labelWrapped(x + cardW / 2, ny + 2, "LAP 33.46", 10, GOLD, cardW - 18);
+    // The whole point of drawing this is to find out whether it fits.
+    if (ny > y + cardH - 4) {
+      throw new Error("preview-ui: " + t.id + "'s card overflows by "
+        + Math.ceil(ny - (y + cardH - 4)) + "px");
+    }
+  });
+}
+
+// ---- the results screen, on demand: SCREEN=results ---------------------------
+//
+// Seen after every race, and never once looked at outside a WoW client. The
+// geometry constants are parsed out of UI/Results.lua so the sheet cannot
+// drift from the screen it is describing.
+if (process.env.SCREEN === "results") {
+  const RES = fs.readFileSync(path.join(__dirname, "..", "UI", "Results.lua"), "utf8");
+  const num = (re, fallback) => { const m = RES.match(re); return m ? +m[1] : fallback; };
+  const ROW_H = num(/local ROW_HEIGHT, ROW_GAP = (\d+)/, 38);
+  const ROW_GAP = num(/local ROW_HEIGHT, ROW_GAP = \d+, (\d+)/, 4);
+  const DW = num(/local DESIGN_W, DESIGN_H = (\d+)/, 1340);
+  const DH = num(/local DESIGN_W, DESIGN_H = \d+, (\d+)/, 830);
+  const BLOCK = 300 + 22 + 760;
+
+  for (let i = 0; i < W * H; i++) {
+    fb[i * 3] = 0.020; fb[i * 3 + 1] = 0.028; fb[i * 3 + 2] = 0.052;
+  }
+  const sx = Math.round((W - DW) / 2), sy = Math.round((H - DH) / 2);
+  label(W / 2, sy + 34, "VICTORY", 34, GOLD, "center");
+  blitUV(tex.hairline, Math.round(W / 2 - 260), sy + 76, 520, 3, 0, 1, 0, 1, [1, .76, .20], 0.75);
+  label(W / 2, sy + 88, "ELWYNN SPRINT  /  FINISHED 1ST OF 8  /  150CC  3 LAPS  HARD",
+    12, MUTED, "center");
+
+  const bx = Math.round(W / 2 - BLOCK / 2), by = sy + 170;
+  panel(bx, by, 300, 400, [0.05, 0.08, 0.14], 0.96);
+  label(bx + 150, by + 120, "[ WINNER MODEL ]", 12, [.30, .36, .46], "center");
+  label(bx + 150, by + 400 - 62 - 9, "BAINE", 16, GOLD, "center");
+  label(bx + 150, by + 400 - 62 - 9 - 20, "MECHANO-HOG", 11, MUTED, "center");
+
+  const tx = bx + 322;
+  panel(tx, by, 760, 400, [0.05, 0.08, 0.14], 0.96);
+  label(tx + 32, by + 6, "POS", 9, [.45, .52, .62]);
+  label(tx + 94, by + 6, "RACER", 9, [.45, .52, .62]);
+  label(tx + 760 - 34, by + 6, "TIME / GAP TO WINNER", 9, [.45, .52, .62], "right");
+  const NAMES = [["BAINE", "Mechano-Hog", "1:44.21", "best 33.46", 1],
+    ["THRALL", "Kodo Cruiser", "+0.42s", "best 33.71", 0],
+    ["JAINA", "Rocket 9", "+1.18s", "best 33.90", 0],
+    ["YOURSELF", "Mechano-Hog", "+1.93s", "best 33.52", 2],
+    ["REXXAR", "Raptor GT", "+4.06s", "best 34.40", 0],
+    ["SYLVANAS", "Griffon X", "+6.71s", "best 34.88", 0],
+    ["ARTHAS", "Ram Rod", "+9.02s", "best 35.30", 0],
+    ["CHEN", "Minecart", "+12.55s", "best 35.91", 0]];
+  NAMES.forEach(([name, kart, time, best, kind], i) => {
+    const y = by + 20 + i * (ROW_H + ROW_GAP);
+    const tint = kind === 2 ? [0.14, 0.40, 0.26] : kind === 1 ? [0.46, 0.34, 0.09]
+      : (i < 3 ? [0.15, 0.21, 0.33] : [0.10, 0.13, 0.20]);
+    slice(tex.btn, tx + 18, y, 724, ROW_H, tint, 1);
+    if (kind) blitUV(tex.chevron, tx + 26, y + (ROW_H - 13) / 2, 9, 13, 0, 1, 0, 1,
+      kind === 2 ? [0.45, 0.92, 0.45] : GOLD, 1);
+    label(tx + 42, y + 12, ["1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH"][i], 13, GOLD);
+    label(tx + 94, y + 8, name, 12, PALE);
+    label(tx + 94, y + 22, kart, 9, MUTED);
+    label(tx + 724, y + 7, time, 12, PALE, "right");
+    label(tx + 724, y + 23, best, 8, MUTED, "right");
+  });
+
+  const stx = bx, sty = by + 414;
+  panel(stx, sty, BLOCK, 62, [0.04, 0.065, 0.11], 0.96);
+  label(stx + BLOCK / 2, sty + 12, "TOP SPEED  188 KM/H       DRIFTING  22.4S       HITS TAKEN  3",
+    12, PALE, "center");
+  label(stx + BLOCK / 2, sty + 38, "L1 34.02     L2 33.46     L3 36.73", 10, MUTED, "center");
+  label(W / 2, sty + 78, "+49 RACE TOKENS   /   GARAGE TOTAL: 289", 12, LIME, "center");
+
+  const by2 = sty + 106;
+  slice(tex.btn, Math.round(W / 2 - 132 - 120), by2, 240, 44, [0.20, 0.32, 0.46], 1);
+  label(Math.round(W / 2 - 132), by2 + 15, "RACE AGAIN", 15, GOLD, "center");
+  slice(tex.btn, Math.round(W / 2 + 132 - 120), by2, 240, 44, [0.13, 0.17, 0.25], 1);
+  label(Math.round(W / 2 + 132), by2 + 15, "MAIN MENU", 15, MUTED, "center");
 }
 
 // ---- write ------------------------------------------------------------------

@@ -943,16 +943,55 @@ for (const r of LAYOUT.rects(W, H)) {
     blit(tex.mushroom, r.x, r.y, r.w, r.h, 0, 1, 0, 1, [1, 1, 1], 1);
   }
 }
-{ // route and racer dots, which have no rect of their own
+{ // THE ROUTE, as Builder:Compile actually lays it out.
+  //
+  // This drew a fixed ellipse: forty-eight dots on a circle, for every circuit.
+  // The minimap is on screen for the entire race and the mirror was showing a
+  // shape the game has never drawn -- which is how the real plan view stayed an
+  // unreadable scribble on eight of the ten circuits without anyone noticing.
   const m = R["map.panel"], rad = u(LAYOUT.HUD.map.w * 0.36);
-  for (let i = 0; i < 48; i++) {
-    const a = i / 48 * Math.PI * 2 - Math.PI / 2;
-    rect(m.x + m.w / 2 + Math.cos(a) * rad - u(2.5), m.y + m.h / 2 - Math.sin(a) * rad * 0.71 - u(2.5),
-      u(5), u(5), .32, .44, .58, .95);
+  const MAP_GAIN = 0.0042;                      // Builder's MAP_GAIN
+  const authored = track.layout.reduce((a, p) => a + p.len, 0);
+  const scale = track.length / authored;
+  let turnAtGain = 0;
+  for (const piece of track.layout) turnAtGain += (piece.curve || 0) * piece.len * scale * MAP_GAIN;
+  const spreadTurn = (Math.PI * 2 - turnAtGain) / track.length;
+  const samples = Math.floor(track.length / 2) + 1;
+  const path = [];
+  let angle = 0, px = 0, py = 0, pi = 0, left = track.layout[0].len * scale;
+  for (let i = 0; i < samples; i++) {
+    angle += (track.layout[pi].curve || 0) * 2 * MAP_GAIN + spreadTurn * 2;
+    px += Math.cos(angle) * 2; py += Math.sin(angle) * 2;
+    path.push([px, py]);
+    left -= 2;
+    while (left <= 0 && pi < track.layout.length - 1) { pi++; left += track.layout[pi].len * scale; }
+  }
+  const dx = path[samples - 1][0] - path[0][0], dy = path[samples - 1][1] - path[0][1];
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < samples; i++) {
+    const t = i / (samples - 1);
+    path[i][0] -= dx * t; path[i][1] -= dy * t;
+    minX = Math.min(minX, path[i][0]); maxX = Math.max(maxX, path[i][0]);
+    minY = Math.min(minY, path[i][1]); maxY = Math.max(maxY, path[i][1]);
+  }
+  const span = Math.max(Math.max(1e-3, maxX - minX), Math.max(1e-3, maxY - minY));
+  const midX = (minX + maxX) / 2, midY = (minY + maxY) / 2;
+  // NEGATE Y. The game anchors these with SetPoint, where +y is UP; this
+  // framebuffer's +y is down. Without the flip the mirror draws every circuit
+  // upside down, which is invisible until you compare it with the same shape
+  // drawn correctly somewhere else -- as the track cards do.
+  const at = (d) => {
+    const p2 = path[Math.floor((((d % track.length) + track.length) % track.length) / 2) % samples];
+    return [(p2[0] - midX) / span * rad * 2, -(p2[1] - midY) / span * rad * 2];
+  };
+  const ROUTE_NODES = 72;
+  for (let i = 0; i < ROUTE_NODES; i++) {
+    const [ax, ay] = at(i / ROUTE_NODES * track.length);
+    rect(m.x + m.w / 2 + ax - u(2.5), m.y + m.h / 2 + ay - u(2.5), u(5), u(5), .32, .44, .58, .95);
   }
   for (let i = 0; i < 4; i++) {
-    const a = (i * 0.13 + 0.4) * Math.PI * 2 - Math.PI / 2;
-    rect(m.x + m.w / 2 + Math.cos(a) * rad - u(4), m.y + m.h / 2 - Math.sin(a) * rad * 0.71 - u(4),
+    const [ax, ay] = at((PLAYER_DIST + i * 90) % track.length);
+    rect(m.x + m.w / 2 + ax - u(4), m.y + m.h / 2 + ay - u(4),
       u(8), u(8), i ? .9 : 1, i ? .4 : .82, i ? .3 : .25, 1);
   }
 }

@@ -363,6 +363,46 @@ function UI:NewPlate(frame, layer, sublevel, file)
   return handle
 end
 
+--- THE SHAPE OF A CIRCUIT, drawn small.
+---
+--- You choose a track by its shape. The selection grid showed a generic map
+--- icon, a subtitle and a length in metres for all ten, so the one thing that
+--- actually distinguishes Durotar's switchback climb from Thousand Needles'
+--- mesa run -- the plan view, which the HUD has drawn for the whole race the
+--- entire time -- was the one thing the screen you pick them on did not show.
+function UI:NewTrackShape(parent, track, size)
+  local shape = CreateFrame("Frame", nil, parent)
+  shape:SetSize(size, size)
+  -- Tracks are compiled lazily at race start, and this is a menu: without
+  -- this, every card would draw the fallback ellipse.
+  AK.TrackBuilder:Compile(track)
+  local radius = size * 0.42
+  local NODES = 56
+  for index = 1, NODES do
+    local node = shape:CreateTexture(nil, "ARTWORK")
+    node:SetTexture("Interface\\Buttons\\WHITE8x8")
+    local fraction = (index - 1) / NODES
+    local x, y
+    if track.mapPath then
+      x, y = AK.TrackBuilder:MapPoint(track, fraction * track.length)
+      x, y = x * radius * 2, y * radius * 2
+    else
+      local angle = fraction * math.pi * 2 - math.pi * 0.5
+      x, y = math.cos(angle) * radius, math.sin(angle) * radius * 0.71
+    end
+    node:SetSize(3, 3)
+    node:SetPoint("CENTER", shape, "CENTER", x, y)
+    -- The start line is marked, so a shape is a circuit rather than a blob.
+    if index == 1 then
+      node:SetSize(5, 5)
+      node:SetVertexColor(1, 0.82, 0.25, 1)
+    else
+      node:SetVertexColor(0.42, 0.56, 0.72, 0.95)
+    end
+  end
+  return shape
+end
+
 --- A STAT BAR: ten segments, lit to the value.
 ---
 --- "SPEED 7    ACCEL 6" is a table, and a table has to be read. A row of
@@ -858,6 +898,12 @@ function Menu:ShowSelection(kind)
     icon:SetSize(50, 50)
     icon:SetPoint("TOP", 0, -15)
     icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_Map_01")
+    if kind == "track" then
+      -- The circuit itself, not a map icon shared with nine other circuits.
+      icon:Hide()
+      local shape = UI:NewTrackShape(card, entry, 56)
+      shape:SetPoint("TOP", 0, -6)
+    end
     if kind == "racer" then
       local model = AK.Model:New(card, 78, 78, -0.6, 1, entry.model)
       model:SetPoint("TOP", 0, -2)
@@ -871,8 +917,11 @@ function Menu:ShowSelection(kind)
     end
     local name = UI:NewText(card, entry.name, 16,
       chosen and { 1, 0.95, 0.80 } or AK.COLORS.gold, "CENTER")
-    name:SetPoint("TOPLEFT", 7, -72)
-    name:SetPoint("TOPRIGHT", -7, -72)
+    -- The track cards carry a 64px plan view where the others carry a 50px
+    -- icon, so the name starts a little lower on those.
+    local nameTop = kind == "track" and 68 or 72
+    name:SetPoint("TOPLEFT", 7, -nameTop)
+    name:SetPoint("TOPRIGHT", -7, -nameTop)
     if chosen then
       -- A gold card IS the selection. Printing the word "SELECTED" under it as
       -- well is a caption on a picture of itself; a mark in the corner is how
@@ -883,9 +932,13 @@ function Menu:ShowSelection(kind)
       tick:SetPoint("TOPLEFT", 9, -9)
       tick:SetVertexColor(1, 0.95, 0.80, 1)
     end
+    -- ANCHORED TO THE NAME, not to a hand-counted -99. At five columns a card
+    -- is 160px wide and "Stranglethorn Grand Prix" wraps to two lines, which
+    -- ran the name straight through the detail underneath it. Flowing from the
+    -- name's own bottom edge cannot collide however long a name gets.
     local detail = UI:NewText(card, "", 12, AK.COLORS.muted, "CENTER")
-    detail:SetPoint("TOPLEFT", 9, -99)
-    detail:SetPoint("TOPRIGHT", -9, -99)
+    detail:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 2, -7)
+    detail:SetPoint("TOPRIGHT", name, "BOTTOMRIGHT", -2, -7)
     if kind == "racer" then
       detail:SetText(("%s\nSPD %d  ACC %d  HND %d\nDRIFT %d  LUCK %d\n\n|cff%s%s|r"):format(
         entry.race, entry.speed, entry.acceleration, entry.handling, entry.drift, entry.luck,
@@ -899,8 +952,13 @@ function Menu:ShowSelection(kind)
     else
       -- Lap count came off a hard-coded "3 laps" that would have lied the
       -- moment a circuit was authored with a different one.
-      detail:SetText(("%s\n%s\n%d laps / %dm\n\n|cff%s%s|r"):format(
-        entry.subtitle, entry.shortcut, entry.laps or 3, entry.length,
+      -- THREE LINES, not five. This used to carry the subtitle, the shortcut
+      -- blurb, the lap count, a blank and the record -- and with five columns
+      -- the cards are 160px wide, so the subtitle wraps and the name wraps and
+      -- the whole stack ran off the bottom of the card. The shortcut already
+      -- has a home on the setup panel, where there is room to read it.
+      detail:SetText(("%s\n%d LAPS  /  %dM\n|cff%s%s|r"):format(
+        entry.subtitle, entry.laps or 3, entry.length,
         AK:ColorHex(AK.COLORS.gold), trackRecord(entry.id)))
     end
   end
