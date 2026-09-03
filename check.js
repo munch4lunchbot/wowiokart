@@ -168,7 +168,11 @@ const onDisk = [];
   }
 })(ADDON, "");
 const missing = toc.filter(f => !onDisk.includes(f));
-const unlisted = onDisk.filter(f => !toc.includes(f));
+// verify-*.lua are HARNESSES, not addon code: verify-runtime.lua loads the whole
+// addon under a stubbed WoW API and drives it. They must never be in the .toc --
+// shipping one would run a test suite inside the player's client.
+const HARNESS = /^verify-[\w-]+\.lua$/;
+const unlisted = onDisk.filter(f => !toc.includes(f) && !HARNESS.test(f));
 
 // `rel` entries use the .toc's own "\"-joined convention (so they compare
 // against it directly), which is not a valid path segment separator on
