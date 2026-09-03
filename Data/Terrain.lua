@@ -169,7 +169,12 @@ function Terrain:Painted(track, distance, lateral)
   local d = distance % track.length
   for _, zone in ipairs(track.surfaces) do
     if zone.onRoad and d >= zone.from and d <= zone.to then
-      if not zone.lateralFrom or (lateral >= zone.lateralFrom and lateral <= zone.lateralTo) then
+      -- A zone painted across part of the road is authored against the
+      -- unmirrored centreline, so in mirror mode the kart's lateral has to be
+      -- flipped back before it is compared -- otherwise the mud strip on the
+      -- inside of a bend ends up on the outside of the mirrored one.
+      local across = AK.Math.Mirrored(lateral)
+      if not zone.lateralFrom or (across >= zone.lateralFrom and across <= zone.lateralTo) then
         -- A short zone gets a proportionally shorter ramp, so a ten-metre patch
         -- still reaches full strength in the middle instead of never arriving.
         local fade = math.min(PAINT_FADE, (zone.to - zone.from) * 0.5)

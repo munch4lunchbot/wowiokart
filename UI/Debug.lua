@@ -75,7 +75,7 @@ local ROWS = {
       local name = (route == r.track) and "main line" or ("|cff66ff88" .. (route.name or route.id) .. "|r")
       local fork, gap = AK.TrackBuilder:ForkAt(r.track, v.distance, 200)
       local ahead = (route == r.track and fork and gap)
-        and ("   fork in %.0fm (%s)"):format(gap, (fork.side or -1) < 0 and "left" or "right") or ""
+        and ("   fork in %.0fm (%s)"):format(gap, AK.Math.ForkSide(fork) < 0 and "left" or "right") or ""
       return ("%s   progress %.0f   odo %.0f%s"):format(name, v.progress or 0, v.odometer or 0, ahead)
     end },
 }

@@ -2979,7 +2979,7 @@ function RaceUI:RenderFork(race, player, camX, camZ)
       end
       -- The ribbon leaves from the edge of the main road on its own side, then
       -- follows wherever the branch was authored to curve.
-      local side = (branch.side or -1)
+      local side = AK.Math.ForkSide(branch)
       local offset = side * tuning.roadHalf * entryWidth * 0.92
       local span = math.min(branch.length, math.max(0, FAR_Z - entryDz))
       local light = (self.light or 1) * tuning.nightBoost

@@ -454,6 +454,54 @@ if loadFailures == 0 then
     end
   end
 
+  -- The cooldown lap drives the player's kart on the AI, and `vehicle.ai` is
+  -- what AI:Report uses to tell a human from a rival. Borrowing a brain must
+  -- not leave one behind.
+  ok("coasting home does not turn the player into an AI", function()
+    AK.Race:Start("quick", { track = "elwynn" })
+    local race = AK.Race.current
+    race.player.ai = nil
+    for _ = 1, 20 do AK.Race:CoastHome(race, race.player, 1 / 60) end
+    assert(race.player.ai == nil,
+      "the player kept the brain it borrowed for the cooldown lap")
+    -- Report() draws a panel and returns nothing; Snapshot is what builds the
+    -- table, and it is what FinishRace calls.
+    AK.AI:Snapshot(race)
+    local report = AK.AI.lastReport
+    assert(report, "no AI telemetry was built for a race with a full field")
+    local sawYou = false
+    for _, row in ipairs(report.rows) do if row[1] == "YOU" then sawYou = true end end
+    assert(sawYou, "the player lost their own row in the AI report")
+    AK.Race:Stop(true)
+  end)
+
+  -- Mirror mode flips the centreline. Everything an author placed ACROSS that
+  -- centreline is a separate number and used not to flip with it, so a mirrored
+  -- circuit kept the original's hazards on the original's side of the road.
+  ok("mirror mode mirrors the whole circuit", function()
+    AK.db.settings.mirror = false
+    AK.Race:Start("quick", { track = "durotar" })
+    local plain = {}
+    for i, hazard in ipairs(AK.Race.current.hazards) do plain[i] = hazard.lateral end
+    local plainCurve = AK.Math.RoadCurve(AK.Race.current.track, 300)
+    AK.Race:Stop(true)
+
+    AK.db.settings.mirror = true
+    AK.Race:Start("quick", { track = "durotar" })
+    local race = AK.Race.current
+    assert(#race.hazards == #plain, "mirror mode changed how many hazards there are")
+    for i, hazard in ipairs(race.hazards) do
+      assert(math.abs(hazard.lateral + plain[i]) < 1e-9,
+        "hazard " .. i .. " did not flip with the circuit")
+    end
+    assert(math.abs(AK.Math.RoadCurve(race.track, 300) + plainCurve) < 1e-9,
+      "the centreline itself did not flip")
+    -- And it still runs: a mirrored lap has to be drivable, not merely flipped.
+    for _ = 1, math.ceil(6 / FRAME) do AK.Race:Update(FRAME) end
+    AK.Race:Stop(true)
+    AK.db.settings.mirror = false
+  end)
+
   ok("time trial and battle both run", function()
     driveRace("icecrown", 8, "time_trial")
     AK.Race:Stop(true)

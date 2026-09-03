@@ -61,6 +61,25 @@ function AK.Math.RoadCurve(track, distance)
   return (table_[index] or 0) * flip
 end
 
+--- Flip an AUTHORED lateral for mirror mode.
+---
+--- The mirror flips the centreline, so every corner goes the other way -- but
+--- everything placed by hand against that centreline is a separate number, and
+--- those did not flip. A mirrored Durotar put its lava vents on the same side
+--- of the road as the original, which is to say on the opposite side of the
+--- corner they were authored to guard; a mirrored circuit's shortcut still left
+--- from the side the unmirrored one did. Anything positioned across the road by
+--- an author goes through here.
+function AK.Math.Mirrored(lateral)
+  if AK.db and AK.db.settings.mirror then return -(lateral or 0) end
+  return lateral or 0
+end
+
+--- Which side of the road a branch leaves from, mirror included.
+function AK.Math.ForkSide(branch)
+  return AK.Math.Mirrored(branch and branch.side or -1)
+end
+
 function AK.Math.RoadWidth(track, distance)
   if not track.widthTable then return 1 end
   return AK.TrackBuilder:Width(track, distance)

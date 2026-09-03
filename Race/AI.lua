@@ -261,7 +261,7 @@ function AI:Controls(race, vehicle, dt)
         if vehicle.forkTake then
           vehicle.branchIntent = branch.id
           -- Commit to that side of the road well before the split.
-          local side = (branch.side or -1)
+          local side = AK.Math.ForkSide(branch)
           target = side * 0.85
         else
           vehicle.branchIntent = "none"

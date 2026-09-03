@@ -149,7 +149,7 @@ function Physics:UpdateRoute(race, vehicle)
     -- decision rather than a menu.
     local branch, gap = AK.TrackBuilder:ForkAt(track, vehicle.distance, 6)
     if branch and gap and gap <= 6 then
-      local wants = (branch.side or -1)
+      local wants = AK.Math.ForkSide(branch)
       local committed = (wants < 0 and vehicle.lateral < -0.15)
         or (wants > 0 and vehicle.lateral > 0.15)
       -- The AI states its intent explicitly; a human just steers.

@@ -60,6 +60,12 @@ function Race:BuildObjects(track)
     end
   end
   table.insert(objects, { kind = "shortcut", name = "Risky Shortcut", distance = track.length * .46, lateral = 1.02, hidden = false })
+  -- Mirror mode flips the road; the furniture standing on it has to flip too.
+  -- Done once here rather than at every read, so nothing downstream -- physics,
+  -- renderer, AI, minimap -- has to know the mode exists.
+  for _, object in ipairs(objects) do
+    object.lateral = AK.Math.Mirrored(object.lateral)
+  end
   return objects
 end
 
@@ -289,6 +295,9 @@ function Race:BuildHazards(track)
         icon = plan.icon,
       })
     end
+  end
+  for _, hazard in ipairs(hazards) do
+    hazard.lateral = AK.Math.Mirrored(hazard.lateral)
   end
   return hazards
 end
@@ -1447,9 +1456,28 @@ end
 --- Items are stripped: nobody wants a shell from someone who has finished.
 function Race:CoastHome(race, vehicle, dt)
   if race.mode == "attract" then return end
-  -- The player has no AI brain until it needs one.
-  vehicle.ai = vehicle.ai or AK.AI:CreatePersonality(9)
+  -- A kart that has finished must never be left hanging in the void. The
+  -- recovery pass deliberately skips finished racers -- so that crossing the
+  -- line mid-fall is not answered by being yanked back onto the track -- which
+  -- means nothing at all would put this one back. It is scenery now, so set it
+  -- down on the centreline and let it drive on.
+  if vehicle.falling then
+    vehicle.falling, vehicle.lifted = nil, nil
+    vehicle.lateral = 0
+  end
+  -- The player has no AI brain, and must not be GIVEN one. `vehicle.ai` is
+  -- exactly what AI:Report uses to tell a rival from a human: parking a
+  -- personality on the player for the cooldown lap would file them as a ninth
+  -- AI, list the autopilot's drifts and mistakes as theirs, and delete their
+  -- own comparison row from the telemetry. So the brain is BORROWED for the
+  -- length of the call and handed straight back.
+  local borrowed = not vehicle.ai
+  if borrowed then
+    vehicle.coastBrain = vehicle.coastBrain or AK.AI:CreatePersonality(9)
+    vehicle.ai = vehicle.coastBrain
+  end
   local controls = AK.AI:Controls(race, vehicle, dt)
+  if borrowed then vehicle.ai = nil end
   controls.itemPulse = false
   AK.Physics:UpdateVehicle(race, vehicle, controls, dt)
 end
