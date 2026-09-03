@@ -774,31 +774,52 @@ function Menu:ShowMultiplayer()
   page:SetAllPoints()
   local header = UI:NewText(page, "PARTY & RAID RACING", 25, AK.COLORS.gold, "CENTER")
   header:SetPoint("TOP", 0, -35)
-  local panel = UI:NewPanel(page, 680, 340, { .055, .10, .17, .98 })
+  -- 680x400, and the buttons stacked down the left with the lobby status
+  -- beside them. At 340 tall with the four buttons in a 2x2 block, the status
+  -- text was anchored at (340, -183) and REFRESH LOBBIES occupied (350..630,
+  -- 178..220): the one line telling you whether a lobby was found was printed
+  -- straight through the button you press to look for one.
+  local panel = UI:NewPanel(page, 680, 400, { .055, .10, .17, .98 })
   panel:SetPoint("CENTER", 0, 8)
   local back = UI:NewButton(page, "BACK", 120, 32, function() self:ShowHome() end)
   back:SetPoint("TOPLEFT", 25, -25)
   local description = UI:NewText(panel, "Race with people in your current party or raid who also have Azeroth Kart installed.\nThe host runs the race simulation and shares synchronized kart states through WoW's built-in addon channel.", 15, { .86, .92, 1 }, "CENTER")
   description:SetPoint("TOPLEFT", 35, -36)
   description:SetPoint("TOPRIGHT", -35, -36)
-  local host = UI:NewButton(panel, "OPEN PARTY LOBBY", 280, 42, function()
-    if AK.Net:OpenLobby() then self:ShowMultiplayer() end
-  end)
-  host:SetPoint("TOP", -150, -125)
-  local start = UI:NewButton(panel, "START HOST RACE", 280, 42, function() AK.Net:StartLobbyRace() end)
-  start:SetPoint("TOP", -150, -178)
-  local join = UI:NewButton(panel, "JOIN ANNOUNCED LOBBY", 280, 42, function() AK.Net:JoinLobby() end)
-  join:SetPoint("TOP", 150, -125)
-  local refresh = UI:NewButton(panel, "REFRESH LOBBIES", 280, 42, function()
-    AK.Net:RefreshLobbies()
-    C_Timer.After(.35, function()
-      if self.frame and self.frame:IsShown() then self:ShowMultiplayer() end
-    end)
-  end)
-  refresh:SetPoint("TOP", 150, -178)
-  local lobbyText = UI:NewText(panel, "", 14, AK.COLORS.muted, "CENTER")
-  lobbyText:SetPoint("TOPLEFT", 340, -183)
-  lobbyText:SetPoint("TOPRIGHT", -25, -183)
+  -- Four actions, in the order you would take them, stacked. A 2x2 grid of
+  -- four buttons has no reading order at all: which of the top two comes
+  -- first is a coin toss, and one of them only makes sense after the other.
+  local ACTIONS = {
+    { "OPEN PARTY LOBBY", function() if AK.Net:OpenLobby() then self:ShowMultiplayer() end end },
+    { "START HOST RACE", function() AK.Net:StartLobbyRace() end },
+    { "JOIN ANNOUNCED LOBBY", function() AK.Net:JoinLobby() end },
+    { "REFRESH LOBBIES", function()
+        AK.Net:RefreshLobbies()
+        C_Timer.After(.35, function()
+          if self.frame and self.frame:IsShown() then self:ShowMultiplayer() end
+        end)
+      end },
+  }
+  for index, action in ipairs(ACTIONS) do
+    local button = UI:NewButton(panel, action[1], 280, 42, action[2])
+    button:SetPoint("TOPLEFT", 25, -112 - (index - 1) * 52)
+    if index == 1 then button:SetRestStyle({ 0.42, 0.31, 0.08 }, { 1, 0.95, 0.80 }) end
+  end
+  -- The status column gets a heading, the same way the home screen's sections
+  -- do, so it reads as a place rather than as a paragraph that happens to be
+  -- over there.
+  local lobbyHead = UI:NewText(panel, "LOBBY", 11, AK.COLORS.gold, "LEFT")
+  lobbyHead:SetPoint("TOPLEFT", 332, -112)
+  local lobbyRule = panel:CreateTexture(nil, "ARTWORK")
+  lobbyRule:SetTexture(ART .. "hairline.tga")
+  lobbyRule:SetPoint("TOPLEFT", 330, -128)
+  lobbyRule:SetPoint("TOPRIGHT", -25, -128)
+  lobbyRule:SetHeight(2)
+  lobbyRule:SetVertexColor(1, 0.78, 0.30, 0.35)
+  local lobbyText = UI:NewText(panel, "", 14, AK.COLORS.muted, "LEFT")
+  lobbyText:SetPoint("TOPLEFT", 330, -140)
+  lobbyText:SetPoint("TOPRIGHT", -25, -140)
+  lobbyText:SetJustifyV("TOP")
   local own = AK.Net.lobby
   local found = AK.Net.availableLobby
   if own then
