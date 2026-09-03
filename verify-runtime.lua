@@ -502,6 +502,53 @@ if loadFailures == 0 then
     AK.db.settings.mirror = false
   end)
 
+  -- A GREEN SHELL IS A SHOT, NOT A TRAM.
+  --
+  -- Projectiles are stored road-relative -- distance along the lap, lateral
+  -- across it -- so one that simply held its lateral followed every bend of the
+  -- circuit and could not miss. It carries a heading now. Fired down a straight
+  -- it must run true; fired into a bend it must leave the road.
+  ok("a green shell flies straight while the road bends away", function()
+    AK.Race:Start("quick", { track = "elwynn" })
+    local race = AK.Race.current
+    local track = race.track
+
+    --- Put a shell on the road at `at` and run it for `seconds`.
+    local function fire(at, seconds)
+      wipe(race.projectiles)
+      local shell = { item = AK.Items.green_shell, owner = race.player,
+        distance = at, lateral = 0, speed = 34, life = 20, age = 5,
+        armAfter = 0, bounces = 0, heading = 0 }
+      table.insert(race.projectiles, shell)
+      for _ = 1, math.ceil(seconds * 120) do
+        if #race.projectiles == 0 then break end
+        AK.Race:UpdateProjectiles(race, 1 / 120)
+      end
+      return shell
+    end
+
+    -- Find the straightest and the tightest metre of the lap to fire from.
+    local flat, bend, flatCurve, bendCurve = 0, 0, math.huge, 0
+    for at = 0, track.length - 1, 5 do
+      local curve = math.abs(AK.Math.RoadCurve(track, at))
+      -- Somewhere with room to run before the next corner, either way.
+      local ahead = math.abs(AK.Math.RoadCurve(track, at + 60))
+      if curve + ahead < flatCurve then flat, flatCurve = at, curve + ahead end
+      if curve > bendCurve then bend, bendCurve = at, curve end
+    end
+
+    local straight = fire(flat, 1.2)
+    assert(math.abs(straight.lateral) < 0.10,
+      ("a shell fired down the straightest part of Elwynn drifted to %.2f")
+        :format(straight.lateral))
+
+    local cornered = fire(bend, 1.6)
+    assert(math.abs(cornered.lateral) > 0.55 or (cornered.bounces or 0) > 0,
+      ("a shell fired into a %.1f-curve bend only reached %.2f: it is still on rails")
+        :format(bendCurve, cornered.lateral))
+    AK.Race:Stop(true)
+  end)
+
   ok("time trial and battle both run", function()
     driveRace("icecrown", 8, "time_trial")
     AK.Race:Stop(true)

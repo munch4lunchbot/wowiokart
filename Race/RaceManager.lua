@@ -641,12 +641,16 @@ function Race:UpdateProjectiles(race, dt)
       -- Lateral is measured in road half-widths, so metres have to be scaled.
       projectile.lateral = projectile.lateral
         + projectile.heading * travelled / (AK.db.tuning.roadHalf or 9)
-      if projectile.lateral > 1.0 or projectile.lateral < -1.0 then
-        projectile.lateral = AK.Math.Clamp(projectile.lateral, -1.0, 1.0)
+      -- The verge is where the road actually ENDS, which is not a constant:
+      -- Durotar's cavern is 0.76 of a road-width and its start straight is
+      -- 1.16, so a shell bouncing at a fixed 1.0 either ricocheted off thin air
+      -- or flew through the rock.
+      local wall = AK.Math.RoadWidth(route, projectile.distance)
+      if projectile.lateral > wall or projectile.lateral < -wall then
+        projectile.lateral = AK.Math.Clamp(projectile.lateral, -wall, wall)
         -- Reflect off the verge. A shell that keeps its heading through a wall
         -- would grind along it instead of ricocheting away.
         projectile.heading = -(projectile.heading or 0)
-        projectile.drift = -(projectile.drift or 0)
         projectile.bounces = (projectile.bounces or 0) + 1
         if projectile.bounces > 3 then projectile.life = 0 end
         -- Only for shells near the player: a ricochet on the far side of the
@@ -656,7 +660,6 @@ function Race:UpdateProjectiles(race, dt)
           (race.player and race.player.distance or 0) % length, length)
         if near < 60 and AK.PlaySfx then AK:PlaySfx("shellBounce") end
       end
-      projectile.lateral = projectile.lateral + (projectile.drift or 0) * dt
     end
 
     local spent = projectile.life <= 0

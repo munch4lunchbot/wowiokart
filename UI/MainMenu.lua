@@ -129,8 +129,21 @@ function UI:NewSegmented(parent, width, height, options, get, set)
   end
   function group:Refresh()
     local current = get()
+    -- A NUMERIC choice matches by NEAREST, not by equality. Camera distance is
+    -- also a workshop dial, so a value nudged to 6.4 there would light none of
+    -- CLOSE/STANDARD/FAR at all -- a row of dead buttons, which reads as
+    -- broken rather than as "you are between presets".
+    local best
+    if type(current) == "number" then
+      for _, button in ipairs(self.cells) do
+        if type(button.value) == "number"
+          and (not best or math.abs(button.value - current) < math.abs(best - current)) then
+          best = button.value
+        end
+      end
+    end
     for _, button in ipairs(self.cells) do
-      local on = button.value == current
+      local on = button.value == (best or current)
       button:SetRestStyle(on and { 0.55, 0.42, 0.10, 1 } or { 0.07, 0.11, 0.18, 0.95 },
         on and AK.COLORS.gold or { 0.22, 0.30, 0.40 })
       button.label:SetTextColor(unpack(on and { 1, 0.94, 0.72 } or { 0.52, 0.58, 0.68 }))
@@ -787,12 +800,10 @@ function Menu:ShowSettings()
   -- The layout is derived, not hand-placed, but a group can still be added
   -- that does not fit. Say so in the log rather than printing it over the
   -- keyboard legend and hoping somebody notices.
-  local deepest = math.max(top - nextY[1], top - nextY[2])
-  if -math.min(nextY[1], nextY[2]) > 520 - 80 then
-    AK:Print("Settings page overflows its panel by "
-      .. math.ceil(-math.min(nextY[1], nextY[2]) - (520 - 80)) .. "px.")
+  local used = -math.min(nextY[1], nextY[2])
+  if used > 520 - 80 then
+    AK:Print("Settings page overflows its panel by " .. math.ceil(used - (520 - 80)) .. "px.")
   end
-  local _ = deepest
   page:Show()
 end
 

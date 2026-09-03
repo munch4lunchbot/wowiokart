@@ -1006,6 +1006,16 @@ function RaceUI:Build()
   -- gap. It slides in from the right on the flag and stays until the results
   -- screen takes over. This is the bit that turns "the race is over, here is a
   -- table" into "you won -- now watch the rest of them scrap for second".
+  -- The cooldown lap winds on to as much as twelve times real speed once the
+  -- honest beat and a half is over, and a road going past at that rate is not
+  -- something anyone wants to watch. The scene recedes behind a scrim in step
+  -- with the dilation, which puts the ladder where the eye should be anyway.
+  -- On the HUD layer, so it dims the instruments too; the ladder is a child
+  -- frame of the same layer and therefore stays above it.
+  self.cooldownScrim = makeTexture(self.hudLayer, "BACKGROUND", { 0.01, 0.02, 0.05, 1 }, 0)
+  self.cooldownScrim:SetAllPoints()
+  self.cooldownScrim:SetAlpha(0)
+
   self.ladder = CreateFrame("Frame", nil, self.hudLayer)
   self.ladder:SetSize(LADDER.w, LADDER.h)
   self.ladder:SetPoint("RIGHT", -30, 20)
@@ -1719,6 +1729,7 @@ function RaceUI:ClearPresentation()
   if self.startLights then self.startLights:Hide() end
   for _, tile in ipairs(self.checker or {}) do tile:Hide() end
   if self.ladder then self.ladder:Hide() end
+  if self.cooldownScrim then self.cooldownScrim:SetAlpha(0) end
   self.ladderIn = nil
   self:ClearBanner()
 end
@@ -1863,6 +1874,12 @@ function RaceUI:UpdateLadder(race)
   self.ladder:SetAlpha(ease)
   self.ladder:ClearAllPoints()
   self.ladder:SetPoint("RIGHT", -30 + (1 - ease) * 60, 20)
+
+  -- Dim the world in step with the fast-forward. Real time stays clear.
+  if self.cooldownScrim then
+    local rate = (race.cooldown and race.cooldown.rate) or 1
+    self.cooldownScrim:SetAlpha(AK.Math.Clamp((rate - 1.5) / 7, 0, 0.55) * ease)
+  end
 
   local rows = self.ladderRows
   local order = race.ordered or race.vehicles
