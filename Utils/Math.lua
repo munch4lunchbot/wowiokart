@@ -53,7 +53,9 @@ function AK.Math.RoadCurve(track, distance)
   if not table_ then return 0 end
   local samples = track.sampleCount or #table_
   local step = track.sampleStep or 2
-  local index = math.floor(((distance % track.length + track.length) % track.length) / step) + 1
+  -- Through the route's own mapping: a branch does not loop, so a negative
+  -- distance on one must clamp to its start rather than wrap to its exit.
+  local index = math.floor(AK.TrackBuilder:At(track, distance) / step) + 1
   if index < 1 then index = 1 elseif index > samples then index = samples end
   -- Mirror mode flips the centreline, so the corner force has to flip with it
   -- or every bend on a mirrored track would push the wrong way.

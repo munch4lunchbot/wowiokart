@@ -3195,16 +3195,15 @@ function RaceUI:RenderRoad(race, player)
   local alpha = race.alpha
   local camZ = self:Lerped(player.prevDistance, player.distance, alpha, 3)
     - (tuning.camBack + (feel.push or 0))
-  -- A BRANCH IS A LINE, NOT A LOOP.
+  -- A BRANCH IS A LINE, NOT A LOOP -- and that is Builder:At's problem now.
   --
-  -- Taking a fork sets `vehicle.distance = 0`, and the camera trails the kart
-  -- by camBack -- so for the first several metres of every branch camZ is
-  -- NEGATIVE. Every lookup downstream does `% length`, which wraps a negative
-  -- distance round to the branch's EXIT: the wrong curvature, the wrong height
-  -- and the wrong props, for exactly the moment the player is looking hardest
-  -- at the split. On the main line the wrap is correct because a lap really
-  -- does loop; on a branch there is nothing behind zero.
-  if track ~= race.track then camZ = math.max(0, camZ) end
+  -- The camera used to be clamped to zero on a branch, because every lookup
+  -- downstream wrapped a negative distance round to the branch's EXIT. Clamping
+  -- the camera froze the entire world for camBack metres at the split while the
+  -- kart kept moving, so the kart slid out from under the camera and snapped
+  -- back -- the "disorienting and glitchy" fork. The lookups clamp instead, so
+  -- the camera can sit where it physically is: just behind the split, looking
+  -- at a road that continues.
   -- Draw distance is tunable, and everything downstream -- props, posts, arches,
   -- the fork ribbon, the fog curve -- reads this same upvalue, so setting it
   -- here is what makes the slider apply live.
@@ -3604,6 +3603,15 @@ function RaceUI:RenderRoad(race, player)
   end
 
   self:RenderSurround(camDepth, nearestTunnelBand)
+  -- Published so something outside the renderer can ask where the camera
+  -- actually ended up. The gap between this and the player's own distance is
+  -- what a fork transition has to hold steady, and there was no way to measure
+  -- it from anywhere.
+  self.camZ = camZ
+  -- And how far behind the kart it was TRYING to sit. The chase distance is not
+  -- a constant -- a boost pushes the camera back -- so "did the camera end up
+  -- where it meant to" cannot be answered against camBack alone.
+  self.camGap = tuning.camBack + (feel.push or 0)
   return camX, camZ
 end
 

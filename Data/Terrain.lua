@@ -146,7 +146,7 @@ end
 --- The material just off the road at this point in the lap.
 function Terrain:OffroadAt(track, distance)
   if track.surfaces then
-    local d = distance % track.length
+    local d = AK.TrackBuilder:At(track, distance)
     for _, zone in ipairs(track.surfaces) do
       if d >= zone.from and d <= zone.to then return zone.offroad or track.offroad end
     end
@@ -170,7 +170,7 @@ local PAINT_FADE = 12
 --- (0 at the very edge of the zone, 1 once properly on it).
 function Terrain:Painted(track, distance, lateral)
   if not track.surfaces then return nil end
-  local d = distance % track.length
+  local d = AK.TrackBuilder:At(track, distance)
   for _, zone in ipairs(track.surfaces) do
     if zone.onRoad and d >= zone.from and d <= zone.to then
       -- A zone painted across part of the road is authored against the

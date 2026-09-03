@@ -191,10 +191,37 @@ end
 --   }
 -- `from`/`to` are fractions of the main lap where the route leaves and rejoins.
 --- The name of the stretch of road at this point, if it has one.
+--- A distance mapped into a route's own space.
+---
+--- A LAP LOOPS. A BRANCH DOES NOT.
+---
+--- Every lookup in this file wrapped with `distance % length`, which is right
+--- for the main line -- three metres before the start line really is three
+--- metres from the end of the lap. A branch starts at the split and stops at
+--- the rejoin and there is nothing behind zero, but Lua's `%` is floored, so a
+--- negative distance on a branch wrapped round to its EXIT: the wrong
+--- curvature, the wrong width, the wrong height and the wrong scenery.
+---
+--- That matters because a kart commits to a fork while it is still up to six
+--- metres SHORT of the split, and the camera trails it by six more. Both of
+--- those are negative branch distances, at exactly the moment the player is
+--- looking hardest at the fork. The old workaround was to clamp the camera
+--- instead, which froze the world for six metres and slid the kart out from
+--- under the camera. Clamping the LOOKUP is the honest version of the same
+--- idea and costs nothing.
+function Builder:At(route, distance)
+  if route.parent then
+    if distance < 0 then return 0 end
+    if distance > route.length then return route.length end
+    return distance
+  end
+  return (distance % route.length + route.length) % route.length
+end
+
 function Builder:SectionAt(track, distance)
   local sections = track.sections
   if not sections then return nil end
-  local d = (distance % track.length + track.length) % track.length
+  local d = self:At(track, distance)
   for _, section in ipairs(sections) do
     if d >= section.from and d < section.to then return section end
   end
@@ -209,7 +236,7 @@ end
 function Builder:TunnelAt(track, distance)
   local tunnels = track.tunnels
   if not tunnels or #tunnels == 0 then return nil end
-  local d = (distance % track.length + track.length) % track.length
+  local d = self:At(track, distance)
   for _, tunnel in ipairs(tunnels) do
     if d >= tunnel.from and d <= tunnel.to then
       return tunnel, math.min(d - tunnel.from, tunnel.to - d)
@@ -296,7 +323,7 @@ end
 
 function Builder:ForkAt(track, distance, window)
   if not track.branches then return nil end
-  local d = (distance % track.length + track.length) % track.length
+  local d = self:At(track, distance)
   for _, branch in ipairs(track.branches) do
     local gap = (branch.entry - d) % track.length
     if gap >= 0 and gap <= (window or 0) then return branch, gap end
@@ -311,7 +338,13 @@ function Builder:GlobalProgress(track, route, distance)
   if not route or route == track then
     return (distance % track.length + track.length) % track.length
   end
-  local fraction = AK.Math.Clamp(distance / math.max(1, route.length), 0, 1)
+  -- The low end allows a little NEGATIVE, because a kart commits to a fork
+  -- while it is still short of the split and its branch distance is genuinely
+  -- below zero for those few metres. Clamping at zero reported it as already at
+  -- the entry, which put a small forward step into the odometer -- which is
+  -- accumulated from the frame-to-frame delta, so a step is a free metre. Held
+  -- well inside the commit window so nothing wild can run away with it.
+  local fraction = AK.Math.Clamp(distance / math.max(1, route.length), -0.05, 1)
   return (route.entry + fraction * route.span) % track.length
 end
 
@@ -334,7 +367,7 @@ end
 --- Which checkpoint a distance falls into.
 function Builder:CheckpointAt(track, distance)
   if not track.checkpointCount then return 1 end
-  local d = (distance % track.length + track.length) % track.length
+  local d = self:At(track, distance)
   return math.floor(d / (track.length / track.checkpointCount)) + 1
 end
 
@@ -426,14 +459,14 @@ function Builder:MapPoint(track, distance)
   local path = track.mapPath
   if not path then return 0, 0 end
   local count = #path
-  local index = math.floor((distance % track.length) / track.sampleStep) % count + 1
+  local index = math.floor(Builder:At(track, distance) / track.sampleStep) % count + 1
   return path[index].x, path[index].y
 end
 
 --- Interpolated lookup into a compiled table, wrapping at the lap boundary.
 local function sampleTable(track, list, distance)
   local count = track.sampleCount
-  local position = (distance % track.length) / track.sampleStep
+  local position = Builder:At(track, distance) / track.sampleStep
   local index = math.floor(position)
   local fraction = position - index
   local a = list[(index % count) + 1]
@@ -460,7 +493,7 @@ end
 --- True while `distance` sits on a launch ramp.
 function Builder:RampAt(track, distance)
   if not track.ramps then return nil end
-  local d = distance % track.length
+  local d = self:At(track, distance)
   for _, ramp in ipairs(track.ramps) do
     if d >= ramp.from and d <= ramp.to then return ramp end
   end

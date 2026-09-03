@@ -627,6 +627,56 @@ if loadFailures == 0 then
     AK.Race:Stop(true)
   end)
 
+  -- A FORK MUST NOT BE A JUMP CUT.
+  --
+  -- Taking a branch swaps the route the kart is measured against, and every
+  -- part of that used to be a discontinuity: the distance was reset to zero
+  -- (a forward teleport of however far the kart still was from the split), and
+  -- the camera was clamped to zero (so the world froze for camBack metres while
+  -- the kart kept moving, sliding it out from under the camera and snapping it
+  -- back). The camera-to-kart gap is what the player actually sees, so that is
+  -- what this holds to.
+  ok("taking a fork is continuous", function()
+    local worst, worstAt, crossings = 0, "", 0
+    for _, id in ipairs({ "elwynn", "durotar", "oribos" }) do
+      AK.Race:Start("quick", { track = id })
+      local race = AK.Race.current
+      race.player.ai = race.player.ai or AK.AI:CreatePersonality(9)
+      -- Take every fork this circuit offers.
+      race.player.forkTake = true
+      local wasRoute = race.player.route
+      for _ = 1, math.ceil(180 / FRAME) do
+        local wanted = AK.AI:Controls(race, race.player, FRAME)
+        wipe(AK.Race.controls)
+        for k, v in pairs(wanted) do AK.Race.controls[k] = v end
+        AK.Race.controls.accelerate = true
+        AK.Race:Update(FRAME)
+        if race.player.route ~= wasRoute then
+          crossings = crossings + 1
+          wasRoute = race.player.route
+          -- The frame the route changed on: the camera has already been placed
+          -- for the new route, so the gap must still be the chase distance.
+          local gap = race.player.distance - (AK.RaceUI.camZ or 0)
+          -- Against where the camera MEANT to be. The chase distance is not a
+          -- constant: a boost pushes the camera back, and measuring against
+          -- camBack alone reported a boost as a fork glitch.
+          local want = AK.RaceUI.camGap or AK.db.tuning.camBack
+          local off = math.abs(gap - want)
+          if off > worst then worst, worstAt = off, id end
+        end
+        if race.player.finished then break end
+      end
+      AK.Race:Stop(true)
+    end
+    say(("        %d route changes; worst camera slip %.2fm (%s)")
+      :format(crossings, worst, worstAt ~= "" and worstAt or "none"))
+    assert(crossings >= 2, "never took a fork on three circuits that have them")
+    -- One frame of travel at racing speed is about 0.3m; anything past a metre
+    -- is the camera jumping rather than following.
+    assert(worst < 1.2,
+      ("the camera slipped %.2fm from the kart at a fork on %s"):format(worst, worstAt))
+  end)
+
   ok("time trial and battle both run", function()
     driveRace("icecrown", 8, "time_trial")
     AK.Race:Stop(true)

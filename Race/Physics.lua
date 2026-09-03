@@ -159,14 +159,26 @@ function Physics:UpdateRoute(race, vehicle)
         -- isPlayer, so the attract demo taking a branch does not earn it.
         if vehicle.isPlayer then AK:UnlockAchievement("shortcut_run") end
         vehicle.route = branch
-        vehicle.routeReturn = vehicle.distance
-        vehicle.distance = 0
+        -- NEGATIVE, and deliberately so. A kart commits while it is still `gap`
+        -- metres SHORT of the split, and setting its branch distance to zero
+        -- teleported it forward by that much -- then the camera, which trails
+        -- by camBack, had to be clamped at zero because a negative branch
+        -- distance used to wrap round to the branch's exit. That clamp froze
+        -- the world for six metres while the kart kept moving, so the kart slid
+        -- out from under the camera and snapped back. Builder:At clamps the
+        -- LOOKUP now instead, which lets the position stay continuous: the kart
+        -- crosses onto the branch at exactly the point it was already at.
+        vehicle.distance = -gap
         -- Carry the lateral position across rather than halving it. `lateral`
         -- is measured in the same units on both routes, so scaling it slid the
         -- kart sideways at the split for no reason; it only needs containing
         -- inside a branch that is usually narrower than the road it leaves.
         local edge = AK.Math.RoadWidth(branch, 0)
         vehicle.lateral = AK.Math.Clamp(vehicle.lateral, -edge * 0.8, edge * 0.8)
+        -- The render interpolates between the last two simulated positions, and
+        -- these two are now in different coordinate spaces. Snap the history so
+        -- no frame can draw a blend of the two.
+        vehicle.prevDistance, vehicle.prevLateral = vehicle.distance, vehicle.lateral
         vehicle.branchIntent = nil
         if vehicle == race.player then
           AK.RaceUI:Announce(branch.name and branch.name:upper() or "SHORTCUT", AK.COLORS.lime)
@@ -179,8 +191,15 @@ function Physics:UpdateRoute(race, vehicle)
     local overshoot = vehicle.distance - branch.length
     vehicle.route = track
     vehicle.distance = branch.exit + overshoot
-    vehicle.lateral = vehicle.lateral * 0.6
+    -- CARRIED, not scaled. The split was fixed to carry the lateral across for
+    -- exactly this reason -- scaling slides the kart sideways for no reason --
+    -- and the rejoin was left multiplying by 0.6, so every shortcut ended with
+    -- a lurch toward the centreline. Contained inside the main road's width,
+    -- which is the only thing that actually needs saying here.
+    local edge = AK.Math.RoadWidth(track, vehicle.distance)
+    vehicle.lateral = AK.Math.Clamp(vehicle.lateral, -edge * 0.9, edge * 0.9)
     vehicle.branchIntent = nil
+    vehicle.prevDistance, vehicle.prevLateral = vehicle.distance, vehicle.lateral
   end
 
   local progress = AK.TrackBuilder:GlobalProgress(track, vehicle.route, vehicle.distance)
