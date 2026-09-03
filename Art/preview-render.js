@@ -882,11 +882,46 @@ for (const r of LAYOUT.rects(W, H)) R[r.name] = r;
 const GOLD = LAYOUT.COLORS.GOLD;
 
 function panel(r, alpha = 1) {
-  if (tex.panel) blit(tex.panel, r.x, r.y, r.w, r.h, 0, 1, 0, 1, [1, 1, 1], alpha);
-  else rect(r.x, r.y, r.w, r.h, .04, .06, .10, .9 * alpha);
-  rect(r.x, r.y, r.w, 1, 1, .76, .20, .34 * alpha);
+  // NINE-SLICED, exactly as UI:NewPanel draws it: corners keep their pixels,
+  // edges stretch along one axis, the middle stretches both. Stretching the
+  // whole texture is what turns a rounded corner into an oval.
+  if (tex.panelplate) {
+    const C = 18, TW = tex.panelplate.w;
+    const cw = Math.min(C, r.w / 2), ch = Math.min(C, r.h / 2);
+    const u = [[0, C / TW], [C / TW, 1 - C / TW], [1 - C / TW, 1]];
+    const xs = [r.x, r.x + cw, r.x + r.w - cw], ws = [cw, Math.max(1, r.w - cw * 2), cw];
+    const ys = [r.y, r.y + ch, r.y + r.h - ch], hs = [ch, Math.max(1, r.h - ch * 2), ch];
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) {
+        blit(tex.panelplate, xs[col], ys[row], ws[col], hs[row],
+          u[col][0], u[col][1], u[row][0], u[row][1], PANEL_TINT, alpha);
+      }
+    }
+    if (tex.panelgleam) {
+      blit(tex.panelgleam, r.x + 3, r.y + 1, r.w - 6, 3, 0, 1, 0, 1, [1, .86, .55], 0.40 * alpha);
+    }
+  } else {
+    rect(r.x, r.y, r.w, r.h, .04, .06, .10, .9 * alpha);
+    rect(r.x, r.y, r.w, 1, 1, .76, .20, .34 * alpha);
+  }
 }
 const put = (qx, qy, r, g, b, a) => blend(qx, qy, r, g, b, a);
+const SHOW_CONTROLS = !!process.env.CONTROLS;
+// HUD_PANEL from UI/RaceUI.lua. The alpha travels separately, in `alpha`.
+const PANEL_TINT = [.025, .05, .10];
+
+// THE BUTTON PLATE, three-sliced exactly as UI:NewButton draws it: the two caps
+// keep their pixels and the middle stretches. A single texture scaled to fit
+// turns the rounded corners into ovals, so the mirror has to slice it the same
+// way or it is showing a shape the game never draws.
+function plate(x0, y0, bw, bh, tint) {
+  if (!tex.btn) { rect(x0, y0, bw, bh, tint[0], tint[1], tint[2], .96); return; }
+  const CAP_PX = 26, capW = Math.min(CAP_PX, bh * CAP_PX / 40, bw / 2);
+  const cu = CAP_PX / tex.btn.w;
+  blit(tex.btn, x0, y0, capW, bh, 0, cu, 0, 1, tint, 1);
+  blit(tex.btn, x0 + capW, y0, bw - capW * 2, bh, cu, 1 - cu, 0, 1, tint, 1);
+  blit(tex.btn, x0 + bw - capW, y0, capW, bh, 1 - cu, 1, 0, 1, tint, 1);
+}
 
 // Panels and buttons first, then every text row on top of them.
 for (const r of LAYOUT.rects(W, H)) {
@@ -894,10 +929,13 @@ for (const r of LAYOUT.rects(W, H)) {
   else if (r.kind === "glow" && tex.glow)
     blit(tex.glow, r.x, r.y, r.w, r.h, 0, 1, 0, 1, [0, 0, 0], 0.55);
   else if (r.kind === "button") {
-    const col = r.text === "BRAKE" ? [.26, .10, .10] : r.text === "GAS" ? [.10, .24, .12]
-      : r.text === "QUIT" ? [.28, .09, .09] : [.10, .19, .31];
-    rect(r.x, r.y, r.w, r.h, col[0], col[1], col[2], .96);
-    rect(r.x, r.y, r.w, 1, .38, .65, .92, .9);
+    // The on-screen pads and the corner quit are OFF by default now -- see
+    // AK.db.settings.showControls. CONTROLS=1 draws them, the way a player who
+    // turned them on would see them.
+    if (!SHOW_CONTROLS) continue;
+    const col = r.text === "BRAKE" ? [.34, .12, .10] : r.text === "GAS" ? [.10, .30, .14]
+      : r.text === "QUIT" ? [.38, .12, .11] : [.18, .28, .42];
+    plate(r.x, r.y, r.w, r.h, col);
   } else if (r.kind === "pips") {
     for (let i = 0; i < 3; i++)
       rect(r.x + i * r.pitch, r.y, r.each, r.h, ...(i < 2 ? GOLD : [.25, .32, .42]), 1);
@@ -926,7 +964,7 @@ for (const r of LAYOUT.rects(W, H)) {
 }
 for (const r of LAYOUT.rects(W, H)) {
   if (r.kind === "text") drawText(put, r.text, r.x, r.y, r.size, r.color, 1);
-  else if (r.kind === "button")
+  else if (r.kind === "button" && SHOW_CONTROLS)
     drawText(put, r.text, r.x + (r.w - r.text.length * 6 * u(13) / 9.7) / 2,
       r.y + (r.h - u(13) * 7 / 9.7) / 2, u(13), GOLD, 1);
 }

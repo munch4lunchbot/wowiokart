@@ -9,6 +9,11 @@ local defaults = {
     -- strips than High and is the single biggest frame-rate dial there is;
     -- at 720p the difference is six pixels a strip against five.
     roadDetail = "Balanced",
+    -- OFF. Six labelled pads across the bottom of the screen and a red QUIT in
+    -- the corner is what an addon looks like, not what a game looks like, and
+    -- every one of them has a key. They are still one toggle away for anyone
+    -- who wants to drive with the mouse.
+    showControls = false,
   },
   -- Cue -> FileDataID chosen by ear in-game via /kart sfxset. Empty by default;
   -- anything bound here wins over the built-in candidates.

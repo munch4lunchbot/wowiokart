@@ -26,6 +26,7 @@ const GENERATORS = [
   "generate-art-oribos.js",
   "generate-art-items.js",
   "generate-art-kart.js",
+  "generate-art-ui.js",
 ];
 
 for (const g of GENERATORS) {

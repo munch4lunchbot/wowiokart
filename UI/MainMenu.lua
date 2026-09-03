@@ -3,46 +3,76 @@ local _, AK = ...
 AK.UI = AK.UI or {}
 local UI = AK.UI
 
-local function backdrop(color, border)
-  return {
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-    insets = { left = 1, right = 1, top = 1, bottom = 1 },
-    bgColor = color,
-    edgeColor = border or AK.COLORS.gold,
-  }
-end
-
-local function applyBackdrop(frame, color, border)
-  frame:SetBackdrop(backdrop())
-  frame:SetBackdropColor(unpack(color or AK.COLORS.panel))
-  frame:SetBackdropBorderColor(unpack(border or AK.COLORS.gold))
-end
+-- BackdropTemplate is gone from this file. It was how both the panel and the
+-- button got their look -- a filled quad with a one-pixel border -- and that
+-- look is the reason the whole interface read as a configuration window rather
+-- than as a game. Shape comes from art now; see Art/generate-art-ui.js.
 
 local ART = "Interface\\AddOns\\kart\\Art\\"
 
---- Panels get a bevelled gradient skin and a lit top edge. A flat rectangle
---- with a one-pixel border is the single most "unfinished" thing on screen,
---- and every panel in the addon goes through here.
+-- THE PANEL PLATE, nine-sliced.
+--
+-- A panel is arbitrary in both directions, so the four corners keep their
+-- pixels while the edges stretch along their own axis and the middle stretches
+-- both ways. Nothing else gives a rounded corner that stays round.
+local PANEL_TEX, PANEL_CORNER = 56, 18
+local PC0 = PANEL_CORNER / PANEL_TEX
+local PC1 = (PANEL_TEX - PANEL_CORNER) / PANEL_TEX
+-- Column and row texcoord spans, in the order the nine pieces are built.
+local PANEL_U = { { 0, PC0 }, { PC0, PC1 }, { PC1, 1 } }
+
+--- Panels are OBJECTS now, not filled rectangles with a one-pixel square
+--- border. That border is what BackdropTemplate gives you for free and it is
+--- what every configuration window in World of Warcraft is made of; square
+--- corners on a dark rectangle is the most recognisable "this is an addon" cue
+--- there is. See Art/generate-art-ui.js.
 function UI:NewPanel(parent, width, height, color)
-  local panel = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+  local panel = CreateFrame("Frame", nil, parent)
   panel:SetSize(width, height)
-  applyBackdrop(panel, color or AK.COLORS.panel)
-  local skin = panel:CreateTexture(nil, "BACKGROUND", nil, 1)
-  skin:SetTexture(ART .. "panel.tga")
-  skin:SetPoint("TOPLEFT", 1, -1)
-  skin:SetPoint("BOTTOMRIGHT", -1, 1)
-  skin:SetAlpha(0.85)
-  panel.skin = skin
-  -- Warm hairline along the top, catching the light.
+  local tint = color or AK.COLORS.panel
+  panel.pieces = {}
+  for row = 1, 3 do
+    for col = 1, 3 do
+      local piece = panel:CreateTexture(nil, "BACKGROUND", nil, 0)
+      piece:SetTexture(ART .. "panelplate.tga")
+      piece:SetTexCoord(PANEL_U[col][1], PANEL_U[col][2], PANEL_U[row][1], PANEL_U[row][2])
+      panel.pieces[#panel.pieces + 1] = piece
+      piece.row, piece.col = row, col
+    end
+  end
+  --- Corners keep the texture's pixels; edges stretch along one axis; the
+  --- middle stretches both. Capped at half the panel so a small one does not
+  --- have its corners overlap into a smear.
+  function panel:LayoutPlate()
+    local w, h = self:GetWidth(), self:GetHeight()
+    local cw = math.min(PANEL_CORNER, w * 0.5)
+    local ch = math.min(PANEL_CORNER, h * 0.5)
+    for _, piece in ipairs(self.pieces) do
+      piece:ClearAllPoints()
+      local left = piece.col == 1 and 0 or (piece.col == 2 and cw or w - cw)
+      local top = piece.row == 1 and 0 or (piece.row == 2 and ch or h - ch)
+      piece:SetPoint("TOPLEFT", left, -top)
+      piece:SetSize(piece.col == 2 and math.max(1, w - cw * 2) or cw,
+        piece.row == 2 and math.max(1, h - ch * 2) or ch)
+    end
+  end
+  function panel:SetPlateColor(c)
+    for _, piece in ipairs(self.pieces) do
+      piece:SetVertexColor(c[1], c[2], c[3], c[4] or 1)
+    end
+  end
+  panel:LayoutPlate()
+  panel:SetPlateColor(tint)
+  -- Warm light catching the top edge. It fades out before the corner curve
+  -- starts, so it reads as an edge rather than as a line drawn across a box.
   local gleam = panel:CreateTexture(nil, "BORDER")
-  gleam:SetTexture(ART .. "hairline.tga")
-  gleam:SetPoint("TOPLEFT", 2, -1)
-  gleam:SetPoint("TOPRIGHT", -2, -1)
-  gleam:SetHeight(2)
-  gleam:SetVertexColor(1, 0.86, 0.55, 0.34)
+  gleam:SetTexture(ART .. "panelgleam.tga")
+  gleam:SetPoint("TOPLEFT", 3, -1)
+  gleam:SetPoint("TOPRIGHT", -3, -1)
+  gleam:SetHeight(3)
+  gleam:SetVertexColor(1, 0.86, 0.55, 0.40)
   panel.gleam = gleam
+  panel:SetScript("OnSizeChanged", function(self) self:LayoutPlate() end)
   return panel
 end
 
@@ -55,20 +85,121 @@ function UI:NewText(parent, text, size, color, justify)
   return label
 end
 
-function UI:NewButton(parent, text, width, height, onClick)
-  local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
-  button:SetSize(width, height)
-  button.restColor = { 0.10, 0.19, 0.31, 0.98 }
-  button.restBorder = { 0.38, 0.65, 0.92 }
-  applyBackdrop(button, button.restColor, button.restBorder)
-  function button:SetRestStyle(color, border)
-    self.restColor, self.restBorder = color, border
-    applyBackdrop(self, color, border)
+-- THE BUTTON PLATE.
+--
+-- Authored 64x40 with 26px caps, so it is drawn as THREE pieces: the two caps
+-- keep their pixels and the middle strip stretches. A single texture scaled to
+-- fit turns the rounded corners into ovals, which is worse than having no
+-- rounding at all -- see Art/generate-art-ui.js, and Art/preview-ui.js for
+-- what it looks like.
+local BTN = { texW = 64, texH = 40, cap = 26 }
+BTN.u0 = BTN.cap / BTN.texW
+BTN.u1 = (BTN.texW - BTN.cap) / BTN.texW
+
+--- Three textures making one plate. `blend` for the body, "ADD" for the sheen.
+local function newPlate(frame, layer, file, sublevel, mode)
+  local pieces = {}
+  for index = 1, 3 do
+    local piece = frame:CreateTexture(nil, layer, nil, sublevel)
+    piece:SetTexture(ART .. file)
+    if mode then piece:SetBlendMode(mode) end
+    pieces[index] = piece
   end
-  button.label = self:NewText(button, text, 15, AK.COLORS.gold, "CENTER")
+  pieces[1]:SetTexCoord(0, BTN.u0, 0, 1)
+  pieces[2]:SetTexCoord(BTN.u0, BTN.u1, 0, 1)
+  pieces[3]:SetTexCoord(BTN.u1, 1, 0, 1)
+  return pieces
+end
+
+--- Lay a plate out across the frame. The caps keep the texture's aspect, so a
+--- tall button gets proportionally rounder corners, which is what you want.
+local function layoutPlate(pieces, width, height)
+  -- A FIXED corner radius, whatever the button's size. Scaling the cap with
+  -- height alone is right up to about the plate's authored height and absurd
+  -- past it: a 150px-tall selection card would take a 97px cap and come out as
+  -- a stadium, which is a different shape from every other control on screen.
+  -- Real interfaces round every corner by the same amount.
+  local cap = math.min(BTN.cap, height * BTN.cap / BTN.texH, width * 0.5)
+  pieces[1]:ClearAllPoints()
+  pieces[1]:SetPoint("TOPLEFT")
+  pieces[1]:SetSize(cap, height)
+  pieces[3]:ClearAllPoints()
+  pieces[3]:SetPoint("TOPRIGHT")
+  pieces[3]:SetSize(cap, height)
+  pieces[2]:ClearAllPoints()
+  pieces[2]:SetPoint("TOPLEFT", cap, 0)
+  pieces[2]:SetPoint("BOTTOMRIGHT", -cap, 0)
+end
+
+local function tintPlate(pieces, color, alpha)
+  for _, piece in ipairs(pieces) do
+    piece:SetVertexColor(color[1], color[2], color[3], alpha or color[4] or 1)
+  end
+end
+
+--- A button that is an OBJECT, not a filled rectangle with a border.
+---
+--- What was here before was CreateFrame + BackdropTemplate + a one-pixel edge,
+--- which is the default look of every configuration dialog in World of Warcraft
+--- and reads as exactly that: an addon panel. A game's button has a shape, it
+--- catches the light along its top edge and loses it along the bottom, it is
+--- separated from whatever is behind it by its own dark rim, and it answers
+--- when you touch it. All four of those are art and none of them are a border
+--- colour.
+function UI:NewButton(parent, text, width, height, onClick)
+  local button = CreateFrame("Button", nil, parent)
+  button:SetSize(width, height)
+  button.restColor = { 0.18, 0.28, 0.42 }
+  button.restText = AK.COLORS.gold
+
+  button.plate = newPlate(button, "BACKGROUND", "btn.tga", 0)
+  -- The specular that arrives with the pointer. Additive, so it brightens the
+  -- plate's own colour rather than washing it toward grey.
+  button.sheen = newPlate(button, "ARTWORK", "btnsheen.tga", 0, "ADD")
+  layoutPlate(button.plate, width, height)
+  layoutPlate(button.sheen, width, height)
+  tintPlate(button.plate, button.restColor)
+  tintPlate(button.sheen, { 1, 1, 1 }, 0)
+
+  button.label = self:NewText(button, text, 15, button.restText, "CENTER")
   button.label:SetAllPoints()
+
+  --- Re-tint for a state. Kept as one entry point so hover, press and the
+  --- disabled look cannot drift apart.
+  function button:Paint(color, sheenAlpha, textColor)
+    tintPlate(self.plate, color)
+    tintPlate(self.sheen, { 0.92, 0.94, 1.0 }, sheenAlpha or 0)
+    self.label:SetTextColor(unpack(textColor or self.restText))
+  end
+
+  --- Callers set a button's resting colour to say what it DOES -- danger red on
+  --- a quit, green on the throttle. The second argument used to be a border
+  --- colour; the plate has no border, so it is the label colour now, which is
+  --- what a caller passing "danger" actually wanted to convey.
+  function button:SetRestStyle(color, textColor)
+    self.restColor = { color[1], color[2], color[3] }
+    if textColor then self.restText = { textColor[1], textColor[2], textColor[3] } end
+    self:Paint(self.restColor, 0)
+  end
+
+  --- Buttons get resized after construction (the settings screen sizes its
+  --- pickers from the column width), and a plate laid out for the old size is
+  --- a stretched cap.
+  function button:Resize(w, h)
+    self:SetSize(w, h)
+    layoutPlate(self.plate, w, h)
+    layoutPlate(self.sheen, w, h)
+  end
+
+  local function brighten(color, by)
+    return { math.min(1, color[1] + by), math.min(1, color[2] + by), math.min(1, color[3] + by) }
+  end
+  local function darken(color, by)
+    return { color[1] * by, color[2] * by, color[3] * by }
+  end
+
   button:SetScript("OnEnter", function(frame)
-    applyBackdrop(frame, { 0.16, 0.31, 0.48, 1 }, AK.COLORS.gold)
+    frame:Paint(brighten(frame.restColor, 0.10), 1)
     -- Every button in the addon routes through here. That is fine for a menu of
     -- ten, and awful in the tuning panel, where sixty steppers sit shoulder to
     -- shoulder and simply moving the mouse across the window machine-guns the
@@ -82,18 +213,23 @@ function UI:NewButton(parent, text, width, height, onClick)
     end
   end)
   button:SetScript("OnLeave", function(frame)
-    applyBackdrop(frame, frame.restColor, frame.restBorder)
+    frame:Paint(frame.restColor, 0)
     GameTooltip:Hide()
   end)
   button:SetScript("OnClick", function(frame, ...)
     if AK.PlaySfx and not frame.quiet then AK:PlaySfx("uiClick") end
     if onClick then onClick(frame, ...) end
   end)
+  -- Pressed: the plate darkens and the label sinks a pixel, so the press is
+  -- felt rather than merely registered.
   button:SetScript("OnMouseDown", function(frame)
+    frame:Paint(darken(frame.restColor, 0.62), 0)
     frame.label:ClearAllPoints()
     frame.label:SetPoint("CENTER", 1, -1)
   end)
   button:SetScript("OnMouseUp", function(frame)
+    frame:Paint(frame:IsMouseOver() and brighten(frame.restColor, 0.10) or frame.restColor,
+      frame:IsMouseOver() and 1 or 0)
     frame.label:ClearAllPoints()
     frame.label:SetAllPoints()
   end)
@@ -191,6 +327,74 @@ local function trackRecord(trackId)
   if lap then parts[#parts + 1] = "LAP " .. AK.RaceUI:FormatTime(lap) end
   if race then parts[#parts + 1] = "RACE " .. AK.RaceUI:FormatTime(race) end
   return table.concat(parts, "   ")
+end
+
+--- A STAT BAR: ten segments, lit to the value.
+---
+--- "SPEED 7    ACCEL 6" is a table, and a table has to be read. A row of
+--- segments is the shape of the build, and every kart game shows it that way
+--- because you can compare two of them without doing any arithmetic.
+function UI:NewStatBar(parent, width, label)
+  local bar = CreateFrame("Frame", nil, parent)
+  bar:SetSize(width, 12)
+  bar.label = self:NewText(bar, label, 11, AK.COLORS.muted, "LEFT")
+  bar.label:SetPoint("LEFT", 0, 0)
+  bar.label:SetWidth(66)
+  bar.cells = {}
+  local track = width - 72
+  local gap = 2
+  local cell = (track - gap * 9) / 10
+  for i = 1, 10 do
+    local segment = bar:CreateTexture(nil, "ARTWORK")
+    segment:SetTexture("Interface\\Buttons\\WHITE8x8")
+    segment:SetSize(cell, 7)
+    segment:SetPoint("LEFT", 72 + (i - 1) * (cell + gap), 0)
+    bar.cells[i] = segment
+  end
+  --- `value` is 0..10. The lit run is a gradient from lime to gold, so the top
+  --- of a bar reads as the expensive end rather than as more of the same.
+  function bar:Set(value)
+    for i, segment in ipairs(self.cells) do
+      if i <= value then
+        local t = (i - 1) / 9
+        segment:SetVertexColor(0.35 + 0.62 * t, 0.88 - 0.10 * t, 0.36 - 0.14 * t, 1)
+      else
+        segment:SetVertexColor(0.13, 0.17, 0.24, 1)
+      end
+    end
+  end
+  bar:Set(0)
+  return bar
+end
+
+--- A MENU ROW: a name, what it is, and a mark when you are on it.
+---
+--- Twelve identical bars stacked in a column is a list of settings, not a game
+--- menu. A row here says what it does on the right-hand side and grows a
+--- chevron when the pointer is on it, so the modes read as things you choose
+--- between rather than as twelve equally weighted commands.
+function UI:NewMenuRow(parent, width, height, title, note, onClick)
+  local row = self:NewButton(parent, "", width, height, onClick)
+  row.label:Hide()
+  row.title = self:NewText(row, title, 16, { .86, .90, 1 }, "LEFT")
+  row.title:SetPoint("LEFT", 34, 0)
+  row.note = self:NewText(row, note or "", 11, AK.COLORS.muted, "RIGHT")
+  row.note:SetPoint("RIGHT", -16, 0)
+  row.chevron = row:CreateTexture(nil, "OVERLAY")
+  row.chevron:SetTexture(ART .. "chevron.tga")
+  row.chevron:SetSize(11, 15)
+  row.chevron:SetPoint("LEFT", 15, 0)
+  row.chevron:SetVertexColor(unpack(AK.COLORS.gold))
+  row.chevron:Hide()
+  row:HookScript("OnEnter", function(frame)
+    frame.chevron:Show()
+    frame.title:SetTextColor(1, 0.95, 0.80)
+  end)
+  row:HookScript("OnLeave", function(frame)
+    frame.chevron:Hide()
+    frame.title:SetTextColor(.86, .90, 1)
+  end)
+  return row
 end
 
 AK.Menu = {}
@@ -302,43 +506,120 @@ function Menu:HideDynamic()
   if self.home then self.home:Hide() end
 end
 
+-- WHAT THIS GAME LETS YOU DO, IN THE ORDER YOU CARE.
+--
+-- The home screen used to be twelve identical bars in a column: RACE, then four
+-- SELECT screens, then a cup, then four more modes, then a trophy room and the
+-- settings -- all the same size, all the same colour, in the order they
+-- happened to be written. That is a list of commands, not a menu. You cannot
+-- tell what the game IS from it.
+--
+-- Three tiers now. The MODES are what you came for, so they get the weight and
+-- a line each saying what they are. The GARAGE is what you change before
+-- racing, so it is a row of four small buttons rather than four full-width
+-- decisions. Trophies and settings are neither, so they sit small at the foot.
+--
+-- Declared as data because Art/preview-ui.js renders this screen from the same
+-- table -- a hand-copied duplicate in the preview is a duplicate that drifts,
+-- which is exactly what happened to the skyline.
+local MODES = {
+  { "GRAND PRIX", "four races, one trophy", function() AK.Race:StartGrandPrix() end,
+    "Four races on the selected cup. Points after each; the trophy goes to the total." },
+  { "QUICK RACE", "one race, full grid", function() AK.Race:Start("quick") end,
+    "Your selected circuit against the full field." },
+  { "TIME TRIAL", "you against your ghost", function() AK.Race:Start("time_trial") end,
+    "No rivals and no items. Beat your own recorded lap." },
+  { "BATTLE", "three balloons each", function() AK.Race:StartBattle() end,
+    "An arena, not a circuit. Last kart with a balloon wins." },
+  { "MULTIPLAYER", "your party or raid", function() AK.Menu:ShowMultiplayer() end,
+    "Race other people who have the addon, over WoW's own addon channel." },
+  { "PRACTICE", "no clock, no pressure", function() AK.Race:Start("practice") end,
+    "Learn a circuit with nothing riding on it." },
+}
+local GARAGE = {
+  { "RACER", "racer" }, { "KART", "kart" }, { "TRACK", "track" }, { "CUP", "cup" },
+}
+
+-- Every offset below is derived from these, and the whole stack is measured
+-- against the content panel at the end of BuildHome. The settings screen had
+-- to learn this the hard way: hand-counted pixels put "Racing scale"
+-- underneath the keyboard legend and nobody noticed for a long time.
+local HOME = {
+  -- 468 rather than a rounder 470 so the four garage cells and the two footer
+  -- buttons both divide into WHOLE pixels. A plate whose cap lands on a half
+  -- pixel has a soft edge on one side and a hard one on the other, which is
+  -- precisely the kind of thing that reads as "not quite right" without ever
+  -- being nameable.
+  modeW = 468, modeH = 42, modeGap = 5, modeTop = 88,
+  headGap = 16, sectionGap = 16, rowGap = 24,
+  garageH = 36, footH = 30, footGap = 12, gutter = 30,
+  contentW = 960, contentH = 520, margin = 40,
+}
+
 function Menu:BuildHome()
   local home = CreateFrame("Frame", nil, self.content)
   home:SetAllPoints()
   self.home = home
-  local welcome = UI:NewText(home, "Warm up your engines. No actual mounts were harmed.", 17, { .82, .88, .96 }, "CENTER")
-  welcome:SetPoint("TOP", 0, -35)
+  local welcome = UI:NewText(home, "Warm up your engines. No actual mounts were harmed.",
+    15, { .74, .80, .90 }, "LEFT")
+  welcome:SetPoint("TOPLEFT", 40, -30)
 
-  -- Listed first so the panel can be sized from the list. Ten buttons at 43px
-  -- needed 467px and the panel was hard-coded to 410, so PRACTICE and SETTINGS
-  -- rendered outside it as two stray bars below the frame.
-  local actions = {
-    { "QUICK RACE", "Race your selected track against the field.", function() AK.Race:Start("quick") end },
-    { "SELECT RACER", "Choose a pilot with a distinct handling profile.", function() self:ShowSelection("racer") end },
-    { "SELECT KART", "Pick an impossibly unsafe vehicle.", function() self:ShowSelection("kart") end },
-    { "SELECT TRACK", "Choose a course from across Azeroth.", function() self:ShowSelection("track") end },
-    { "SELECT CUP", "Choose which four-race Grand Prix you'll run.", function() self:ShowSelection("cup") end },
-    { "GRAND PRIX", "Four races. One moderately shiny trophy.", function() AK.Race:StartGrandPrix() end },
-    { "MULTIPLAYER", "Host or join a party/raid race with other addon users.", function() self:ShowMultiplayer() end },
-    { "TIME TRIAL", "No rivals, no items, race your own ghost.", function() AK.Race:Start("time_trial") end },
-    { "BATTLE", "Three balloons each. Last one standing wins.", function() AK.Race:StartBattle() end },
-    { "PRACTICE", "Learn the course without a finish pressure.", function() AK.Race:Start("practice") end },
-    { "TROPHY ROOM", "Every achievement, and which ones you have.", function() self:ShowAchievements() end },
-    { "SETTINGS", "Adjust this tiny game's options.", function() self:ShowSettings() end },
-  }
-  local ROW, GAP, TOP = 36, 7, 22
-  local panelHeight = TOP * 2 + #actions * ROW + (#actions - 1) * GAP
+  local heading = UI:NewText(home, "RACE", 11, AK.COLORS.gold, "LEFT")
+  heading:SetPoint("TOPLEFT", 42, -66)
+  local rule = home:CreateTexture(nil, "ARTWORK")
+  rule:SetTexture(ART .. "hairline.tga")
+  rule:SetPoint("TOPLEFT", 40, -82)
+  rule:SetSize(HOME.modeW, 2)
+  rule:SetVertexColor(1, 0.78, 0.30, 0.35)
 
-  local menu = UI:NewPanel(home, 400, panelHeight, { 0.055, 0.10, 0.17, .98 })
-  menu:SetPoint("TOPLEFT", 40, -80)
-  for index, spec in ipairs(actions) do
-    local button = UI:NewButton(menu, spec[1], 350, ROW, spec[3])
-    button.tooltip = spec[2]
-    button:SetPoint("TOP", 0, -TOP - (index - 1) * (ROW + GAP))
+  for index, mode in ipairs(MODES) do
+    local row = UI:NewMenuRow(home, HOME.modeW, HOME.modeH, mode[1], mode[2], mode[3])
+    row:SetPoint("TOPLEFT", 40, -HOME.modeTop - (index - 1) * (HOME.modeH + HOME.modeGap))
+    row.tooltip = mode[4]
+    -- The headline mode is the one the game is FOR, so it is the one that is
+    -- already lit rather than one of six identical dark bars.
+    if index == 1 then
+      row:SetRestStyle({ 0.42, 0.31, 0.08 }, { 1, 0.95, 0.80 })
+      row.title:SetTextColor(1, 0.95, 0.80)
+      row:HookScript("OnLeave", function(frame) frame.title:SetTextColor(1, 0.95, 0.80) end)
+    end
   end
 
-  local preview = UI:NewPanel(home, 410, panelHeight, { 0.055, 0.10, 0.17, .98 })
-  preview:SetPoint("TOPRIGHT", -40, -80)
+  local garageTop = HOME.modeTop + #MODES * (HOME.modeH + HOME.modeGap) + HOME.sectionGap
+  local garageHead = UI:NewText(home, "GARAGE", 11, AK.COLORS.gold, "LEFT")
+  garageHead:SetPoint("TOPLEFT", 42, -garageTop)
+  local garageRule = home:CreateTexture(nil, "ARTWORK")
+  garageRule:SetTexture(ART .. "hairline.tga")
+  garageRule:SetPoint("TOPLEFT", 40, -garageTop - HOME.headGap)
+  garageRule:SetSize(HOME.modeW, 2)
+  garageRule:SetVertexColor(1, 0.78, 0.30, 0.35)
+
+  local cell = (HOME.modeW - 3 * 8) / 4
+  for index, entry in ipairs(GARAGE) do
+    local button = UI:NewButton(home, entry[1], cell, HOME.garageH,
+      function() self:ShowSelection(entry[2]) end)
+    button:SetPoint("TOPLEFT", 40 + (index - 1) * (cell + 8), -garageTop - HOME.rowGap)
+    button.label:SetFont(STANDARD_TEXT_FONT, 13, "OUTLINE")
+    button.tooltip = "Change your " .. entry[1]:lower() .. " before the next race."
+  end
+
+  local footTop = garageTop + HOME.rowGap + HOME.garageH + HOME.footGap
+  local trophies = UI:NewButton(home, "TROPHY ROOM", (HOME.modeW - 8) / 2, HOME.footH,
+    function() self:ShowAchievements() end)
+  trophies:SetPoint("TOPLEFT", 40, -footTop)
+  trophies:SetRestStyle({ 0.13, 0.17, 0.25 }, AK.COLORS.muted)
+  trophies.label:SetFont(STANDARD_TEXT_FONT, 12, "OUTLINE")
+  local settings = UI:NewButton(home, "SETTINGS", (HOME.modeW - 8) / 2, HOME.footH,
+    function() self:ShowSettings() end)
+  settings:SetPoint("TOPLEFT", 40 + (HOME.modeW - 8) / 2 + 8, -footTop)
+  settings:SetRestStyle({ 0.13, 0.17, 0.25 }, AK.COLORS.muted)
+  settings.label:SetFont(STANDARD_TEXT_FONT, 12, "OUTLINE")
+
+  -- WHAT YOU ARE ABOUT TO RACE, on the same screen as the button that starts
+  -- it. The model, the circuit, your record on it and the combined stat line.
+  local previewW = HOME.contentW - HOME.modeW - HOME.margin * 2 - HOME.gutter
+  local preview = UI:NewPanel(home, previewW, 400, { 0.055, 0.10, 0.17, .98 })
+  preview:SetPoint("TOPRIGHT", -40, -66)
   self.preview = preview
   self.previewIcon = preview:CreateTexture(nil, "ARTWORK")
   self.previewIcon:SetSize(86, 86)
@@ -346,16 +627,28 @@ function Menu:BuildHome()
   -- Seated Baine, three-quarter view, in the slot the flat icon used to hold.
   self.previewModel = AK.Model:New(preview, 150, 150, -0.5, 1)
   self.previewModel:SetPoint("TOP", 0, -6)
-  self.previewTitle = UI:NewText(preview, "", 21, AK.COLORS.gold, "CENTER")
-  self.previewTitle:SetPoint("TOP", 0, -160)
-  self.previewSub = UI:NewText(preview, "", 14, AK.COLORS.muted, "CENTER")
+  self.previewTitle = UI:NewText(preview, "", 19, AK.COLORS.gold, "CENTER")
+  self.previewTitle:SetPoint("TOP", 0, -158)
+  self.previewSub = UI:NewText(preview, "", 13, AK.COLORS.muted, "CENTER")
   self.previewSub:SetPoint("TOP", self.previewTitle, "BOTTOM", 0, -5)
   self.previewRecord = UI:NewText(preview, "", 12, AK.COLORS.gold, "CENTER")
   self.previewRecord:SetPoint("TOP", self.previewSub, "BOTTOM", 0, -6)
-  self.previewStats = UI:NewText(preview, "", 14, { .86, .92, 1 }, "LEFT")
-  self.previewStats:SetPoint("TOPLEFT", 32, -232)
-  self.previewStats:SetPoint("TOPRIGHT", -32, -232)
+  self.previewBars = {}
+  for index, name in ipairs({ "SPEED", "ACCEL", "HANDLING", "DRIFT" }) do
+    local bar = UI:NewStatBar(preview, previewW - 48, name)
+    bar:SetPoint("TOPLEFT", 24, -226 - (index - 1) * 18)
+    self.previewBars[index] = bar
+  end
+  self.previewStats = UI:NewText(preview, "", 12, { .86, .92, 1 }, "LEFT")
+  self.previewStats:SetPoint("TOPLEFT", 24, -308)
+  self.previewStats:SetPoint("TOPRIGHT", -24, -308)
   self.previewStats:SetJustifyV("TOP")
+
+  -- Say so rather than printing the footer over the edge of the panel.
+  local used = footTop + HOME.footH
+  if used > HOME.contentH - 10 then
+    AK:Print("Home menu overflows its panel by " .. math.ceil(used - (HOME.contentH - 10)) .. "px.")
+  end
 end
 
 function Menu:ShowMultiplayer()
@@ -427,8 +720,18 @@ function Menu:UpdateSummary()
   -- Your record on the circuit you are about to race, on the screen you press
   -- QUICK RACE from. It was two menus away.
   self.previewRecord:SetText(trackRecord(track.id))
-  self.previewStats:SetText(("|cff%sSPEED|r  %d    |cff%sACCEL|r  %d\n|cff%sHANDLING|r  %d    |cff%sDRIFT|r  %d\n\n|cff%s%s|r\n%s\n\nCoins: |cff%s%d|r    Wins: |cff%s%d|r")
-    :format(AK:ColorHex(AK.COLORS.lime), math.floor((racer.speed + kart.speed) / 2), AK:ColorHex(AK.COLORS.lime), math.floor((racer.acceleration + kart.acceleration) / 2), AK:ColorHex(AK.COLORS.lime), math.floor((racer.handling + kart.handling) / 2), AK:ColorHex(AK.COLORS.lime), math.floor((racer.drift + kart.drift) / 2), AK:ColorHex(AK.COLORS.gold), track.theme, track.shortcut, AK:ColorHex(AK.COLORS.gold), AK.db.progress.coins, AK:ColorHex(AK.COLORS.gold), AK.db.progress.wins))
+  -- The build, as four bars rather than four numbers.
+  local combined = {
+    math.floor((racer.speed + kart.speed) / 2),
+    math.floor((racer.acceleration + kart.acceleration) / 2),
+    math.floor((racer.handling + kart.handling) / 2),
+    math.floor((racer.drift + kart.drift) / 2),
+  }
+  for index, bar in ipairs(self.previewBars) do bar:Set(combined[index]) end
+  self.previewStats:SetText(("|cff%s%s|r\n%s\n\nTOKENS |cff%s%d|r     WINS |cff%s%d|r")
+    :format(AK:ColorHex(AK.COLORS.gold), track.theme, track.shortcut,
+      AK:ColorHex(AK.COLORS.gold), AK.db.progress.coins,
+      AK:ColorHex(AK.COLORS.gold), AK.db.progress.wins))
 end
 
 function Menu:ShowHome()
@@ -654,6 +957,9 @@ local SETTING_GROUPS = {
       { key = "reducedEffects", name = "Reduced effects",
         blurb = "Drops sparks, speed lines and lens motion. Use it if the frame rate dips.",
         choices = { { value = false, label = "FULL" }, { value = true, label = "REDUCED" } } },
+      { key = "showControls", name = "On-screen controls",
+        blurb = "Steering and throttle pads along the bottom. Every one has a key.",
+        choices = { { value = false, label = "OFF" }, { value = true, label = "ON" } } },
       { key = "showSpeed", name = "Speedometer",
         blurb = "The km/h readout under the clock.",
         choices = { { value = false, label = "OFF" }, { value = true, label = "ON" } } },
@@ -679,7 +985,7 @@ local SETTING_DEFAULTS = {
   engineClass = "150cc", difficulty = "Normal", aiCount = 7, mirror = false,
   sfx = true, engineNote = false,
   reducedEffects = false, showSpeed = true, showMinimap = true, uiScale = 1,
-  roadDetail = "Balanced",
+  roadDetail = "Balanced", showControls = false,
 }
 --- The two rows on this screen that write to the render tuning instead.
 local TUNING_DEFAULTS = { camBack = 6.0, hudScale = 100 }

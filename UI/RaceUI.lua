@@ -1259,12 +1259,18 @@ function RaceUI:Build()
   -- 800-wide window.
   self.controlBar = CreateFrame("Frame", nil, hud)
   self.controlBar:SetAllPoints()
+  -- The PADS get their own frame, separate from the keyboard legend that lives
+  -- on the bar with them. They are a setting -- off by default -- and the
+  -- legend is what replaces them, so hiding the two together would take away
+  -- the thing that tells you which keys to press.
+  self.controlPads = CreateFrame("Frame", nil, self.controlBar)
+  self.controlPads:SetAllPoints()
   -- 52px could not fit "BRAKE" or "RIGHT" at the button font, so the two most
   -- important controls on screen read "BRA..." and "RIG...". Wider, with a
   -- slightly smaller label, and the spacing opened to match so nothing touches.
   local CTRL_W, CTRL_GAP = 68, 6
   local function control(text, x, down, up)
-    local button = UI:NewButton(self.controlBar, text, CTRL_W, HUD.controls.h, function() end)
+    local button = UI:NewButton(self.controlPads, text, CTRL_W, HUD.controls.h, function() end)
     button.label:SetFont(STANDARD_TEXT_FONT, 13, "OUTLINE")
     button:SetPoint("BOTTOM", x, HUD.controls.y)
     button:SetScript("OnMouseDown", down)
@@ -1307,11 +1313,15 @@ function RaceUI:Build()
     .. "SPACE  DRIFT      SHIFT  ITEM      ESC  PAUSE", 11, AK.COLORS.muted, "CENTER")
   self.controlHint:SetPoint("BOTTOM", 0, 8)
 
-  -- Always-visible exit. The race frame swallows keyboard input, so a mouse
-  -- route out has to exist no matter what state the simulation is in.
-  local quit = UI:NewButton(hud, "QUIT", HUD.quit.w, HUD.quit.h, function() AK.Race:Stop(true) end)
-  quit:SetPoint(HUD.quit.point, HUD.quit.x, HUD.quit.y)
-  quit:SetRestStyle({ .28, .09, .09, .95 }, AK.COLORS.danger)
+  -- A mouse route out, for anyone driving without a keyboard. It used to be
+  -- always on: a red rectangle pinned to the corner of the screen for the whole
+  -- race, which is the single most addon-looking thing a game screen can have.
+  -- ESC pauses, and the pause panel has QUIT TO MENU on it, so the keyboard
+  -- route out has existed the whole time -- this now travels with the on-screen
+  -- controls, because it answers the same question they do.
+  self.quit = UI:NewButton(hud, "QUIT", HUD.quit.w, HUD.quit.h, function() AK.Race:Stop(true) end)
+  self.quit:SetPoint(HUD.quit.point, HUD.quit.x, HUD.quit.y)
+  self.quit:SetRestStyle({ .38, .12, .11 }, AK.COLORS.danger)
   -- TUNE, BEATS and AI used to be a column of buttons stacked down the right
   -- edge for the whole race -- three developer tools permanently occupying the
   -- screen you are trying to look through. They live on the pause panel now,
@@ -4771,6 +4781,12 @@ function RaceUI:Render(race)
     local lit = charge >= DRIFT_TICKS[i] - 0.001
     tick:SetVertexColor(unpack(lit and AK.COLORS.gold or { .08, .13, .20, 1 }))
   end
+
+  -- The on-screen pads and the corner quit answer the same question -- "how do
+  -- I do this without a keyboard" -- so they travel together.
+  local pads = AK.db.settings.showControls
+  self.controlPads:SetShown(pads)
+  self.quit:SetShown(pads)
 
   self.minimap:SetShown(AK.db.settings.showMinimap)
   if AK.db.settings.showMinimap then
