@@ -589,17 +589,23 @@ if loadFailures == 0 then
 
     local shown, lit, sized = 0, 0, 0
     local brightest = 0
+    --- One wall piece. Called three times per strip rather than iterating a
+    --- table of them: `ipairs` over a list built from expressions stops at the
+    --- first nil, and check.js is right to refuse it even where the three
+    --- fields happen to always exist.
+    local function measure(piece)
+      if not piece or not piece.akShown then return end
+      shown = shown + 1
+      local colour = piece.akColor or { 0, 0, 0, 0 }
+      local value = math.max(colour[1], colour[2], colour[3])
+      brightest = math.max(brightest, value)
+      if value > 0.06 then lit = lit + 1 end
+      if (piece.akWidth or 0) >= 1 and (piece.akHeight or 0) >= 1 then sized = sized + 1 end
+    end
     for _, strip in ipairs(AK.RaceUI.strips) do
-      for _, piece in ipairs({ strip.wallLeft, strip.wallRight, strip.ceiling }) do
-        if piece.akShown then
-          shown = shown + 1
-          local colour = piece.akColor or { 0, 0, 0, 0 }
-          local value = math.max(colour[1], colour[2], colour[3])
-          brightest = math.max(brightest, value)
-          if value > 0.06 then lit = lit + 1 end
-          if (piece.akWidth or 0) >= 1 and (piece.akHeight or 0) >= 1 then sized = sized + 1 end
-        end
-      end
+      measure(strip.wallLeft)
+      measure(strip.wallRight)
+      measure(strip.ceiling)
     end
     -- WHAT THE WALL HAS TO BE BRIGHTER THAN. RenderSurround fills the whole
     -- frame with rock behind the per-band walls, so a wall is only visible if
