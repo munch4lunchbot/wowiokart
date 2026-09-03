@@ -78,6 +78,20 @@ function widget:IsVisible() return self.akShown and true or false end
 function widget:SetShown(v) self.akShown = v and true or false return self end
 function widget:Show() self.akShown = true return self end
 function widget:Hide() self.akShown = false return self end
+-- RECORDED, not swallowed. Everything else the renderer does to a widget is a
+-- no-op here, which is fine for "does it run"; it is useless for "does the
+-- tunnel actually have walls in it". These four are what decides whether a
+-- texture is visible, so they are kept.
+function widget:SetVertexColor(r, g, b, a)
+  self.akColor = { r or 1, g or 1, b or 1, a or 1 }
+  return self
+end
+function widget:SetSize(w, h) self.akWidth, self.akHeight = w, h return self end
+function widget:SetWidth(w) self.akWidth = w return self end
+function widget:SetHeight(h) self.akHeight = h return self end
+function widget:SetAlpha(a) self.akAlpha = a return self end
+function widget:GetAlpha() return self.akAlpha or 1 end
+function widget:SetTexCoord(...) self.akTexCoord = { ... } return self end
 function widget:CreateTexture(...) return newWidget("Texture") end
 function widget:CreateFontString(...) return newWidget("FontString") end
 function widget:CreateAnimationGroup(...) return newWidget("AnimGroup") end
@@ -546,6 +560,64 @@ if loadFailures == 0 then
     assert(math.abs(cornered.lateral) > 0.55 or (cornered.bounces or 0) > 0,
       ("a shell fired into a %.1f-curve bend only reached %.2f: it is still on rails")
         :format(bendCurve, cornered.lateral))
+    AK.Race:Stop(true)
+  end)
+
+  -- A TUNNEL HAS TO HAVE WALLS IN IT.
+  --
+  -- The offline preview draws them and the client, by report, does not. Only
+  -- one of those can be right, and this is the real renderer -- so it is the
+  -- one to ask. Drive Deadmines until the camera is properly under cover, then
+  -- look at what RenderRoad actually did to the wall textures.
+  ok("a tunnel has walls in it", function()
+    AK.Race:Start("quick", { track = "deadmines" })
+    local race = AK.Race.current
+    race.player.ai = race.player.ai or AK.AI:CreatePersonality(9)
+    local deepest, deepAt = 0, 0
+    for _ = 1, math.ceil(120 / FRAME) do
+      local wanted = AK.AI:Controls(race, race.player, FRAME)
+      wipe(AK.Race.controls)
+      for k, v in pairs(wanted) do AK.Race.controls[k] = v end
+      AK.Race.controls.accelerate = true
+      AK.Race:Update(FRAME)
+      local depth = AK.RaceUI.tunnelDepth or 0
+      if depth > deepest then deepest, deepAt = depth, race.player.distance end
+      if depth > 0.85 then break end
+    end
+    assert(deepest > 0.5,
+      ("never got under cover on Deadmines; deepest was %.2f"):format(deepest))
+
+    local shown, lit, sized = 0, 0, 0
+    local brightest = 0
+    for _, strip in ipairs(AK.RaceUI.strips) do
+      for _, piece in ipairs({ strip.wallLeft, strip.wallRight, strip.ceiling }) do
+        if piece.akShown then
+          shown = shown + 1
+          local colour = piece.akColor or { 0, 0, 0, 0 }
+          local value = math.max(colour[1], colour[2], colour[3])
+          brightest = math.max(brightest, value)
+          if value > 0.06 then lit = lit + 1 end
+          if (piece.akWidth or 0) >= 1 and (piece.akHeight or 0) >= 1 then sized = sized + 1 end
+        end
+      end
+    end
+    -- WHAT THE WALL HAS TO BE BRIGHTER THAN. RenderSurround fills the whole
+    -- frame with rock behind the per-band walls, so a wall is only visible if
+    -- it is clearly brighter than that fill. The two were within fifteen
+    -- percent of each other, which is a dark box, not a tunnel.
+    local fill = AK.RaceUI.surround.left
+    local fillColor = fill.akColor or { 0, 0, 0, 0 }
+    local fillValue = math.max(fillColor[1], fillColor[2], fillColor[3])
+    say(("        deadmines under %.2f cover: %d wall pieces, brightest %.3f, "
+      .. "fill behind them %.3f (%.1fx)"):format(deepest, shown, brightest, fillValue,
+      fillValue > 0.001 and brightest / fillValue or 0))
+    assert(shown >= 6, "only " .. shown .. " wall pieces were drawn inside a tunnel")
+    assert(sized == shown, (shown - sized) .. " wall pieces were drawn with no size")
+    assert(brightest > 0.26,
+      ("the brightest tunnel wall was %.3f -- that is nearly black"):format(brightest))
+    assert(brightest > fillValue * 1.8,
+      ("the walls are %.3f against a fill of %.3f: they cannot be seen against it")
+        :format(brightest, fillValue))
     AK.Race:Stop(true)
   end)
 

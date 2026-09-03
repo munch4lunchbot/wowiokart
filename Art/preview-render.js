@@ -443,6 +443,27 @@ if (skyArt) {
     for (let x = 0; x < W; x++) blend(x, yy, g0[0] * .8, g0[1] * .8, g0[2] * .85, a);
   }
 }
+// THE ROCK'S HUE, as ApplyTrackPalette derives it: the track's road colour
+// lifted halfway to neutral, then normalised to a peak of 1 so the tint carries
+// only hue and never a second helping of darkness.
+const ROCK_TINT = (() => {
+  const road = track.road || [0.4, 0.4, 0.44];
+  const mid = (road[0] + road[1] + road[2]) / 3;
+  const t = road.map((c) => c * 0.55 + mid * 0.45 + 0.10);
+  const peak = Math.max(...t);
+  return peak > 0.001 ? t.map((c) => c / peak) : t;
+})();
+
+// HOW LIT THE SCENE IS UNDER COVER. Declared here rather than beside the road
+// because the surround fill is drawn FIRST and needs the same numbers -- and a
+// const read above its declaration is a ReferenceError, not a zero.
+const roadCamDepth = tunnelDepth(camZ);
+const roadLight = light * (1 - roadCamDepth * 0.48);
+// The road takes far less of the cover dimming than the rest of the scene --
+// see RaceUI:RenderRoad. Under a shaft the walls carry the dark; the tarmac
+// stays the lit ribbon running through it.
+const tarmacLight = light * (1 - roadCamDepth * 0.20);
+
 // ---------- surround: rock over the whole frame once actually under cover ----
 //
 // Mirrors RaceUI:RenderSurround, which this harness did not implement at all.
@@ -456,11 +477,18 @@ if (skyArt) {
   const depth = tunnelDepth(camZ);
   if (depth > 0 && tex.rock) {
     const tileP = Math.max(64, HH * 0.85);
-    const band = 0.86 * light;
+    // RenderSurround fills from the NEAREST BAND's rock value times 0.42, not
+    // from the track's undimmed light. This used to be `0.86 * light`, roughly
+    // four times what the game draws, and it is the single reason a preview of
+    // Deadmines came back with a handsomely lit shaft while the client showed a
+    // black box. A mirror that flatters is worse than no mirror.
+    const bandRock = tarmacLight * (0.50 + 0.26 * (1 - depth));
+    const band = bandRock * 0.42;
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const t = sample(tex.rock, (x / tileP) % 1, (y / tileP) % 1);
-        blend(x, y, t[0] * band * 1.02, t[1] * band * 0.97, t[2] * band * 0.92, depth * t[3]);
+        blend(x, y, t[0] * band * ROCK_TINT[0], t[1] * band * ROCK_TINT[1],
+          t[2] * band * ROCK_TINT[2], depth * t[3]);
       }
     }
   }
@@ -480,12 +508,6 @@ const PAINT = (() => {
 // and every ground surface washes toward the horizon as it recedes rather than
 // merely dimming. `fog` alone put no depth cue on the two surfaces that fill
 // most of the screen.
-const roadCamDepth = tunnelDepth(camZ);
-const roadLight = light * (1 - roadCamDepth * 0.48);
-// The road takes far less of the cover dimming than the rest of the scene --
-// see RaceUI:RenderRoad. Under a shaft the walls carry the dark; the tarmac
-// stays the lit ribbon running through it.
-const tarmacLight = light * (1 - roadCamDepth * 0.20);
 /** RaceUI's legibility floor: a dark palette times a dark track times a tunnel
  *  can compound to a road at RGB 13, so the tarmac keeps a minimum value. */
 function legible(c, lit) {
@@ -584,9 +606,13 @@ for (let r = rows.length - 1; r >= 0; r--) {
     const ceilTop = Math.max(row.prevCeilY, row.ceilY + 1);
     const wallOut = row.midHalf * 1.4;
     const wallH = Math.max(1, ceilTop - row.y);
-    const k = fog * (0.46 + 0.30 * (1 - row.cover));
-    const tint = [k * 1.02, k * 0.97, k * 0.92];
-    const ctint = [k * 0.82, k * 0.79, k * 0.76];
+    // Lit from the ROAD, as RenderRoad does it -- `fog` already carries the
+    // scene light after the full cover dimming, so using it here reduced the
+    // rock a third time and then the rock texture's own mean reduced it a
+    // fourth.
+    const k = tarmacLight * (0.50 + 0.26 * (1 - row.cover));
+    const tint = ROCK_TINT.map((c) => k * c);
+    const ctint = [k * ROCK_TINT[0] * 0.62, k * ROCK_TINT[1] * 0.60, k * ROCK_TINT[2] * 0.58];
     const v0 = row.prevZ / TUNNEL_TILE, v1 = row.segZ / TUNNEL_TILE;
     blit(tex.rock, SX(row.midX - row.midHalf - wallOut), SY(row.y + wallH), wallOut, wallH,
       0, 1.6, v0, v1, tint, 1);

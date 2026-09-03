@@ -1509,6 +1509,31 @@ function RaceUI:ApplyTrackPalette(track)
   self.weatherKind = track.weather or "none"
   self.style = track.style
 
+  -- THE ROCK BELONGS TO THE CIRCUIT.
+  --
+  -- rock.tga is neutral on purpose -- it is tinted, like the trees and the
+  -- ground -- but nothing was tinting it, so Ironforge's ice tunnel, the
+  -- Deadmines shaft and Netherstorm's span were all the same grey corridor.
+  -- Derived from the track's own road colour lifted halfway to neutral: the
+  -- rock a road is cut through is related to the road, and going all the way to
+  -- the road's colour would make the walls vanish into the floor.
+  local road = track.road or { 0.4, 0.4, 0.44 }
+  local mid = (road[1] + road[2] + road[3]) / 3
+  self.rockTint = {
+    road[1] * 0.55 + mid * 0.45 + 0.10,
+    road[2] * 0.55 + mid * 0.45 + 0.10,
+    road[3] * 0.55 + mid * 0.45 + 0.10,
+  }
+  -- ALWAYS normalised to a peak of 1, not merely clamped when it exceeds one.
+  -- A tint multiplies the lighting, so anything under 1 is a second brightness
+  -- reduction hiding inside a colour choice -- Deadmines' warm floor produced a
+  -- peak of 0.66 and quietly took a third off every wall in the mine. The tint
+  -- carries HUE; `rock` carries brightness, and only `rock`.
+  local peak = math.max(self.rockTint[1], self.rockTint[2], self.rockTint[3])
+  if peak > 0.001 then
+    for i = 1, 3 do self.rockTint[i] = self.rockTint[i] / peak end
+  end
+
   -- Distant terrain layers and the near wall's art, all per track.
   self.skyline = SKYLINE[track.id] or {}
   local treeArt = track.style == "oribos" and "spire.tga" or self.skyline.treeArt or "tree.tga"
@@ -3486,28 +3511,41 @@ function RaceUI:RenderRoad(race, player)
         local ceilTop = math.max(previousCeilY, ceilY + 1)
         local wallOut = midHalf * 1.4
         local wallHeight = math.max(1, ceilTop - previousY)
-        -- Deeper in is darker, and the rock is lit far less than the road --
-        -- but it must not bottom out into black. Measured, the old 0.30 floor
-        -- put deep tunnel rock at 59/255 on Netherstorm and 53/255 on Deadmines
-        -- once the track's own ambient light was folded in, so the covered
-        -- sections read as an unlit void with no walls in them at all. 0.46
-        -- lands at 90/255 while keeping the mouth (148/255) plainly brighter,
-        -- so the depth gradient survives and the rock is actually visible.
-        local rock = fog * (0.46 + 0.30 * (1 - coverage))
+        -- LIT FROM THE ROAD, NOT FROM THE SKY.
+        --
+        -- This was `fog * (0.46 + ...)`, and `fog` already carries the scene
+        -- light AFTER the full cover dimming -- so the wall was reduced three
+        -- times over (track light, cover, its own rock factor) and then a
+        -- fourth by the rock texture's own mean. Measured through the real
+        -- renderer on Deadmines under 0.89 cover, the BRIGHTEST wall piece on
+        -- screen came out at 0.192, and RenderSurround was filling the frame
+        -- behind them at 0.163. Fifteen percent apart is not a wall in front of
+        -- a void, it is one dark box -- which is exactly the report.
+        --
+        -- A tunnel is lit by what is in it, and what is in it is the road. So
+        -- the rock takes the ROAD's light, a little under it at the mouth and
+        -- well under it deep inside, and the fill beyond stays dark so the
+        -- walls have something to be brighter than.
+        -- Under the road's own value, not over it. Neutral grey rock at the
+        -- same luminance as a saturated brown floor reads BRIGHTER than it, so
+        -- matching the numbers put the walls in front of the road instead of
+        -- around it.
+        local rock = roadLight * (0.50 + 0.26 * (1 - coverage))
+        local tint = self.rockTint or { 1, 1, 1 }
         local vNear, vFar = previousZ / TUNNEL_TILE, segZ / TUNNEL_TILE
 
         strip.wallLeft:SetTexCoord(0, 1.6, vNear, vFar)
         strip.wallLeft:SetPoint("BOTTOM", self.frame, "CENTER",
           midX - midHalf - wallOut * 0.5, previousY)
         strip.wallLeft:SetSize(wallOut, wallHeight)
-        strip.wallLeft:SetVertexColor(rock * 1.02, rock * 0.97, rock * 0.92, 1)
+        strip.wallLeft:SetVertexColor(rock * tint[1], rock * tint[2], rock * tint[3], 1)
         setShown(strip.wallLeft, true)
 
         strip.wallRight:SetTexCoord(1.6, 0, vNear, vFar)
         strip.wallRight:SetPoint("BOTTOM", self.frame, "CENTER",
           midX + midHalf + wallOut * 0.5, previousY)
         strip.wallRight:SetSize(wallOut, wallHeight)
-        strip.wallRight:SetVertexColor(rock * 1.02, rock * 0.97, rock * 0.92, 1)
+        strip.wallRight:SetVertexColor(rock * tint[1], rock * tint[2], rock * tint[3], 1)
         setShown(strip.wallRight, true)
 
         -- The ceiling ribbon spans this band's ceiling up to the nearer one,
@@ -3516,7 +3554,9 @@ function RaceUI:RenderRoad(race, player)
         strip.ceiling:SetTexCoord(-uCeil, uCeil, vNear, vFar)
         strip.ceiling:SetPoint("BOTTOM", self.frame, "CENTER", midX, ceilY)
         strip.ceiling:SetSize(math.max(2, (midHalf + wallOut) * 2), math.max(1, ceilTop - ceilY))
-        strip.ceiling:SetVertexColor(rock * 0.82, rock * 0.79, rock * 0.76, 1)
+        -- Overhead is darker than the walls: nothing is lighting it.
+        strip.ceiling:SetVertexColor(rock * tint[1] * 0.62, rock * tint[2] * 0.60,
+          rock * tint[3] * 0.58, 1)
         setShown(strip.ceiling, true)
 
         if not nearestTunnelBand then
@@ -3581,7 +3621,10 @@ function RaceUI:RenderSurround(depth, band)
     return
   end
   local w, h = self.halfWidth, self.halfHeight
-  local rock = band.rock * 0.86
+  -- The dark beyond, deliberately well under the per-band walls in front of
+  -- it. At 0.86 of the same value the fill and the walls were within fifteen
+  -- percent of each other and the tunnel had no visible geometry at all.
+  local rock = band.rock * 0.42
 
   -- ONE full-screen fill, with no edge arithmetic at all.
   --
@@ -3602,7 +3645,8 @@ function RaceUI:RenderSurround(depth, band)
   surround.left:SetPoint("TOPRIGHT", self.frame, "CENTER", w, h)
   surround.left:SetTexCoord(0, (w * 2) / tileP, 0, (h * 2) / tileP)
   -- Faded in over the mouth so entering is a transition, not a switch.
-  surround.left:SetVertexColor(rock * 1.02, rock * 0.97, rock * 0.92, depth)
+  local tint = self.rockTint or { 1, 1, 1 }
+  surround.left:SetVertexColor(rock * tint[1], rock * tint[2], rock * tint[3], depth)
   setShown(surround.left, true)
   setShown(surround.right, false)
   setShown(surround.top, false)
