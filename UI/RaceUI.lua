@@ -227,6 +227,31 @@ local function applyGradient(texture, orientation, r1, g1, b1, a1, r2, g2, b2, a
   pcall(texture.SetGradient, texture, orientation, CreateColor(r1, g1, b1, a1), CreateColor(r2, g2, b2, a2))
 end
 
+--- Show or hide, but only when the state actually CHANGES.
+---
+--- Every frame the scene renderer walks its pools and hides whatever it did not
+--- use. Hiding something that has been hidden since the last corner is a call
+--- into the client that does nothing at all, and there are hundreds of them:
+--- measured on an Elwynn frame, RenderFork spent 12% of the entire frame's
+--- widget traffic hiding forty branch strips on a circuit with no fork in
+--- sight. The road does the same thing at the far end of its own strip list.
+---
+--- The cached flag lives on the region, so anything that shows or hides one of
+--- these pooled regions has to come through here or the cache goes stale.
+--- Parent visibility is not affected: hiding the race frame leaves every
+--- child's own flag exactly as it was, which is what makes this safe.
+local function setShown(region, visible)
+  if visible then
+    if region.akVisible ~= true then
+      region.akVisible = true
+      region:Show()
+    end
+  elseif region.akVisible ~= false then
+    region.akVisible = false
+    region:Hide()
+  end
+end
+
 local function vehicleIsDrifting(vehicle)
   return vehicle and vehicle.drifting
 end
@@ -591,8 +616,22 @@ function RaceUI:Build()
   end
 
   self.ground = makeTexture(frame, "BACKGROUND", { .16, .40, .18, 1 }, 4)
-  self.haze = makeTexture(frame, "BORDER", { 1, 1, 1, .32 }, 3)
-  applyGradient(self.haze, "VERTICAL", 1, 1, 1, 0, 1, 1, 1, .5)
+  -- THE HORIZON HAZE, IN TWO HALVES.
+  --
+  -- It used to be one texture with one gradient, and SetGradient has exactly
+  -- two stops: alpha 0 at one edge, half at the other. So the thing whose whole
+  -- job was to soften the ground-meets-sky seam ended in a hard cut of its own,
+  -- at 50% opacity, a hand's width above the horizon -- a pale band ruled
+  -- straight across every circuit in the game. Measured on an Oribos frame it
+  -- was twelve pixels of (70,63,113) between a (62,36,90) sky and a (46,54,72)
+  -- ground: lighter than either, and nothing in the world is there.
+  --
+  -- Two textures meeting at the horizon fade to nothing at BOTH outer edges,
+  -- which is what atmosphere actually does.
+  self.hazeBelow = makeTexture(frame, "BORDER", { 1, 1, 1, .32 }, 3)
+  applyGradient(self.hazeBelow, "VERTICAL", 1, 1, 1, 0, 1, 1, 1, .5)
+  self.hazeAbove = makeTexture(frame, "BORDER", { 1, 1, 1, .32 }, 3)
+  applyGradient(self.hazeAbove, "VERTICAL", 1, 1, 1, .5, 1, 1, 1, 0)
 
   -- One strip of textures per road segment, reused every frame.
   -- Built far-to-near: textures in the same layer draw in creation order, and
@@ -1402,9 +1441,15 @@ function RaceUI:LayoutHorizon(horizon)
   -- Tall and faint: a narrow opaque band reads as a purple stripe painted
   -- across the sky rather than as atmosphere. Scaled with the screen so it
   -- stays atmosphere at any resolution.
-  self.haze:ClearAllPoints()
-  self.haze:SetPoint("BOTTOMLEFT", frame, "LEFT", 0, horizon - screenH * 0.12)
-  self.haze:SetPoint("TOPRIGHT", frame, "RIGHT", 0, horizon + screenH * 0.02)
+  -- Below the horizon it builds from nothing up to full; above it, it decays
+  -- back to nothing. Deeper below than above, because the ground recedes for
+  -- much further on screen than the sky does.
+  self.hazeBelow:ClearAllPoints()
+  self.hazeBelow:SetPoint("BOTTOMLEFT", frame, "LEFT", 0, horizon - screenH * 0.12)
+  self.hazeBelow:SetPoint("TOPRIGHT", frame, "RIGHT", 0, horizon)
+  self.hazeAbove:ClearAllPoints()
+  self.hazeAbove:SetPoint("BOTTOMLEFT", frame, "LEFT", 0, horizon)
+  self.hazeAbove:SetPoint("TOPRIGHT", frame, "RIGHT", 0, horizon + screenH * 0.05)
 end
 
 --- Sky, horizon glow and weather are per-track, so a night circuit reads as
@@ -2380,7 +2425,8 @@ function RaceUI:RenderSky(race, camX)
 
   -- Enough haze to soften the horizon seam. Too little and ground meets sky on
   -- a hard cut line, which is the strongest "flat 2D" tell in the scene.
-  self.haze:SetVertexColor(glow[1] * .8, glow[2] * .8, glow[3] * .85, .30)
+  self.hazeBelow:SetVertexColor(glow[1] * .8, glow[2] * .8, glow[3] * .85, .30)
+  self.hazeAbove:SetVertexColor(glow[1] * .8, glow[2] * .8, glow[3] * .85, .30)
   -- Aerial perspective on the ground itself: sky-tinted and pale at the
   -- horizon, full colour at the bottom edge. A flat fill was the single
   -- biggest "the world is a sheet" tell in every screenshot.
@@ -2424,7 +2470,7 @@ end
 function RaceUI:RenderArches(race, camX, camZ)
   local spacing = race.track.archSpacing
   if not spacing then
-    for _, arch in ipairs(self.arches) do arch:Hide() end
+    for _, arch in ipairs(self.arches) do setShown(arch, false) end
     return
   end
   local tuning = self.T
@@ -2459,9 +2505,9 @@ function RaceUI:RenderArches(race, camX, camZ)
       arch:SetSize(width, width * 0.95)
       arch:SetVertexColor(fog, fog * 0.98, fog * 1.02, 1)
       arch:SetAlpha(self:DepthFade(dz, archFar) * self:EdgeFade(x, dz))
-      arch:Show()
+      setShown(arch, true)
     else
-      arch:Hide()
+      setShown(arch, false)
     end
   end
 end
@@ -2505,16 +2551,16 @@ function RaceUI:RenderPosts(race, camX, camZ)
       pair.left:SetVertexColor(r * fog, g * fog, b * fog, 1)
       local near = self:DepthFade(dz, postFar)
       pair.left:SetAlpha(near * self:EdgeFade(x - offset, dz))
-      pair.left:Show()
+      setShown(pair.left, true)
       pair.right:ClearAllPoints()
       pair.right:SetPoint("BOTTOM", self.frame, "CENTER", x + offset, y)
       pair.right:SetSize(width, height)
       pair.right:SetVertexColor(r * fog, g * fog, b * fog, 1)
       pair.right:SetAlpha(near * self:EdgeFade(x + offset, dz))
-      pair.right:Show()
+      setShown(pair.right, true)
     else
-      pair.left:Hide()
-      pair.right:Hide()
+      setShown(pair.left, false)
+      setShown(pair.right, false)
     end
   end
 end
@@ -2535,7 +2581,7 @@ function RaceUI:RenderFinish(race, camX, camZ)
   -- map have both already told you about.
   local finishFar = FAR_Z * 0.40
   if dz < 0.5 or dz > finishFar then
-    finish:Hide()
+    setShown(finish, false)
     return
   end
 
@@ -2572,9 +2618,9 @@ function RaceUI:RenderFinish(race, camX, camZ)
         centre - halfWidthPixels + columnWidth * (column + 0.5), y + rowHeight * row)
       block:SetSize(columnWidth + 1, rowHeight + 1)
       block:SetVertexColor(shadeValue * fog, shadeValue * fog, shadeValue * fog, 1)
-      block:Show()
+      setShown(block, true)
     else
-      block:Hide()
+      setShown(block, false)
     end
   end
 
@@ -2615,7 +2661,7 @@ function RaceUI:RenderFinish(race, camX, camZ)
     local player = race.player
     finish.label:SetText(player.lap >= race.laps and "FINISH" or ("LAP " .. math.min(player.lap + 1, race.laps)))
   end
-  finish:Show()
+  setShown(finish, true)
 end
 
 --- Roadside crowd, projected like everything else. Slots are assigned from a
@@ -2624,7 +2670,7 @@ function RaceUI:RenderSpectators(race, camX, camZ)
   local tuning = self.T
   -- Skip entirely in attract mode: model budget is reserved for the menu.
   if AK.db.settings.reducedEffects or self.suppressModels then
-    for _, seat in ipairs(self.spectators) do seat:Hide() end
+    for _, seat in ipairs(self.spectators) do setShown(seat, false) end
     return
   end
   -- The crowd is decoration, so it gets the shortest range of the scenery: a
@@ -2654,9 +2700,9 @@ function RaceUI:RenderSpectators(race, camX, camZ)
       -- Shown regardless of load state, for the same reason the karts are: a
       -- hidden PlayerModel never streams in, so gating on IsReady kept the
       -- crowd permanently invisible.
-      seat:Show()
+      setShown(seat, true)
     else
-      seat:Hide()
+      setShown(seat, false)
     end
   end
 end
@@ -2882,13 +2928,13 @@ function RaceUI:RenderProps(race, camX, camZ)
         -- from nowhere. Objects and hazards already fade; scenery is the most
         -- numerous thing on screen and needed it most.
         frame:SetAlpha(self:EdgeFade(x, dz))
-        frame:Show()
+        setShown(frame, true)
       else
         shown = shown - 1
       end
     end
   end
-  for i = shown + 1, PROPS do self.props[i]:Hide() end
+  for i = shown + 1, PROPS do setShown(self.props[i], false) end
 end
 
 function RaceUI:RenderFork(race, player, camX, camZ)
@@ -2985,7 +3031,7 @@ function RaceUI:RenderFork(race, player, camX, camZ)
               -- brightness alone while the tarmac beside it recedes toward the
               -- horizon made the shortcut read as a decal laid over the scene.
               strip.road:SetVertexColor(aerial(roadColor[1], roadColor[2], roadColor[3], 0.94 * light, mix))
-              strip.road:Show()
+              setShown(strip.road, true)
 
               -- Bright rails so the alternate line reads as a road and not as
               -- a shadow on the grass.
@@ -3000,12 +3046,12 @@ function RaceUI:RenderFork(race, player, camX, camZ)
               strip.edgeLeft:SetPoint("BOTTOM", self.frame, "CENTER", midX - midHalf, previousY)
               strip.edgeLeft:SetSize(rail, height)
               strip.edgeLeft:SetVertexColor(rr, rg, rb)
-              strip.edgeLeft:Show()
+              setShown(strip.edgeLeft, true)
               strip.edgeRight:ClearAllPoints()
               strip.edgeRight:SetPoint("BOTTOM", self.frame, "CENTER", midX + midHalf, previousY)
               strip.edgeRight:SetSize(rail, height)
               strip.edgeRight:SetVertexColor(rr, rg, rb)
-              strip.edgeRight:Show()
+              setShown(strip.edgeRight, true)
             end
             previousX, previousY, previousW = x, y, halfWidthPixels
           end
@@ -3026,27 +3072,27 @@ function RaceUI:RenderFork(race, player, camX, camZ)
         self.forkSign:SetTexture(ART .. (side < 0 and "forkleft.tga" or "forkright.tga"))
         local flash = 0.72 + 0.28 * math.sin(race.elapsed * 7)
         self.forkSign:SetVertexColor(0.55 * flash, 1.0 * flash, 0.62 * flash, 1)
-        self.forkSign:Show()
+        setShown(self.forkSign, true)
         self.forkLabel:ClearAllPoints()
         self.forkLabel:SetPoint("BOTTOM", self.frame, "CENTER", x, y + size * 1.05)
         self.forkLabel:SetText((branch.name or "SHORTCUT"):upper()
           .. (side < 0 and "  <<" or "  >>"))
         self.forkLabel:SetAlpha(AK.Math.Clamp((FAR_Z - entryDz) / 90, 0, 1))
-        self.forkLabel:Show()
+        setShown(self.forkLabel, true)
         signShown = true
       end
     end
   end
 
   if not signShown then
-    self.forkSign:Hide()
-    self.forkLabel:Hide()
+    setShown(self.forkSign, false)
+    setShown(self.forkLabel, false)
   end
   for i = shown + 1, FORK_SEGMENTS do
     local strip = self.forkStrips[i]
-    strip.road:Hide()
-    strip.edgeLeft:Hide()
-    strip.edgeRight:Hide()
+    setShown(strip.road, false)
+    setShown(strip.edgeLeft, false)
+    setShown(strip.edgeRight, false)
   end
 end
 
@@ -3154,9 +3200,9 @@ function RaceUI:RenderRoad(race, player)
   if self.activeSegments ~= detail then
     for i = detail + 1, SEGMENTS do
       local strip = self.strips[i]
-      strip.grass:Hide() strip.road:Hide() strip.shade:Hide()
-      strip.rumbleLeft:Hide() strip.rumbleRight:Hide() strip.lane:Hide()
-      strip.wallLeft:Hide() strip.wallRight:Hide() strip.ceiling:Hide()
+      setShown(strip.grass, false) setShown(strip.road, false) setShown(strip.shade, false)
+      setShown(strip.rumbleLeft, false) setShown(strip.rumbleRight, false) setShown(strip.lane, false)
+      setShown(strip.wallLeft, false) setShown(strip.wallRight, false) setShown(strip.ceiling, false)
     end
     self.activeSegments = detail
   end
@@ -3269,7 +3315,7 @@ function RaceUI:RenderRoad(race, player)
       -- at all -- the ground read as void rather than as terrain.
       strip.grass:SetVertexColor(aerial(vergeColor[1], vergeColor[2], vergeColor[3],
         (dark and tuning.grassContrast or 1.0) * light, mix))
-      strip.grass:Show()
+      setShown(strip.grass, true)
 
       strip.road:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
       strip.road:SetSize(math.max(2, midHalf * 2), height)
@@ -3302,14 +3348,14 @@ function RaceUI:RenderRoad(race, player)
         end
         strip.road:SetVertexColor(aerial(r, g, b, (dark and 0.96 or 1.0) * light, mix))
       end
-      strip.road:Show()
+      setShown(strip.road, true)
 
       strip.shade:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
       strip.shade:SetSize(math.max(2, midHalf * 2), height)
       -- The verge darkening is a property of the surface, so it washes out
       -- with the surface rather than staying crisp on a hazed-out far road.
       strip.shade:SetAlpha(0.85 * (1 - mix))
-      strip.shade:Show()
+      setShown(strip.shade, true)
 
       -- Rumble width is capped: proportional-only made the near strips into
       -- enormous red slabs across the bottom of the screen.
@@ -3331,20 +3377,20 @@ function RaceUI:RenderRoad(race, player)
       strip.rumbleLeft:SetPoint("BOTTOM", self.frame, "CENTER", midX - (midHalf + rumbleWidth * .5), previousY)
       strip.rumbleLeft:SetSize(rumbleWidth, height)
       strip.rumbleLeft:SetVertexColor(rr, rg, rb, 1)
-      strip.rumbleLeft:Show()
+      setShown(strip.rumbleLeft, true)
       strip.rumbleRight:SetPoint("BOTTOM", self.frame, "CENTER", midX + (midHalf + rumbleWidth * .5), previousY)
       strip.rumbleRight:SetSize(rumbleWidth, height)
       strip.rumbleRight:SetVertexColor(rr, rg, rb, 1)
-      strip.rumbleRight:Show()
+      setShown(strip.rumbleRight, true)
 
       if index % 4 < 2 and midHalf > 6 then
         strip.lane:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
         strip.lane:SetSize(AK.Math.Clamp(midHalf * 0.04, 1, 14), height)
         local lr, lg, lb = aerial(.96, .95, .82, light, mix)
         strip.lane:SetVertexColor(lr, lg, lb, .75)
-        strip.lane:Show()
+        setShown(strip.lane, true)
       else
-        strip.lane:Hide()
+        setShown(strip.lane, false)
       end
 
       -- Covered section: rock overhead and to both sides.
@@ -3372,14 +3418,14 @@ function RaceUI:RenderRoad(race, player)
           midX - midHalf - wallOut * 0.5, previousY)
         strip.wallLeft:SetSize(wallOut, wallHeight)
         strip.wallLeft:SetVertexColor(rock * 1.02, rock * 0.97, rock * 0.92, 1)
-        strip.wallLeft:Show()
+        setShown(strip.wallLeft, true)
 
         strip.wallRight:SetTexCoord(1.6, 0, vNear, vFar)
         strip.wallRight:SetPoint("BOTTOM", self.frame, "CENTER",
           midX + midHalf + wallOut * 0.5, previousY)
         strip.wallRight:SetSize(wallOut, wallHeight)
         strip.wallRight:SetVertexColor(rock * 1.02, rock * 0.97, rock * 0.92, 1)
-        strip.wallRight:Show()
+        setShown(strip.wallRight, true)
 
         -- The ceiling ribbon spans this band's ceiling up to the nearer one,
         -- exactly as the road spans this band's ground down to the nearer one.
@@ -3388,7 +3434,7 @@ function RaceUI:RenderRoad(race, player)
         strip.ceiling:SetPoint("BOTTOM", self.frame, "CENTER", midX, ceilY)
         strip.ceiling:SetSize(math.max(2, (midHalf + wallOut) * 2), math.max(1, ceilTop - ceilY))
         strip.ceiling:SetVertexColor(rock * 0.82, rock * 0.79, rock * 0.76, 1)
-        strip.ceiling:Show()
+        setShown(strip.ceiling, true)
 
         if not nearestTunnelBand then
           nearestTunnelBand = { midX = midX, midHalf = midHalf, ceil = ceilTop,
@@ -3419,16 +3465,16 @@ function RaceUI:RenderRoad(race, player)
             midX + side * (midHalf + railOut * 0.5), previousY)
           texture:SetSize(railOut, railHeight)
           texture:SetVertexColor(rr2, rg2, rb2, 1)
-          texture:Show()
+          setShown(texture, true)
         end
-        strip.ceiling:Hide()
+        setShown(strip.ceiling, false)
       else
-        strip.wallLeft:Hide(); strip.wallRight:Hide(); strip.ceiling:Hide()
+        setShown(strip.wallLeft, false); setShown(strip.wallRight, false); setShown(strip.ceiling, false)
       end
     else
-      strip.grass:Hide(); strip.road:Hide(); strip.lane:Hide(); strip.shade:Hide()
-      strip.rumbleLeft:Hide(); strip.rumbleRight:Hide()
-      strip.wallLeft:Hide(); strip.wallRight:Hide(); strip.ceiling:Hide()
+      setShown(strip.grass, false); setShown(strip.road, false); setShown(strip.lane, false); setShown(strip.shade, false)
+      setShown(strip.rumbleLeft, false); setShown(strip.rumbleRight, false)
+      setShown(strip.wallLeft, false); setShown(strip.wallRight, false); setShown(strip.ceiling, false)
     end
     previousX, previousY, previousW, previousZ = x, y, halfWidthPixels, segZ
     previousCeilY = ceilY
@@ -3447,8 +3493,8 @@ end
 function RaceUI:RenderSurround(depth, band)
   local surround = self.surround
   if not band or depth <= 0 then
-    surround.left:Hide(); surround.right:Hide(); surround.top:Hide()
-    if self.haze then self.haze:SetAlpha(1) end
+    setShown(surround.left, false); setShown(surround.right, false); setShown(surround.top, false)
+    if self.hazeBelow then self.hazeBelow:SetAlpha(1) self.hazeAbove:SetAlpha(1) end
     return
   end
   local w, h = self.halfWidth, self.halfHeight
@@ -3474,9 +3520,9 @@ function RaceUI:RenderSurround(depth, band)
   surround.left:SetTexCoord(0, (w * 2) / tileP, 0, (h * 2) / tileP)
   -- Faded in over the mouth so entering is a transition, not a switch.
   surround.left:SetVertexColor(rock * 1.02, rock * 0.97, rock * 0.92, depth)
-  surround.left:Show()
-  surround.right:Hide()
-  surround.top:Hide()
+  setShown(surround.left, true)
+  setShown(surround.right, false)
+  setShown(surround.top, false)
 
   -- The horizon haze lives on BORDER, which is a whole layer above BACKGROUND,
   -- so it paints straight over the rock. Under cover there is no horizon to
@@ -3486,7 +3532,11 @@ function RaceUI:RenderSurround(depth, band)
   -- The haze lives on BORDER, a whole layer above the rock, so it paints over
   -- the tunnel no matter what the fill does. Under cover there is no horizon to
   -- soften and it has to leave entirely, faster than the rock arrives.
-  if self.haze then self.haze:SetAlpha(AK.Math.Clamp(1 - depth * 1.6, 0, 1)) end
+  if self.hazeBelow then
+    local clear = AK.Math.Clamp(1 - depth * 1.6, 0, 1)
+    self.hazeBelow:SetAlpha(clear)
+    self.hazeAbove:SetAlpha(clear)
+  end
 end
 
 function RaceUI:RenderObjects(race, player, camX, camZ)
@@ -3667,7 +3717,7 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
         frame.pad:SetSize(size * 1.50, math.max(minH, size * 0.34))
         frame.pad:SetVertexColor(color[1], color[2], color[3], 1)
         frame.pad:SetAlpha((.34 + pulse * .30) * fog)
-        frame.beam:Hide()
+        setShown(frame.beam, false)
         frame.icon:SetSize(size * 1.42, math.max(minH, size * 0.32))
         if frame.iconApplied ~= style.icon then
           frame.iconApplied = style.icon
@@ -3683,7 +3733,7 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
         frame.pad:SetVertexColor(color[1], color[2], color[3], 1)
         frame.pad:SetAlpha((.30 + pulse * .28) * fog)
         -- Narrow, faint shaft. The old wide one read as a solid blue box.
-        frame.beam:Show()
+        setShown(frame.beam, true)
         frame.beam:SetSize(math.max(2, size * 0.10), size * 1.25)
         frame.beam:SetVertexColor(color[1], color[2], color[3], 1)
         frame.beam:SetAlpha((.10 + pulse * .12) * fog)
@@ -3699,11 +3749,11 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
       frame.ring:SetVertexColor(color[1], color[2], color[3], 1)
       frame.label:SetText(size > self.halfWidth * 0.04 and style.label or "")
       frame.label:SetTextColor(color[1], color[2], color[3])
-      frame:Show()
+      setShown(frame, true)
     end
   end
   for slot = 1, capacity do
-    if not drawn[slot] then self.objectFrames[slot]:Hide() end
+    if not drawn[slot] then setShown(self.objectFrames[slot], false) end
   end
 end
 
@@ -3828,11 +3878,11 @@ function RaceUI:RenderHazards(race, camX, camZ)
       local tint = hazard.color or { 1, 1, 1 }
       frame.icon:SetVertexColor(tint[1], tint[2], tint[3])
       frame.icon:SetSize(size, size)
-      frame:Show()
+      setShown(frame, true)
     end
   end
   for slot = 1, hazardCap do
-    if not hDrawn[slot] then self.hazardFrames[slot]:Hide() end
+    if not hDrawn[slot] then setShown(self.hazardFrames[slot], false) end
   end
 end
 
@@ -3934,7 +3984,7 @@ function RaceUI:RenderProjectiles(race, camX, camZ)
       -- shadow is ANCHORED to the race frame but PARENTED to this one, so it
       -- inherits this; multiplying the fade into it as well would square it.
       shot:SetAlpha(self:EdgeFade(x, dz))
-      shot:Show()
+      setShown(shot, true)
 
       -- Sparks trailing a live shot so it reads as fast, not floating.
       if moving and math.random() < 0.55 then
@@ -3943,7 +3993,7 @@ function RaceUI:RenderProjectiles(race, camX, camZ)
       end
     end
   end
-  for i = shown + 1, #self.projectileFrames do self.projectileFrames[i]:Hide() end
+  for i = shown + 1, #self.projectileFrames do setShown(self.projectileFrames[i], false) end
 end
 
 --- Called by the simulation when a projectile connects.
@@ -4337,16 +4387,16 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       -- must never dim under any circumstances, so it is excluded outright
       -- rather than left to depend on a tuning value staying where it is.
       kart:SetAlpha(vehicle == player and 1 or self:EdgeFade(drawX, dz))
-      kart:Show()
+      setShown(kart, true)
       if vehicle == player then
         self.playerX, self.playerY, self.playerWidth = drawX, y, width
       end
 
       self:VehicleEffects(vehicle, index, x, y, width, vehicle == player)
     else
-      kart:Hide()
-      kart.tag:Hide()
-      kart.tagPlate:Hide()
+      setShown(kart, false)
+      setShown(kart.tag, false)
+      setShown(kart.tagPlate, false)
       self.previous[index] = nil
     end
   end

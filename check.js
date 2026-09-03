@@ -17,11 +17,18 @@ const LS = process.env.LUA_LS || "C:/Users/munch/Desktop/CABLAUDELE/tools/lua-ls
 const logs = fs.mkdtempSync(path.join(os.tmpdir(), "kartcheck-"));
 
 let out = "";
+let languageServerRan = true;
 try {
   out = execFileSync(LS, ["--check=" + ADDON, "--checklevel=Warning", "--logpath=" + logs],
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 } catch (e) {
   out = (e.stdout || "") + (e.stderr || "");
+  // ENOENT means the language server is not on this machine at all -- the path
+  // above is a Windows one. That used to be indistinguishable from a clean run:
+  // `out` came back empty, so "syntax errors: 0" and "leaked locals: 0" were
+  // printed with total confidence on a machine that had checked nothing. A gate
+  // that cannot tell "nothing wrong" from "did not look" is worse than no gate.
+  if (e.code === "ENOENT") languageServerRan = false;
 }
 const text = out.replace(new RegExp(String.fromCharCode(27) + "\\[[0-9;]*m", "g"), "");
 const lines = text.split("\n");
@@ -572,9 +579,40 @@ const camouflagedRoads = [];
   }
 }
 
+// --- does it actually COMPILE ------------------------------------------------
+//
+// The language-server check above is the good one, and it is not always here.
+// A Lua 5.1 compiler usually is, and it answers the single most important
+// question -- does this file parse -- with no ambiguity at all. It caught a
+// scripted edit that had rewritten four `for ... do X:Hide() end` one-liners
+// into gibberish, on a run where the language server was absent and check.js
+// cheerfully printed "syntax errors: 0".
+const wontCompile = [];
+{
+  const luac = ["luac5.1", "luac", "luac5.4"].find((exe) => {
+    try { execFileSync(exe, ["-v"], { stdio: "ignore" }); return true; } catch { return false; }
+  });
+  if (luac) {
+    for (const rel of onDisk.map((r) => r.replace(/\\/g, "/"))) {
+      try {
+        execFileSync(luac, ["-p", path.join(ADDON, rel)], { stdio: "pipe" });
+      } catch (e) {
+        wontCompile.push(((e.stderr || "") + "").trim() || rel + " will not compile");
+      }
+    }
+  } else {
+    wontCompile.push("NO LUA COMPILER FOUND -- nothing here has been parsed at all");
+  }
+}
+
 console.log("files: " + toc.length + " listed, " + onDisk.length + " on disk");
 if (missing.length) console.log("  MISSING (in toc, not on disk): " + missing.join(", "));
 if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted.join(", "));
+if (!languageServerRan)
+  console.log("  NOTE: the Lua language server is not on this machine, so the " +
+    "syntax and leaked-local checks below looked at nothing. Set LUA_LS.");
+console.log("will not compile: " + wontCompile.length);
+for (const w of wontCompile) console.log("  " + w);
 console.log("syntax errors: " + errors.length);
 for (const e of errors.slice(0, 20)) console.log("  " + e);
 console.log("leaked locals: " + leaks.size);
@@ -612,6 +650,7 @@ const bad = errors.length + leaks.size + missing.length + unlisted.length
   + tooNarrow.length + unanchored.length + clamped.length + tableCalls.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
   + unfaded.length + unscaled.length + invisibleSurfaces.length + sameLookingItems.length
-  + nilProneLoops.length + borrowedScenery.length + camouflagedRoads.length;
+  + nilProneLoops.length + borrowedScenery.length + camouflagedRoads.length
+  + wontCompile.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);

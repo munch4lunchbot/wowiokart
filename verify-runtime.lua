@@ -405,12 +405,19 @@ if loadFailures == 0 then
 
   ok("a race starts, renders and runs on every circuit", function()
     for _, track in ipairs(AK.Tracks) do
-      driveRace(track.id, 6)
+      driveRace(track.id, QUICK and 2 or 6)
       AK.Race:Stop(true)
     end
   end)
 
+  -- Four full races at five simulated minutes each is most of the runtime of
+  -- this harness. QUICK=1 skips them, for when the change under test is a
+  -- screen rather than the simulation. It is not the default and never should
+  -- be: the races are where the real findings come from.
+  local QUICK = os.getenv("QUICK") == "1"
+
   ok("a whole race runs to the flag", function()
+    if QUICK then return end
     local race = driveRace("elwynn", 60 * 5)
     assert(race.state == AK.RACE_STATES.FINISHED,
       "five minutes of Elwynn did not finish; state is " .. tostring(race.state))
@@ -464,8 +471,10 @@ if loadFailures == 0 then
   end)
 
   ok("the results screen builds and shows", function()
-    local race = driveRace("oribos", 60 * 5)
-    assertFieldIsHome(race, "oribos")
+    local race = driveRace("oribos", QUICK and 20 or 60 * 5)
+    -- Twenty seconds does not finish a race; the results screen is built from
+    -- whatever state it is in, which is the point of the check either way.
+    if not QUICK then assertFieldIsHome(race, "oribos") end
     AK.Results:Build()
     AK.Results:Show(race)
     AK.Results:Hide()
@@ -475,6 +484,18 @@ if loadFailures == 0 then
   ok("the menu, the workshop and the sound editor all build", function()
     AK.Menu:Build()
     AK.Menu:Show()
+    -- EVERY PAGE, not just the one Show lands on. Settings, the four
+    -- selection grids, the trophy room and the lobby are all built lazily the
+    -- first time you open them, so a nil concatenated into a label on any of
+    -- them was reachable only by a human clicking the button. The settings
+    -- page in particular is the one with per-row logic in it.
+    AK.Menu:ShowSettings()
+    for _, kind in ipairs({ "racer", "kart", "track", "cup" }) do
+      AK.Menu:ShowSelection(kind)
+    end
+    AK.Menu:ShowAchievements()
+    AK.Menu:ShowMultiplayer()
+    AK.Menu:ShowHome()
     AK.Menu:Hide()
     AK.Workshop:Toggle()
     AK.Workshop:Toggle()
@@ -491,6 +512,7 @@ if loadFailures == 0 then
   -- This is the real engine: real items, real collisions, real resets. It
   -- reports rather than merely passing, because the numbers are the point.
   ok("a real race produces a sane race", function()
+    if QUICK then return end
     local report = {}
     for _, id in ipairs({ "elwynn", "durotar", "ironforge" }) do
       local race = driveRace(id, 60 * 5)
@@ -543,6 +565,54 @@ if loadFailures == 0 then
         r.id .. ": the player's best lap was " .. tostring(r.best))
     end
     say("")
+  end)
+
+  -- WHERE THE FRAME GOES.
+  --
+  -- A single number for widget traffic says a frame is expensive; it does not
+  -- say what to do about it. This wraps each render phase, counts the calls it
+  -- makes, and prints the bill -- so the next optimisation is aimed at the
+  -- thing that actually costs, rather than at whatever looks slow.
+  ok("a frame's cost is accounted for", function()
+    if QUICK then return end
+    local race = driveRace("elwynn", 25)
+    local phases = { "RenderSky", "RenderArches", "RenderPosts", "RenderFinish",
+      "RenderSpectators", "RenderProps", "RenderFork", "RenderRoad", "RenderObjects",
+      "RenderHazards", "RenderGhost", "RenderProjectiles", "RenderKarts",
+      "UpdateParticles", "UpdateEffects", "RenderWeather", "UpdatePresentation",
+      "UpdateLadder" }
+    local totals, originals = {}, {}
+    for _, name in ipairs(phases) do
+      local fn = AK.RaceUI[name]
+      originals[name] = fn
+      AK.RaceUI[name] = function(selfRef, ...)
+        local before = widgetCalls
+        local a, b = fn(selfRef, ...)
+        totals[name] = (totals[name] or 0) + (widgetCalls - before)
+        return a, b
+      end
+    end
+    local before = widgetCalls
+    AK.Race:Update(FRAME)
+    local total = widgetCalls - before
+    for name, fn in pairs(originals) do AK.RaceUI[name] = fn end
+
+    local rows, accounted = {}, 0
+    for name, count in pairs(totals) do
+      if count > 0 then rows[#rows + 1] = { name, count } end
+      accounted = accounted + count
+    end
+    table.sort(rows, function(a, b) return a[2] > b[2] end)
+    say("")
+    say(("        one frame of Elwynn costs %d widget calls"):format(total))
+    for _, row in ipairs(rows) do
+      say(("        %-22s %6d  %4.1f%%"):format(row[1], row[2], row[2] / total * 100))
+    end
+    say(("        %-22s %6d  %4.1f%%"):format("everything else", total - accounted,
+      (total - accounted) / total * 100))
+    say("")
+    assert(total > 0, "a frame apparently cost nothing, so the counter is broken")
+    AK.Race:Stop(true)
   end)
 
   ok("the clock formats every duration", function()

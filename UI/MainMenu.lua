@@ -611,6 +611,10 @@ local SETTING_GROUPS = {
         blurb = "How many rivals line up alongside you.",
         step = { min = 3, max = AK.MAX_RACERS - 1, by = 1,
           format = function(value) return value .. " RIVALS" end } },
+      { key = "camBack", tuning = true, name = "Camera",
+        blurb = "How far the camera trails your kart. Close is busier; far sees more.",
+        choices = { { value = 4.2, label = "CLOSE" }, { value = 6.0, label = "STANDARD" },
+          { value = 8.4, label = "FAR" } } },
       { key = "mirror", name = "Mirror mode",
         blurb = "Every circuit flipped left to right. Everything you know is wrong.",
         choices = { { value = false, label = "OFF" }, { value = true, label = "ON" } } },
@@ -647,6 +651,13 @@ local SETTING_GROUPS = {
         blurb = "Sizes the whole race against your monitor.",
         step = { min = 0.8, max = 1.4, by = 0.05,
           format = function(value) return ("%d%%"):format(value * 100 + 0.5) end } },
+      -- Lived only in the workshop, which is a developer panel reached by a
+      -- slash command. How big the HUD is on your monitor is not a developer
+      -- question.
+      { key = "hudScale", tuning = true, name = "HUD size",
+        blurb = "How large the lap counter, clock and place readout are drawn.",
+        step = { min = 60, max = 160, by = 10,
+          format = function(value) return ("%d%%"):format(value) end } },
     },
   },
 }
@@ -657,8 +668,14 @@ local SETTING_DEFAULTS = {
   reducedEffects = false, showSpeed = true, showMinimap = true, uiScale = 1,
   roadDetail = "Balanced",
 }
+--- The two rows on this screen that write to the render tuning instead.
+local TUNING_DEFAULTS = { camBack = 6.0, hudScale = 100 }
 
-local ROW_H, GROUP_GAP, COLUMN_W = 52, 20, 434
+-- Sized so the tallest column -- five race rows plus two sound rows, each with
+-- its explanation under it -- clears the keyboard legend along the bottom.
+-- Every previous version of this screen was laid out by hand-counted pixels
+-- and something always ended up printed underneath something else.
+local ROW_H, GROUP_GAP, COLUMN_W = 44, 18, 434
 
 --- Draws one group of settings into `parent`, top-left at (x, y). Returns the
 --- height it used, so the next group can be stacked under it without anybody
@@ -674,8 +691,10 @@ function Menu:BuildSettingGroup(parent, group, x, y, controls)
   rule:SetPoint("TOPLEFT", x, y - 16)
   rule:SetWidth(COLUMN_W)
 
-  local settings = AK.db.settings
   for index, row in ipairs(group.rows) do
+    -- Two stores behind one screen: most rows are gameplay settings, a couple
+    -- are render dials that used to be reachable only through /kart tune.
+    local settings = row.tuning and AK.db.tuning or AK.db.settings
     local top = y - 24 - (index - 1) * ROW_H
     local label = UI:NewText(parent, row.name, 14, { .90, .94, 1 }, "LEFT")
     label:SetPoint("TOPLEFT", x + 2, top - 6)
@@ -731,7 +750,7 @@ function Menu:ShowSettings()
   local controls = {}
   -- Two columns. Nine settings in one column is a scroll bar waiting to happen;
   -- two columns of grouped rows fits the panel exactly and reads as a page.
-  local leftX, rightX, top = 34, 34 + COLUMN_W + 30, -62
+  local leftX, rightX, top = 34, 34 + COLUMN_W + 30, -52
   local nextY = { top, top }
   for _, group in ipairs(SETTING_GROUPS) do
     local column = group.column or 1
@@ -742,6 +761,7 @@ function Menu:ShowSettings()
 
   local restore = UI:NewButton(page, "RESTORE DEFAULTS", 180, 30, function()
     for key, value in pairs(SETTING_DEFAULTS) do AK.db.settings[key] = value end
+    for key, value in pairs(TUNING_DEFAULTS) do AK.db.tuning[key] = value end
     for _, control in ipairs(controls) do control:Refresh() end
     self:SettingChanged("uiScale")
   end)
@@ -764,6 +784,15 @@ function Menu:ShowSettings()
     "Camera, road and handling dials live in the workshop:  /kart tune",
     11, { .44, .50, .60 }, "CENTER")
   advanced:SetPoint("BOTTOM", 0, 14)
+  -- The layout is derived, not hand-placed, but a group can still be added
+  -- that does not fit. Say so in the log rather than printing it over the
+  -- keyboard legend and hoping somebody notices.
+  local deepest = math.max(top - nextY[1], top - nextY[2])
+  if -math.min(nextY[1], nextY[2]) > 520 - 80 then
+    AK:Print("Settings page overflows its panel by "
+      .. math.ceil(-math.min(nextY[1], nextY[2]) - (520 - 80)) .. "px.")
+  end
+  local _ = deepest
   page:Show()
 end
 

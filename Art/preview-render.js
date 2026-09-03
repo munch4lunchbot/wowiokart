@@ -409,12 +409,16 @@ if (skyArt) {
 }
 
 // haze band softening the horizon seam
+//
+// In TWO halves that both fade to nothing at their outer edge. One gradient
+// could only run 0 -> peak, so the softener ended in a hard cut of its own at
+// 30% opacity -- a pale band ruled straight across the horizon on every track.
 {
   const g0 = track.glow;
-  const span = Math.round(H * 0.12);
-  for (let dy = -span; dy <= Math.round(H * 0.02); dy++) {
-    const t = (dy + span) / (span + H * 0.02);
-    const a = 0.30 * Math.pow(t, 1.5);
+  const below = Math.round(H * 0.12), above = Math.round(H * 0.05);
+  for (let dy = -below; dy <= above; dy++) {
+    const t = dy <= 0 ? (dy + below) / below : 1 - dy / above;
+    const a = 0.30 * Math.pow(Math.max(0, t), 1.5);
     const yy = SY(T.horizon + dy);
     for (let x = 0; x < W; x++) blend(x, yy, g0[0] * .8, g0[1] * .8, g0[2] * .85, a);
   }
