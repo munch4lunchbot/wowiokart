@@ -3426,7 +3426,10 @@ function RaceUI:RenderRoad(race, player)
         local flash = 0.65 + 0.35 * math.sin(race.elapsed * 12)
         rr, rg, rb = 1.0 * flash, 0.85 * flash, 0.25 * flash
       end
-      rr, rg, rb = aerial(rr, rg, rb, light, mix)
+      -- Kerbs are part of the road surface, and in a tunnel they are the most
+      -- important thing on screen: they are what tells you where the edge is.
+      -- They take the road's lighting, not the rock's.
+      rr, rg, rb = aerial(rr, rg, rb, roadLight, mix)
       strip.rumbleLeft:SetPoint("BOTTOM", self.frame, "CENTER", midX - (midHalf + rumbleWidth * .5), previousY)
       strip.rumbleLeft:SetSize(rumbleWidth, height)
       strip.rumbleLeft:SetVertexColor(rr, rg, rb, 1)
@@ -3439,7 +3442,7 @@ function RaceUI:RenderRoad(race, player)
       if index % 4 < 2 and midHalf > 6 then
         strip.lane:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
         strip.lane:SetSize(AK.Math.Clamp(midHalf * 0.04, 1, 14), height)
-        local lr, lg, lb = aerial(.96, .95, .82, light, mix)
+        local lr, lg, lb = aerial(.96, .95, .82, roadLight, mix)
         strip.lane:SetVertexColor(lr, lg, lb, .75)
         setShown(strip.lane, true)
       else

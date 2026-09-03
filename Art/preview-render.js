@@ -569,12 +569,14 @@ for (let r = rows.length - 1; r >= 0; r--) {
     [rr, rg, rb] = dark ? [1 * pulse, .72 * pulse, .28 * pulse] : [.30 * pulse, .82 * pulse, 1 * pulse];
   } else [rr, rg, rb] = dark ? [.95,.95,.96] : [.82,.22,.18];
   if(onRamp){ const fl=0.8; rr=1.0*fl; rg=0.85*fl; rb=0.25*fl; }
-  const rc = aerial([rr, rg, rb], roadLight, mix);
+  // Kerbs are part of the road surface: they take the tarmac's lighting, not
+  // the rock's. In a tunnel they are the only thing marking where the edge is.
+  const rc = aerial([rr, rg, rb], tarmacLight, mix);
   rect(SX(row.midX - row.midHalf - rw), yTop, rw, hpx, rc[0], rc[1], rc[2], 1);
   rect(SX(row.midX + row.midHalf), yTop, rw, hpx, rc[0], rc[1], rc[2], 1);
   if (idx % 4 < 2 && row.midHalf > 6) {
     const lw = clamp(row.midHalf * .04, 1, 14);
-    const lc = aerial([.96, .95, .82], roadLight, mix);
+    const lc = aerial([.96, .95, .82], tarmacLight, mix);
     rect(SX(row.midX - lw / 2), yTop, lw, hpx, lc[0], lc[1], lc[2], .75);
   }
 
