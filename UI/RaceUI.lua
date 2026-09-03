@@ -13,6 +13,10 @@ local UI = AK.UI
 -- visible staircase along the verge is exactly one strip tall: halving the
 -- strip height halves the step. 110 puts them at roughly 6px.
 local SEGMENTS = 150
+--- How many of those 150 strips a given detail setting actually draws. Named
+--- for what you get, not for a number: the difference between them is how
+--- finely the road is sliced, which nobody thinks about in strips.
+local SEGMENT_DETAIL = { Low = 84, Balanced = 116, High = SEGMENTS }
 local FORK_SEGMENTS = 40
 local TUNNEL_HEIGHT = 7.5        -- metres from road to tunnel ceiling
 local TUNNEL_TILE = 5.0          -- metres per repeat of the rock texture
@@ -97,6 +101,10 @@ local HUD = {
   quit     = { point = "TOPRIGHT",    x =  -26, y = -116, w =   76, h = 26 },
 }
 local HUD_PANEL = { .025, .05, .10, .88 }
+--- The cooldown-lap finishing ladder. Sized off the racer cap so it fits the
+--- field exactly rather than leaving a gap under a short one.
+local LADDER = { w = 250, row = 22, top = 32 }
+LADDER.h = LADDER.top + LADDER.row * AK.MAX_RACERS + 10
 local ITEM_ICON = 74
 -- Drift tick positions as a FRACTION of the meter, derived from the ladder
 -- above rather than from three hand-placed pixel offsets that had drifted out
@@ -950,6 +958,49 @@ function RaceUI:Build()
   self.finishCard:SetShadowOffset(2, -2)
   self.finishCard:SetAlpha(0)
 
+  -- THE FINISHING LADDER.
+  --
+  -- Crossing the line no longer ends the race -- the field still has to come
+  -- home -- so there has to be somewhere to watch it happen. Eight rows, one
+  -- per racer, placed in finishing order as each kart crosses: the ones who are
+  -- already in show their time, the ones still out there show a dash and their
+  -- gap. It slides in from the right on the flag and stays until the results
+  -- screen takes over. This is the bit that turns "the race is over, here is a
+  -- table" into "you won -- now watch the rest of them scrap for second".
+  self.ladder = CreateFrame("Frame", nil, self.hudLayer)
+  self.ladder:SetSize(LADDER.w, LADDER.h)
+  self.ladder:SetPoint("RIGHT", -30, 20)
+  self.ladder:Hide()
+  self.ladderPlate = makeTexture(self.ladder, "BACKGROUND", { .02, .04, .08, .86 }, 0)
+  self.ladderPlate:SetAllPoints()
+  self.ladderEdge = makeTexture(self.ladder, "BACKGROUND", AK.COLORS.gold, 1)
+  self.ladderEdge:SetPoint("TOPLEFT", 0, 0)
+  self.ladderEdge:SetPoint("TOPRIGHT", 0, 0)
+  self.ladderEdge:SetHeight(2)
+  self.ladderTitle = UI:NewText(self.ladder, "FINISHING ORDER", 12, AK.COLORS.gold, "LEFT")
+  self.ladderTitle:SetPoint("TOPLEFT", 12, -10)
+  self.ladderRows = {}
+  for i = 1, AK.MAX_RACERS do
+    local row = CreateFrame("Frame", nil, self.ladder)
+    row:SetSize(LADDER.w - 16, LADDER.row)
+    row:SetPoint("TOPLEFT", 8, -(LADDER.top + (i - 1) * LADDER.row))
+    row.bg = makeTexture(row, "BACKGROUND", { .07, .10, .16, .0 }, 2)
+    row.bg:SetAllPoints()
+    row.tag = makeTexture(row, "ARTWORK", { .3, .36, .46, 1 }, 0)
+    row.tag:SetSize(3, LADDER.row - 5)
+    row.tag:SetPoint("LEFT", 2, 0)
+    row.place = UI:NewText(row, "", 12, AK.COLORS.muted, "LEFT")
+    row.place:SetPoint("LEFT", 10, 0)
+    row.place:SetWidth(30)
+    row.name = UI:NewText(row, "", 12, { .88, .91, 1 }, "LEFT")
+    row.name:SetPoint("LEFT", 42, 0)
+    row.name:SetWidth(LADDER.w - 130)
+    row.time = UI:NewText(row, "", 12, AK.COLORS.muted, "RIGHT")
+    row.time:SetPoint("RIGHT", -10, 0)
+    row:Hide()
+    self.ladderRows[i] = row
+  end
+
   self.wrongWay = UI:NewText(self.hudLayer, "", 30, AK.COLORS.danger, "CENTER")
   self.wrongWay:SetShadowColor(0, 0, 0, 1)
   self.wrongWay:SetShadowOffset(2, -2)
@@ -1225,14 +1276,24 @@ function RaceUI:Build()
   self.pause = pause
   local dim = makeTexture(pause, "BACKGROUND", { 0, 0, 0, .6 })
   dim:SetAllPoints()
-  local pausePanel = UI:NewPanel(pause, 320, 254, { .045, .075, .125, .98 })
+  local pausePanel = UI:NewPanel(pause, 320, 302, { .045, .075, .125, .98 })
   pausePanel:SetPoint("CENTER", 0, -30)
   local pauseTitle = UI:NewText(pausePanel, "PAUSED", 28, AK.COLORS.gold, "CENTER")
   pauseTitle:SetPoint("TOP", 0, -22)
+  -- Which race you paused, so the panel is not a floating word.
+  self.pauseWhere = UI:NewText(pausePanel, "", 12, AK.COLORS.muted, "CENTER")
+  self.pauseWhere:SetPoint("TOP", 0, -54)
   local resume = UI:NewButton(pausePanel, "RESUME", 240, 40, function() AK.Race:TogglePause() end)
-  resume:SetPoint("TOP", 0, -75)
+  resume:SetPoint("TOP", 0, -78)
+  -- RESTART. Every kart game has this and ours did not: a bad start or a shell
+  -- on the last corner meant quitting to the menu and rebuilding the entire
+  -- selection to try again.
+  self.pauseRestart = UI:NewButton(pausePanel, "RESTART RACE", 240, 40,
+    function() AK.Race:Restart() end)
+  self.pauseRestart:SetPoint("TOP", 0, -124)
+  self.pauseRestart.tooltip = "Run this circuit again from the lights, with the same grid."
   local abandon = UI:NewButton(pausePanel, "QUIT TO MENU", 240, 40, function() AK.Race:Stop(true) end)
-  abandon:SetPoint("TOP", 0, -123)
+  abandon:SetPoint("TOP", 0, -170)
   abandon:SetRestStyle({ .28, .09, .09, .95 }, AK.COLORS.danger)
   -- The race tools, rehomed off the racing screen. They can only be judged
   -- while the race frame is up -- the frame swallows keyboard input, so there
@@ -1248,7 +1309,7 @@ function RaceUI:Build()
   }
   for i, entry in ipairs(tools) do
     local tool = UI:NewButton(pausePanel, entry[1], 76, 28, entry[2])
-    tool:SetPoint("TOP", (i - 2) * 80, -175)
+    tool:SetPoint("TOP", (i - 2) * 80, -224)
     tool.tooltip = entry[3]
   end
 
@@ -1480,6 +1541,9 @@ function RaceUI:Show(race)
   self.halfHeight = self.frame:GetHeight() * .5
   self.camDepth = self.T.camDepth
   self.camLateralValue, self.camYawValue = nil, nil
+  -- Full driver HUD: the previous race may have ended with it faded back for
+  -- the cooldown lap, and nothing else restores it.
+  self.driverFade = 1
   self.shake, self.shakeX, self.shakeY = 0, 0, 0
   -- Every presentation deadline is stored in race time, so starting a race
   -- resets the clock underneath any beat still counting down from the last one
@@ -1609,6 +1673,8 @@ function RaceUI:ClearPresentation()
   -- value" here.
   if self.startLights then self.startLights:Hide() end
   for _, tile in ipairs(self.checker or {}) do tile:Hide() end
+  if self.ladder then self.ladder:Hide() end
+  self.ladderIn = nil
   self:ClearBanner()
 end
 
@@ -1717,6 +1783,84 @@ function RaceUI:ShowLapSplit(lapNumber, split, best)
   -- without having to parse the number.
   self.splitText:SetTextColor(unpack((not delta or delta <= 0) and AK.COLORS.lime or AK.COLORS.gold))
   self.splitUntil = now() + 2.2
+end
+
+local ORDINAL = { "1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH" }
+function RaceUI:Ordinal(place)
+  return ORDINAL[place] or ((place or 0) .. "TH")
+end
+
+--- The player is home; the race is not over. Chequered flash, a card naming
+--- their place, and the ladder slides in to show the rest of the field coming
+--- in behind them.
+function RaceUI:BeginCooldown(race, place)
+  self.checkerUntil = now() + 1.4
+  self:Flash({ 1, 1, 1 }, .25)
+  self:Shake(10)
+  if self.finishCard then
+    self.finishCard:SetText("FINISHED " .. self:Ordinal(place))
+    self.finishCard:SetTextColor(unpack(place <= 3 and AK.COLORS.gold or AK.COLORS.muted))
+  end
+  self.finishUntil = now() + 2.0
+  self.ladderIn = now()
+  if self.ladder then self.ladder:Show() end
+end
+
+--- Fills the ladder in from the real finishing order, then lists whoever is
+--- still out there in running order underneath. Called every frame from the
+--- moment the player crosses.
+function RaceUI:UpdateLadder(race)
+  if not self.ladder or not self.ladder:IsShown() then return end
+  -- Slide and fade in over a third of a second, from the right edge.
+  local age = now() - (self.ladderIn or 0)
+  local ease = AK.Math.Clamp(age / 0.35, 0, 1)
+  ease = 1 - (1 - ease) * (1 - ease)
+  self.ladder:SetAlpha(ease)
+  self.ladder:ClearAllPoints()
+  self.ladder:SetPoint("RIGHT", -30 + (1 - ease) * 60, 20)
+
+  local rows = self.ladderRows
+  local order = race.ordered or race.vehicles
+  for index, row in ipairs(rows) do
+    local vehicle = order[index]
+    if vehicle then
+      local home = vehicle.finished
+      row.place:SetText(self:Ordinal(index))
+      row.name:SetText(vehicle.racer and vehicle.racer.name or "")
+      if home then
+        row.time:SetText(self:FormatTime(vehicle.finishTime or 0))
+        row.time:SetTextColor(.86, .90, 1)
+      else
+        -- Still on circuit: how far back, in the same units the HUD uses.
+        local leader = order[1]
+        local gap = leader and leader.finishTime
+          and (race.elapsed - leader.finishTime) or 0
+        row.time:SetText(gap > 0 and ("+%.1fs"):format(gap) or "--")
+        row.time:SetTextColor(unpack(AK.COLORS.muted))
+      end
+      local isPlayer = vehicle == race.player
+      row.bg:SetVertexColor(isPlayer and 0.10 or 0.07, isPlayer and 0.26 or 0.10,
+        isPlayer and 0.18 or 0.16, home and 0.95 or 0.35)
+      row.tag:SetVertexColor(unpack(isPlayer and AK.COLORS.lime
+        or (index == 1 and AK.COLORS.gold or { .3, .36, .46, 1 })))
+      row.place:SetTextColor(unpack(index == 1 and AK.COLORS.gold or AK.COLORS.muted))
+      row.name:SetAlpha(home and 1 or 0.6)
+      row:Show()
+    else
+      row:Hide()
+    end
+  end
+end
+
+--- The one thing that could not be known when the player crossed: whether the
+--- kart behind was close enough to make it a photo finish.
+function RaceUI:PhotoFinishCard(photo)
+  if not self.finishCard or not photo then return end
+  self.finishCard:SetText(("PHOTO FINISH\n%s %s BY %.2fs")
+    :format(photo.won and "BEAT" or "LOST TO", photo.rival:upper(), photo.margin))
+  self.finishCard:SetTextColor(unpack(photo.won and AK.COLORS.lime or AK.COLORS.gold))
+  self.finishUntil = now() + 2.4
+  self:Shake(14)
 end
 
 --- Chequered flash plus the position card, held before the results screen.
@@ -2994,8 +3138,30 @@ function RaceUI:RenderRoad(race, player)
   -- the bottom edge, or a band of bare ground shows under the road.
   local lift = (self.camDepth or tuning.camDepth) * tuning.camHeight * self.halfHeight
   local nearZ = math.max(1.2, lift / (tuning.horizon + self.halfHeight + 60))
+  -- ROAD DETAIL.
+  --
+  -- The road is drawn as a stack of textured strips, and every one of them
+  -- costs seven textures moved, resized and tinted from Lua every frame -- the
+  -- single largest block of per-frame work in the addon by a wide margin.
+  -- Sampling is uniform in 1/z, so all the strips are roughly the same height
+  -- on screen: at 150 they are about five pixels each, which is finer than the
+  -- eye can use and more than the frame can always afford.
+  --
+  -- So the count is a setting. The strips are all BUILT (150 of them) and the
+  -- setting decides how many are USED, with the remainder parked off screen --
+  -- that way the dial applies while you watch instead of on the next reload.
+  local detail = SEGMENT_DETAIL[AK.db.settings.roadDetail] or SEGMENTS
+  if self.activeSegments ~= detail then
+    for i = detail + 1, SEGMENTS do
+      local strip = self.strips[i]
+      strip.grass:Hide() strip.road:Hide() strip.shade:Hide()
+      strip.rumbleLeft:Hide() strip.rumbleRight:Hide() strip.lane:Hide()
+      strip.wallLeft:Hide() strip.wallRight:Hide() strip.ceiling:Hide()
+    end
+    self.activeSegments = detail
+  end
   local nearU, farU = 1 / nearZ, 1 / FAR_Z
-  local step = (nearU - farU) / (SEGMENTS - 1)
+  local step = (nearU - farU) / (detail - 1)
   local previousX, previousY, previousW, previousZ
   local previousCeilY
   -- How enclosed the CAMERA is, which drives the whole scene's lighting.
@@ -3039,7 +3205,18 @@ function RaceUI:RenderRoad(race, player)
 
   local nearestTunnelBand
 
-  for i = 0, SEGMENTS - 1 do
+  -- NO ClearAllPoints IN THIS LOOP.
+  --
+  -- Every strip texture below is anchored the same way on every frame -- one
+  -- point, always "BOTTOM", always against self.frame's CENTER -- and SetPoint
+  -- REPLACES the anchor of the same name. Clearing first was therefore a pure
+  -- no-op, and at ten of them per strip across a hundred and fifty strips it
+  -- was about nine hundred wasted calls into the client every single frame,
+  -- which on a road that is already the most expensive thing on screen is not
+  -- nothing. Anything that mixes anchors, or that has ever had SetAllPoints
+  -- called on it, still needs the clear -- this shortcut is only safe because
+  -- these particular textures never do either.
+  for i = 0, detail - 1 do
     local dz = 1 / (nearU - i * step)
     local segZ = camZ + dz
     local strip = self.strips[i + 1]
@@ -3085,7 +3262,6 @@ function RaceUI:RenderRoad(race, player)
       local uGrass = (self.halfWidth / math.max(1, pixelsPerMetre)) / GRASS_TILE
       strip.grass:SetTexCoord(-uGrass, uGrass, previousZ / GRASS_TILE, segZ / GRASS_TILE)
 
-      strip.grass:ClearAllPoints()
       strip.grass:SetPoint("BOTTOM", self.frame, "CENTER", 0, previousY)
       strip.grass:SetSize(self.halfWidth * 2, height)
       -- The verge is lifted well above the track's base colour. Tinting the
@@ -3095,7 +3271,6 @@ function RaceUI:RenderRoad(race, player)
         (dark and tuning.grassContrast or 1.0) * light, mix))
       strip.grass:Show()
 
-      strip.road:ClearAllPoints()
       strip.road:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
       strip.road:SetSize(math.max(2, midHalf * 2), height)
       if onRamp then
@@ -3113,20 +3288,22 @@ function RaceUI:RenderRoad(race, player)
         -- and every water crossing in the game. You cannot drive round what you
         -- cannot see coming.
         local r, g, b = roadColor[1], roadColor[2], roadColor[3]
-        local paint = AK.Terrain:Painted(track, segZ, 0)
+        local paint, paintStrength = AK.Terrain:Painted(track, segZ, 0)
         if paint and paint.tint then
+          -- Ramped at the ends of the zone, exactly as the physics ramps the
+          -- grip, so the surface arrives instead of being switched on.
+          local reach = 0.72 * (paintStrength or 1)
           -- Most of the way to the material's own colour: enough to read as a
           -- different surface from a long way off, not so much that the track's
           -- identity disappears under it.
-          r = r + (paint.tint[1] - r) * 0.72
-          g = g + (paint.tint[2] - g) * 0.72
-          b = b + (paint.tint[3] - b) * 0.72
+          r = r + (paint.tint[1] - r) * reach
+          g = g + (paint.tint[2] - g) * reach
+          b = b + (paint.tint[3] - b) * reach
         end
         strip.road:SetVertexColor(aerial(r, g, b, (dark and 0.96 or 1.0) * light, mix))
       end
       strip.road:Show()
 
-      strip.shade:ClearAllPoints()
       strip.shade:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
       strip.shade:SetSize(math.max(2, midHalf * 2), height)
       -- The verge darkening is a property of the surface, so it washes out
@@ -3151,19 +3328,16 @@ function RaceUI:RenderRoad(race, player)
         rr, rg, rb = 1.0 * flash, 0.85 * flash, 0.25 * flash
       end
       rr, rg, rb = aerial(rr, rg, rb, light, mix)
-      strip.rumbleLeft:ClearAllPoints()
       strip.rumbleLeft:SetPoint("BOTTOM", self.frame, "CENTER", midX - (midHalf + rumbleWidth * .5), previousY)
       strip.rumbleLeft:SetSize(rumbleWidth, height)
       strip.rumbleLeft:SetVertexColor(rr, rg, rb, 1)
       strip.rumbleLeft:Show()
-      strip.rumbleRight:ClearAllPoints()
       strip.rumbleRight:SetPoint("BOTTOM", self.frame, "CENTER", midX + (midHalf + rumbleWidth * .5), previousY)
       strip.rumbleRight:SetSize(rumbleWidth, height)
       strip.rumbleRight:SetVertexColor(rr, rg, rb, 1)
       strip.rumbleRight:Show()
 
       if index % 4 < 2 and midHalf > 6 then
-        strip.lane:ClearAllPoints()
         strip.lane:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
         strip.lane:SetSize(AK.Math.Clamp(midHalf * 0.04, 1, 14), height)
         local lr, lg, lb = aerial(.96, .95, .82, light, mix)
@@ -3194,7 +3368,6 @@ function RaceUI:RenderRoad(race, player)
         local vNear, vFar = previousZ / TUNNEL_TILE, segZ / TUNNEL_TILE
 
         strip.wallLeft:SetTexCoord(0, 1.6, vNear, vFar)
-        strip.wallLeft:ClearAllPoints()
         strip.wallLeft:SetPoint("BOTTOM", self.frame, "CENTER",
           midX - midHalf - wallOut * 0.5, previousY)
         strip.wallLeft:SetSize(wallOut, wallHeight)
@@ -3202,7 +3375,6 @@ function RaceUI:RenderRoad(race, player)
         strip.wallLeft:Show()
 
         strip.wallRight:SetTexCoord(1.6, 0, vNear, vFar)
-        strip.wallRight:ClearAllPoints()
         strip.wallRight:SetPoint("BOTTOM", self.frame, "CENTER",
           midX + midHalf + wallOut * 0.5, previousY)
         strip.wallRight:SetSize(wallOut, wallHeight)
@@ -3213,7 +3385,6 @@ function RaceUI:RenderRoad(race, player)
         -- exactly as the road spans this band's ground down to the nearer one.
         local uCeil = tuning.roadHalf / TUNNEL_TILE
         strip.ceiling:SetTexCoord(-uCeil, uCeil, vNear, vFar)
-        strip.ceiling:ClearAllPoints()
         strip.ceiling:SetPoint("BOTTOM", self.frame, "CENTER", midX, ceilY)
         strip.ceiling:SetSize(math.max(2, (midHalf + wallOut) * 2), math.max(1, ceilTop - ceilY))
         strip.ceiling:SetVertexColor(rock * 0.82, rock * 0.79, rock * 0.76, 1)
@@ -3244,7 +3415,6 @@ function RaceUI:RenderRoad(race, player)
           local side = i == 1 and -1 or 1
           local texture = i == 1 and strip.wallLeft or strip.wallRight
           texture:SetTexCoord(0, 1, 0, 1)
-          texture:ClearAllPoints()
           texture:SetPoint("BOTTOM", self.frame, "CENTER",
             midX + side * (midHalf + railOut * 0.5), previousY)
           texture:SetSize(railOut, railHeight)
@@ -4294,6 +4464,16 @@ function RaceUI:Render(race)
   self:RenderWeather(race, dt)
 
   self:UpdatePresentation(race, dt)
+  self:UpdateLadder(race)
+  -- On the cooldown lap nobody is driving: the item box, the drift meter and
+  -- the control legend are all instruments for a driver who no longer exists,
+  -- so they fade back and leave the screen to the ladder and the road.
+  local driving = race.state ~= AK.RACE_STATES.COOLDOWN
+  self.driverFade = self.driverFade
+    and self.driverFade + (((driving and 1 or 0.18) - self.driverFade)
+      * math.min(1, dt * 6))
+    or (driving and 1 or 0.18)
+  if self.itemPanel then self.itemPanel:SetAlpha(self.driverFade) end
 
   local lineAlpha = AK.db.settings.reducedEffects and 0 or AK.Math.Clamp((speedRatio - .55) * 1.8, 0, .5)
   if player.boostTime > 0 then lineAlpha = math.max(lineAlpha, .5) end
@@ -4373,6 +4553,7 @@ function RaceUI:Render(race)
   -- race is not running -- the countdown, a pause, the moment after the flag.
   local settled = race.state == AK.RACE_STATES.RACING and race.elapsed > 6
   local onboarding = settled and AK.Math.Clamp(1 - (race.elapsed - 6) / 1.5, 0, 1) or 1
+  onboarding = onboarding * (self.driverFade or 1)
   self.controlHint:SetAlpha(onboarding)
   self.shortcut:SetAlpha(onboarding)
 
@@ -4477,7 +4658,8 @@ function RaceUI:Render(race)
   local tier = driftTier(player.driftCharge)
   self.driftLabel:SetText(DRIFT_TIER_NAMES[tier] or "")
   self.driftLabel:SetTextColor(chargeColor[1], chargeColor[2], chargeColor[3])
-  self.driftPanel:SetAlpha(player.drifting and 1 or (charge > 0 and 1 or 0.45))
+  self.driftPanel:SetAlpha((player.drifting and 1 or (charge > 0 and 1 or 0.45))
+    * (self.driverFade or 1))
   -- Each tick lights when the charge passes the threshold it actually marks.
   for i, tick in ipairs(self.driftTicks) do
     local lit = charge >= DRIFT_TICKS[i] - 0.001
@@ -4498,6 +4680,12 @@ function RaceUI:Render(race)
   end
 
   self.pause:SetShown(race.state == AK.RACE_STATES.PAUSED)
+  if race.state == AK.RACE_STATES.PAUSED and self.pauseWhere then
+    self.pauseWhere:SetText(("%s  --  LAP %d OF %d"):format(
+      (race.track.name or ""):upper(), math.min(player.lap or 1, race.laps), race.laps))
+    -- There is nothing to restart in a race other people are also in.
+    self.pauseRestart:SetShown(race.mode ~= "multiplayer")
+  end
   if race.state == AK.RACE_STATES.COUNTDOWN then
     local counting = race.countdown > 0.15
     self.countdown:SetText(counting and tostring(math.ceil(race.countdown)) or "GO!")

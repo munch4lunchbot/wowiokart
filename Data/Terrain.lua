@@ -120,8 +120,8 @@ function Terrain:Sample(track, distance, lateral)
     -- tarmac read as leaving the course: Ironforge is 47% ice, so half of that
     -- lap reported OFF ROAD, kicked up dirt and flashed the warning while the
     -- kart was dead centre on the racing line.
-    local painted = self:Painted(track, distance, lateral)
-    if painted then return painted, 1, true end
+    local painted, strength = self:Painted(track, distance, lateral)
+    if painted then return painted, strength, true end
     return self.TYPES.ROAD, 0, true
   end
   -- Beyond the verge: which material, and how committed are we to it?
@@ -151,13 +151,33 @@ function Terrain:OffroadAt(track, distance)
 end
 
 --- A surface painted across the road itself (ice patch, mud strip, water).
+--- How many metres a painted surface takes to arrive and to let go.
+---
+--- It used to be none: a zone was a hard boundary, so the ice on Ironforge
+--- switched on in a single frame -- full grip to a quarter of it between one
+--- tick and the next -- and the renderer drew the seam as a hard line straight
+--- across the road, which is the join you can see in any screenshot of
+--- Zangarmarsh's water crossing. Twelve metres is about a fifth of a second at
+--- racing speed: long enough that neither the tyres nor the eye catch a step,
+--- short enough that the surface still starts where the track says it does.
+local PAINT_FADE = 12
+
+--- Returns the material painted on the road here, and how much of it there is
+--- (0 at the very edge of the zone, 1 once properly on it).
 function Terrain:Painted(track, distance, lateral)
   if not track.surfaces then return nil end
   local d = distance % track.length
   for _, zone in ipairs(track.surfaces) do
     if zone.onRoad and d >= zone.from and d <= zone.to then
       if not zone.lateralFrom or (lateral >= zone.lateralFrom and lateral <= zone.lateralTo) then
-        return self:Get(zone.onRoad)
+        -- A short zone gets a proportionally shorter ramp, so a ten-metre patch
+        -- still reaches full strength in the middle instead of never arriving.
+        local fade = math.min(PAINT_FADE, (zone.to - zone.from) * 0.5)
+        local strength = 1
+        if fade > 0 then
+          strength = AK.Math.Clamp(math.min(d - zone.from, zone.to - d) / fade, 0, 1)
+        end
+        return self:Get(zone.onRoad), strength
       end
     end
   end

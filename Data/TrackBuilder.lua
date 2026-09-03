@@ -17,10 +17,16 @@ AK.TrackBuilder = {}
 local Builder = AK.TrackBuilder
 
 local STEP = 2            -- metres between samples
-local CURVE_GAIN = 0.0021 -- turn rate -> heading
+local CURVE_GAIN = 0.0021 -- turn rate -> heading, radians per metre
 local GRADE_GAIN = 0.022  -- climb rate -> metres
 
 --- Walk the layout and bake lookup tables for centreline and height.
+-- Published because anything that has to travel in a STRAIGHT LINE across a
+-- curving road needs the same figure the road was built with. A green shell is
+-- the case: its position is stored road-relative, so holding its lateral steady
+-- makes it follow every bend like a tram.
+Builder.CURVE_GAIN = CURVE_GAIN
+
 function Builder:Compile(track)
   if track.compiled then return track end
   local layout = track.layout

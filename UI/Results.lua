@@ -97,11 +97,23 @@ function Results:Build()
   -- Standings table.
   self.table = UI:NewPanel(content, 760, 400, { .05, .08, .14, .96 })
   self.table:SetPoint("TOPLEFT", self.podium, "TOPRIGHT", 22, 0)
+  -- Column headers. Without them the right-hand pair of numbers is two
+  -- unlabelled columns and the reader has to work out which is which -- and
+  -- now that everyone but the winner is shown as a GAP, "+1.42s" against
+  -- "best 33.70s" is genuinely ambiguous until it is named.
+  local head = UI:NewText(self.table, "POS", 10, { .45, .52, .62 }, "LEFT")
+  head:SetPoint("TOPLEFT", 32, -4)
+  local headWho = UI:NewText(self.table, "RACER", 10, { .45, .52, .62 }, "LEFT")
+  headWho:SetPoint("TOPLEFT", 94, -4)
+  -- The time and the best lap are stacked in one right-hand column, and the
+  -- best lap already says "best" on it, so one header does for both.
+  local headTime = UI:NewText(self.table, "TIME / GAP TO WINNER", 10, { .45, .52, .62 }, "RIGHT")
+  headTime:SetPoint("TOPRIGHT", -34, -4)
   self.rows = {}
   for i = 1, AK.MAX_RACERS do
     local row = CreateFrame("Frame", nil, self.table)
     row:SetSize(724, ROW_HEIGHT)
-    row:SetPoint("TOPLEFT", 18, -14 - (i - 1) * (ROW_HEIGHT + ROW_GAP))
+    row:SetPoint("TOPLEFT", 18, -20 - (i - 1) * (ROW_HEIGHT + ROW_GAP))
     row.bg = row:CreateTexture(nil, "BACKGROUND")
     row.bg:SetTexture(ART .. "panel.tga")
     row.bg:SetAllPoints()
@@ -190,7 +202,7 @@ function Results:Animate(elapsed)
       local t = 1 - row.slide
       row:SetAlpha(t)
       row:ClearAllPoints()
-      row:SetPoint("TOPLEFT", 18 + row.slide * 90, -14 - (index - 1) * (ROW_HEIGHT + ROW_GAP))
+      row:SetPoint("TOPLEFT", 18 + row.slide * 90, -20 - (index - 1) * (ROW_HEIGHT + ROW_GAP))
       if row.slide > 0 then done = false end
     end
   end
@@ -219,14 +231,23 @@ function Results:Show(race)
   local position = race.positions[race.player] or #race.vehicles
   self.title:SetText(position == 1 and "VICTORY" or (position <= 3 and "PODIUM FINISH" or "RACE COMPLETE"))
   self.title:SetTextColor(unpack(position == 1 and AK.COLORS.gold or (position <= 3 and AK.COLORS.lime or { .86, .90, 1 })))
-  self.subtitle:SetText(("%s  /  finished %s of %d"):format(
-    race.track.name, ORDINALS[position] or (position .. "TH"), #race.vehicles))
+  -- Name the conditions the race was actually run under. A results screen that
+  -- does not say it was 150cc mirror with hard rivals is throwing away the
+  -- context that makes the time mean anything.
+  local conditions = { AK.db.settings.engineClass or "150cc",
+    (race.laps or 3) .. " LAPS", (AK.db.settings.difficulty or "Normal"):upper() }
+  if AK.db.settings.mirror then table.insert(conditions, "MIRROR") end
+  self.subtitle:SetText(("%s  /  finished %s of %d  /  %s"):format(
+    race.track.name, ORDINALS[position] or (position .. "TH"), #race.vehicles,
+    table.concat(conditions, "  ")))
 
   local ordered = {}
   for _, vehicle in ipairs(race.vehicles) do table.insert(ordered, vehicle) end
   table.sort(ordered, function(a, b) return (race.positions[a] or 99) < (race.positions[b] or 99) end)
 
   local champion = ordered[1]
+  -- Whoever actually crossed first, for the gap column below.
+  local leader = ordered[1]
   if champion then AK.Model:SetSpec(self.winner, AK:GetRacerModel(champion)) end
   AK.Model:SetSeat(self.winner, champion and champion.racer)
   AK.Model:Reframe(self.winner)
@@ -241,7 +262,19 @@ function Results:Show(race)
       row.place:SetText(ORDINALS[place] or (place .. "TH"))
       row.name:SetText(vehicle.racer.name)
       row.kart:SetText(vehicle.kart.name)
-      row.time:SetText(vehicle.finishTime and string.format("%.2fs", vehicle.finishTime) or "DNF")
+      -- The winner's total, then everybody else as a GAP to it. A column of
+      -- eight near-identical three-figure times tells you nothing; "+1.42s"
+      -- tells you the whole story of the race at a glance. Anyone without a
+      -- time at all should now be impossible -- the cooldown lap brings the
+      -- whole field home -- but the fallback stays honest if one ever is.
+      local leadTime = leader and leader.finishTime
+      if not vehicle.finishTime then
+        row.time:SetText("--")
+      elseif not leadTime or vehicle == leader then
+        row.time:SetText(AK.RaceUI:FormatTime(vehicle.finishTime))
+      else
+        row.time:SetText(("+%.2fs"):format(vehicle.finishTime - leadTime))
+      end
       row.best:SetText(vehicle.bestLap and ("best " .. AK.RaceUI:FormatTime(vehicle.bestLap)) or "")
       styleRow(row, place, vehicle == race.player)
       row:Hide()

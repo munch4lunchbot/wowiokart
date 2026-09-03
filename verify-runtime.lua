@@ -36,15 +36,32 @@ end
 -- listed explicitly.
 -- ---------------------------------------------------------------------------
 local widget = {}
+--- HOW MUCH WORK ONE FRAME IS.
+---
+--- "Smooth" in a WoW addon is not about maths -- it is about how many widget
+--- calls cross into the client per frame. A pseudo-3D road is drawn by moving
+--- and tinting a few hundred textures every single frame, and that number is
+--- invisible from inside the addon. Counting it here is the only way to know
+--- whether a render pass got cheaper or quietly doubled.
+local widgetCalls = 0
 widget.__index = function(self, key)
   local fixed = rawget(widget, key)
-  if fixed then return fixed end
+  if fixed then
+    -- Show/Hide/SetShown are hot too, and they are real methods below.
+    if key == "Show" or key == "Hide" or key == "SetShown" then
+      widgetCalls = widgetCalls + 1
+    end
+    return fixed
+  end
   -- Only synthesise METHODS. Widget methods are UpperCamelCase without
   -- exception; anything else is a field the addon set on the widget itself, and
   -- handing back a function for those is how `model.akZoom` became a function
   -- and Data/Models.lua tried to multiply by it. A stub that answers every
   -- question invents faults of its own.
-  if key:match("^%u") then return function(...) return self end end
+  if key:match("^%u") then
+    widgetCalls = widgetCalls + 1
+    return function(...) return self end
+  end
   return nil
 end
 local function newWidget(kind, name, parent)
@@ -350,10 +367,19 @@ if loadFailures == 0 then
     -- `vehicle.falling`, so a reset is the frame it becomes set.
     race.akWasFalling = race.akWasFalling or {}
     race.akResets = race.akResets or 0
+    -- WHERE they fall off, not just how often. A circuit that throws the field
+    -- into the void once a lap has one corner doing it, and a bare count can
+    -- never say which -- so the corner is named.
+    race.akFallSections = race.akFallSections or {}
     for _ = 1, math.ceil(seconds / FRAME) do
       for i, v in ipairs(race.vehicles) do
         local down = v.falling and true or false
-        if down and not race.akWasFalling[i] then race.akResets = race.akResets + 1 end
+        if down and not race.akWasFalling[i] then
+          race.akResets = race.akResets + 1
+          local section = AK.TrackBuilder:SectionAt(v.route or race.track, v.distance)
+          local name = section and section.name or "unnamed"
+          race.akFallSections[name] = (race.akFallSections[name] or 0) + 1
+        end
         race.akWasFalling[i] = down
       end
       if drive ~= false and race.player.ai then
@@ -364,6 +390,15 @@ if loadFailures == 0 then
         AK.Race.controls.throttleAware = true
       end
       AK.Race:Update(FRAME)
+      -- Sample the cost of a frame once the race is properly under way: after
+      -- the lights, at racing speed, with the field spread out. One frame's
+      -- worth of widget traffic, which is the whole of what "smooth" means here.
+      if not race.akDrawsPerFrame and race.state == AK.RACE_STATES.RACING
+        and (race.elapsed or 0) > 20 then
+        local before = widgetCalls
+        AK.Race:Update(FRAME)
+        race.akDrawsPerFrame = widgetCalls - before
+      end
     end
     return race
   end
@@ -385,6 +420,33 @@ if loadFailures == 0 then
     AK.Race:Stop(true)
   end)
 
+  --- NOBODY RETIRES.
+  ---
+  --- The race used to end on the player's flag, so anyone still on circuit --
+  --- everyone, if you win -- was printed on the results screen as "DNF". The
+  --- cooldown lap exists to fix exactly that. Asserted on every race the
+  --- harness runs, rather than as a race of its own.
+  local function assertFieldIsHome(race, id)
+    local seen = {}
+    for _, vehicle in ipairs(race.vehicles) do
+      assert(vehicle.finished and vehicle.finishTime,
+        id .. ": " .. vehicle.racer.name .. " never finished")
+      local place = race.positions[vehicle]
+      assert(place and not seen[place],
+        id .. ": " .. vehicle.racer.name .. " has no unique finishing place")
+      seen[place] = true
+    end
+    -- And the classification is in crossing order, not some order the standings
+    -- sort invented after the fact.
+    local previous = -1
+    for place = 1, #race.vehicles do
+      local vehicle = race.ordered[place]
+      assert(vehicle.finishTime >= previous - 0.0001,
+        id .. ": the classification is not in crossing order")
+      previous = vehicle.finishTime
+    end
+  end
+
   ok("time trial and battle both run", function()
     driveRace("icecrown", 8, "time_trial")
     AK.Race:Stop(true)
@@ -403,6 +465,7 @@ if loadFailures == 0 then
 
   ok("the results screen builds and shows", function()
     local race = driveRace("oribos", 60 * 5)
+    assertFieldIsHome(race, "oribos")
     AK.Results:Build()
     AK.Results:Show(race)
     AK.Results:Hide()
@@ -432,6 +495,7 @@ if loadFailures == 0 then
     for _, id in ipairs({ "elwynn", "durotar", "ironforge" }) do
       local race = driveRace(id, 60 * 5)
       assert(race.state == AK.RACE_STATES.FINISHED, id .. " never reached the flag")
+      assertFieldIsHome(race, id)
       local times, hits = {}, 0
       local resets = race.akResets or 0
       for _, v in ipairs(race.vehicles) do
@@ -442,26 +506,33 @@ if loadFailures == 0 then
       local spread = (#times > 1) and (times[#times] - times[1]) or 0
       report[#report + 1] = { id = id, laps = race.laps, winner = times[1] or 0,
         spread = spread, finishers = #times, resets = resets, hits = hits,
-        best = race.player.bestLap, place = race.positions[race.player] or 0 }
+        best = race.player.bestLap, place = race.positions[race.player] or 0,
+        draws = race.akDrawsPerFrame or 0, falls = race.akFallSections }
       AK.Race:Stop(true)
     end
     say("")
-    say("        circuit         winner    spread  crossed   place   resets   hits   best lap")
+    say("        circuit         winner    spread  crossed   place   resets   hits   best lap    draws/frame")
     for _, r in ipairs(report) do
-      say(("        %-14s %7.1fs %8.1fs %8d %7d %8d %6d %10s"):format(
+      say(("        %-14s %7.1fs %8.1fs %8d %7d %8d %6d %10s %14d"):format(
         r.id, r.winner, r.spread, r.finishers, r.place, r.resets, r.hits,
-        r.best and ("%.2fs"):format(r.best) or "none"))
-      -- NOT "everybody finished". The race ends the moment the PLAYER crosses
-      -- the line -- which is right, and which is why the first version of this
-      -- check failed with "only 5 of 8 finished" on a perfectly good race: the
-      -- three still out on the circuit never got the chance. What matters is
-      -- that the player got there, in a sane time, with the field around them.
+        r.best and ("%.2fs"):format(r.best) or "none", r.draws))
+      -- Name the two worst offenders, so a reset count has somewhere to point.
+      local worst = {}
+      for name, count in pairs(r.falls or {}) do worst[#worst + 1] = { name, count } end
+      table.sort(worst, function(a, b) return a[2] > b[2] end)
+      if worst[1] then
+        local parts = {}
+        for index = 1, math.min(3, #worst) do
+          parts[#parts + 1] = ("%s x%d"):format(worst[index][1], worst[index][2])
+        end
+        say(("                 off the road at: %s"):format(table.concat(parts, ",  ")))
+      end
       assert(r.place > 0 and r.place <= AK.MAX_RACERS,
         r.id .. ": the player finished in position " .. r.place)
       assert(r.winner > 40 and r.winner < 300,
         r.id .. ": winning time of " .. ("%.1f"):format(r.winner) .. "s is not a kart race")
-      assert(r.finishers >= 2,
-        r.id .. ": only " .. r.finishers .. " racer crossed before the race ended")
+      assert(r.finishers == AK.MAX_RACERS,
+        r.id .. ": only " .. r.finishers .. " of " .. AK.MAX_RACERS .. " racers finished")
       -- Everyone who crossed did so in a tight window. A field strung out over
       -- half the race is not a race.
       assert(r.spread < r.winner * 0.45,

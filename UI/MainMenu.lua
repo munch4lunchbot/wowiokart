@@ -100,6 +100,86 @@ function UI:NewButton(parent, text, width, height, onClick)
   return button
 end
 
+--- A SEGMENTED PICKER, the way a console settings screen does it.
+---
+--- Every option in this addon used to be a single button you clicked to cycle:
+--- one label, no idea what the other choices were, and no way back except all
+--- the way round. A segmented control shows the whole choice at once, says
+--- which one you are on, and gets you to any of them in one click.
+---
+--- `options` is a list of { value, label }. `get` returns the live value and
+--- `set` is handed the chosen one.
+function UI:NewSegmented(parent, width, height, options, get, set)
+  local group = CreateFrame("Frame", nil, parent)
+  group:SetSize(width, height)
+  local count = #options
+  local gap = 4
+  local cell = (width - gap * (count - 1)) / count
+  group.cells = {}
+  for index, option in ipairs(options) do
+    local button = self:NewButton(group, option.label, cell, height, function()
+      set(option.value)
+      group:Refresh()
+    end)
+    button:SetPoint("LEFT", (index - 1) * (cell + gap), 0)
+    button.quiet = true
+    button.value = option.value
+    button.tooltip = option.tooltip
+    group.cells[index] = button
+  end
+  function group:Refresh()
+    local current = get()
+    for _, button in ipairs(self.cells) do
+      local on = button.value == current
+      button:SetRestStyle(on and { 0.55, 0.42, 0.10, 1 } or { 0.07, 0.11, 0.18, 0.95 },
+        on and AK.COLORS.gold or { 0.22, 0.30, 0.40 })
+      button.label:SetTextColor(unpack(on and { 1, 0.94, 0.72 } or { 0.52, 0.58, 0.68 }))
+    end
+  end
+  group:Refresh()
+  return group
+end
+
+--- A value with an arrow either side. For anything that is a number rather than
+--- a short list -- you can go down as well as up, which a cycle button cannot.
+function UI:NewStepper(parent, width, height, get, set, format)
+  local group = CreateFrame("Frame", nil, parent)
+  group:SetSize(width, height)
+  local function nudge(direction)
+    set(direction)
+    group:Refresh()
+  end
+  local down = self:NewButton(group, "<", height, height, function() nudge(-1) end)
+  down:SetPoint("LEFT", 0, 0)
+  down.quiet = true
+  local up = self:NewButton(group, ">", height, height, function() nudge(1) end)
+  up:SetPoint("RIGHT", 0, 0)
+  up.quiet = true
+  local plate = self:NewButton(group, "", width - height * 2 - 8, height, function() nudge(1) end)
+  plate:SetPoint("CENTER", 0, 0)
+  plate.quiet = true
+  plate:SetRestStyle({ 0.07, 0.11, 0.18, 0.95 }, { 0.22, 0.30, 0.40 })
+  function group:Refresh()
+    plate.label:SetText(format(get()))
+    plate.label:SetTextColor(1, 0.94, 0.72)
+  end
+  group:Refresh()
+  return group
+end
+
+--- What you have done on a circuit, in one line. A track card with no record
+--- on it is a track you have never raced, and saying so is more useful than
+--- saying nothing.
+local function trackRecord(trackId)
+  local lap = AK.db.records and AK.db.records.bestLap and AK.db.records.bestLap[trackId]
+  local race = AK.db.progress.bestTimes and AK.db.progress.bestTimes[trackId]
+  if not lap and not race then return "NO TIME SET" end
+  local parts = {}
+  if lap then parts[#parts + 1] = "LAP " .. AK.RaceUI:FormatTime(lap) end
+  if race then parts[#parts + 1] = "RACE " .. AK.RaceUI:FormatTime(race) end
+  return table.concat(parts, "   ")
+end
+
 AK.Menu = {}
 local Menu = AK.Menu
 
@@ -257,9 +337,11 @@ function Menu:BuildHome()
   self.previewTitle:SetPoint("TOP", 0, -160)
   self.previewSub = UI:NewText(preview, "", 14, AK.COLORS.muted, "CENTER")
   self.previewSub:SetPoint("TOP", self.previewTitle, "BOTTOM", 0, -5)
+  self.previewRecord = UI:NewText(preview, "", 12, AK.COLORS.gold, "CENTER")
+  self.previewRecord:SetPoint("TOP", self.previewSub, "BOTTOM", 0, -6)
   self.previewStats = UI:NewText(preview, "", 14, { .86, .92, 1 }, "LEFT")
-  self.previewStats:SetPoint("TOPLEFT", 32, -215)
-  self.previewStats:SetPoint("TOPRIGHT", -32, -215)
+  self.previewStats:SetPoint("TOPLEFT", 32, -232)
+  self.previewStats:SetPoint("TOPRIGHT", -32, -232)
   self.previewStats:SetJustifyV("TOP")
 end
 
@@ -329,6 +411,9 @@ function Menu:UpdateSummary()
   end)
   self.previewTitle:SetText(racer.name .. " in the " .. kart.name)
   self.previewSub:SetText(track.name .. "  /  " .. track.subtitle)
+  -- Your record on the circuit you are about to race, on the screen you press
+  -- QUICK RACE from. It was two menus away.
+  self.previewRecord:SetText(trackRecord(track.id))
   self.previewStats:SetText(("|cff%sSPEED|r  %d    |cff%sACCEL|r  %d\n|cff%sHANDLING|r  %d    |cff%sDRIFT|r  %d\n\n|cff%s%s|r\n%s\n\nCoins: |cff%s%d|r    Wins: |cff%s%d|r")
     :format(AK:ColorHex(AK.COLORS.lime), math.floor((racer.speed + kart.speed) / 2), AK:ColorHex(AK.COLORS.lime), math.floor((racer.acceleration + kart.acceleration) / 2), AK:ColorHex(AK.COLORS.lime), math.floor((racer.handling + kart.handling) / 2), AK:ColorHex(AK.COLORS.lime), math.floor((racer.drift + kart.drift) / 2), AK:ColorHex(AK.COLORS.gold), track.theme, track.shortcut, AK:ColorHex(AK.COLORS.gold), AK.db.progress.coins, AK:ColorHex(AK.COLORS.gold), AK.db.progress.wins))
 end
@@ -424,7 +509,11 @@ function Menu:ShowSelection(kind)
       for _, trackId in ipairs(entry.tracks) do table.insert(names, AK:GetTrack(trackId).name) end
       detail:SetText(("%d races\n%s"):format(#entry.tracks, table.concat(names, "\n")))
     else
-      detail:SetText(("%s\n%s\n3 laps / %dm"):format(entry.subtitle, entry.shortcut, entry.length))
+      -- Lap count came off a hard-coded "3 laps" that would have lied the
+      -- moment a circuit was authored with a different one.
+      detail:SetText(("%s\n%s\n%d laps / %dm\n\n|cff%s%s|r"):format(
+        entry.subtitle, entry.shortcut, entry.laps or 3, entry.length,
+        AK:ColorHex(AK.COLORS.gold), trackRecord(entry.id)))
     end
   end
   page:Show()
@@ -499,61 +588,182 @@ function Menu:ShowAchievements()
   page:Show()
 end
 
+--- WHAT EVERY SETTING ACTUALLY DOES.
+---
+--- The old settings screen was nine rows of "Reduced effects  [OFF]". That
+--- tells you the state of a switch and nothing else: not what it changes, not
+--- what it costs, not why you would want it. Every row here says what it is
+--- for in one line, and the rows are grouped so the screen has a shape rather
+--- than being a list nine items long.
+local SETTING_GROUPS = {
+  {
+    title = "THE RACE",
+    rows = {
+      { key = "engineClass", name = "Engine class",
+        blurb = "How fast the whole field goes. 150cc is the real thing.",
+        choices = { { value = "50cc", label = "50cc" }, { value = "100cc", label = "100cc" },
+          { value = "150cc", label = "150cc" } } },
+      { key = "difficulty", name = "Rival skill",
+        blurb = "Hard brakes later and drifts better. It is not handed speed.",
+        choices = { { value = "Easy", label = "EASY" }, { value = "Normal", label = "NORMAL" },
+          { value = "Hard", label = "HARD" } } },
+      { key = "aiCount", name = "Field size",
+        blurb = "How many rivals line up alongside you.",
+        step = { min = 3, max = AK.MAX_RACERS - 1, by = 1,
+          format = function(value) return value .. " RIVALS" end } },
+      { key = "mirror", name = "Mirror mode",
+        blurb = "Every circuit flipped left to right. Everything you know is wrong.",
+        choices = { { value = false, label = "OFF" }, { value = true, label = "ON" } } },
+    },
+  },
+  {
+    title = "SOUND",
+    rows = {
+      { key = "sfx", name = "Sound effects",
+        blurb = "Item hits, boosts, the countdown and the flag.",
+        choices = { { value = false, label = "OFF" }, { value = true, label = "ON" } } },
+      { key = "engineNote", name = "Engine note",
+        blurb = "A revving tone tied to your speed. Repetitive by nature -- off by default.",
+        choices = { { value = false, label = "OFF" }, { value = true, label = "ON" } } },
+    },
+  },
+  {
+    title = "THE PICTURE", column = 2,
+    rows = {
+      { key = "roadDetail", name = "Road detail",
+        blurb = "How finely the road is sliced. The biggest frame-rate dial there is.",
+        choices = { { value = "Low", label = "LOW" }, { value = "Balanced", label = "BALANCED" },
+          { value = "High", label = "HIGH" } } },
+      { key = "reducedEffects", name = "Reduced effects",
+        blurb = "Drops sparks, speed lines and lens motion. Use it if the frame rate dips.",
+        choices = { { value = false, label = "FULL" }, { value = true, label = "REDUCED" } } },
+      { key = "showSpeed", name = "Speedometer",
+        blurb = "The km/h readout under the clock.",
+        choices = { { value = false, label = "OFF" }, { value = true, label = "ON" } } },
+      { key = "showMinimap", name = "Circuit map",
+        blurb = "The plan view in the bottom corner, with every kart on it.",
+        choices = { { value = false, label = "OFF" }, { value = true, label = "ON" } } },
+      { key = "uiScale", name = "Screen scale",
+        blurb = "Sizes the whole race against your monitor.",
+        step = { min = 0.8, max = 1.4, by = 0.05,
+          format = function(value) return ("%d%%"):format(value * 100 + 0.5) end } },
+    },
+  },
+}
+
+local SETTING_DEFAULTS = {
+  engineClass = "150cc", difficulty = "Normal", aiCount = 7, mirror = false,
+  sfx = true, engineNote = false,
+  reducedEffects = false, showSpeed = true, showMinimap = true, uiScale = 1,
+  roadDetail = "Balanced",
+}
+
+local ROW_H, GROUP_GAP, COLUMN_W = 52, 20, 434
+
+--- Draws one group of settings into `parent`, top-left at (x, y). Returns the
+--- height it used, so the next group can be stacked under it without anybody
+--- hand-counting pixels -- which is how "Racing scale" ended up printed
+--- underneath the keyboard legend on the old screen.
+function Menu:BuildSettingGroup(parent, group, x, y, controls)
+  local title = UI:NewText(parent, group.title, 12, AK.COLORS.gold, "LEFT")
+  title:SetPoint("TOPLEFT", x, y)
+  local rule = parent:CreateTexture(nil, "ARTWORK")
+  rule:SetTexture("Interface\\Buttons\\WHITE8x8")
+  rule:SetVertexColor(0.85, 0.70, 0.35, 0.30)
+  rule:SetHeight(1)
+  rule:SetPoint("TOPLEFT", x, y - 16)
+  rule:SetWidth(COLUMN_W)
+
+  local settings = AK.db.settings
+  for index, row in ipairs(group.rows) do
+    local top = y - 24 - (index - 1) * ROW_H
+    local label = UI:NewText(parent, row.name, 14, { .90, .94, 1 }, "LEFT")
+    label:SetPoint("TOPLEFT", x + 2, top - 6)
+    local blurb = UI:NewText(parent, row.blurb, 10, { .50, .56, .66 }, "LEFT")
+    blurb:SetPoint("TOPLEFT", x + 2, top - 24)
+    blurb:SetWidth(COLUMN_W - 8)
+    blurb:SetJustifyH("LEFT")
+
+    local control
+    if row.choices then
+      control = UI:NewSegmented(parent, 168, 22, row.choices,
+        function() return settings[row.key] end,
+        function(value) settings[row.key] = value; Menu:SettingChanged(row.key) end)
+    else
+      local spec = row.step
+      control = UI:NewStepper(parent, 168, 22,
+        function() return settings[row.key] end,
+        function(direction)
+          local value = (settings[row.key] or spec.min) + direction * spec.by
+          -- Wrap rather than stop dead at the ends: a stepper that silently
+          -- does nothing reads as broken.
+          if value > spec.max + 0.0001 then value = spec.min end
+          if value < spec.min - 0.0001 then value = spec.max end
+          -- Snap, or repeated 0.05 steps drift into 0.9500000000000001.
+          settings[row.key] = math.floor(value / spec.by + 0.5) * spec.by
+          Menu:SettingChanged(row.key)
+        end,
+        spec.format)
+    end
+    control:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + COLUMN_W, top - 4)
+    controls[#controls + 1] = control
+  end
+  return 24 + #group.rows * ROW_H + GROUP_GAP
+end
+
+--- Some settings have to reach something that is already on screen.
+function Menu:SettingChanged(key)
+  if key == "uiScale" and AK.RaceUI and AK.RaceUI.frame then
+    AK.RaceUI.frame:SetScale(AK.db.settings.uiScale or 1)
+  end
+  if AK.PlaySfx then AK:PlaySfx("uiClick") end
+end
+
 function Menu:ShowSettings()
   self:HideDynamic()
   local page = self:AddDynamic(CreateFrame("Frame", nil, self.content))
   page:SetAllPoints()
-  local header = UI:NewText(page, "GARAGE SETTINGS", 25, AK.COLORS.gold, "CENTER")
-  header:SetPoint("TOP", 0, -35)
-  -- Tall enough for the rows AND the help text. Nine rows at 47px end 431px
-  -- down, and the two-line footer sat at 435 -- so "Racing scale" was rendered
-  -- underneath the keyboard legend, with both unreadable.
-  local panel = UI:NewPanel(page, 560, 524, { .055, .10, .17, .98 })
-  panel:SetPoint("CENTER", 0, 15)
+  local header = UI:NewText(page, "SETTINGS", 25, AK.COLORS.gold, "CENTER")
+  header:SetPoint("TOP", 0, -22)
   local back = UI:NewButton(page, "BACK", 120, 32, function() self:ShowHome() end)
-  back:SetPoint("TOPLEFT", 25, -25)
-  local settings = AK.db.settings
-  local rows = {
-    { "Sound effects", "sfx", function(value) return value and "ON" or "OFF" end },
-    { "Reduced effects", "reducedEffects", function(value) return value and "ON" or "OFF" end },
-    { "Show speed", "showSpeed", function(value) return value and "ON" or "OFF" end },
-    { "Show mini-map", "showMinimap", function(value) return value and "ON" or "OFF" end },
-    { "Engine class", "engineClass", function(value) return value end },
-    { "Mirror mode", "mirror", function(value) return value and "ON" or "OFF" end },
-    { "AI difficulty", "difficulty", function(value) return value end },
-    { "AI racers", "aiCount", function(value) return tostring(value) end },
-    { "Racing scale", "uiScale", function(value) return string.format("%d%%", value * 100) end },
-  }
-  for i, row in ipairs(rows) do
-    local label = UI:NewText(panel, row[1], 16, { .86, .92, 1 })
-    label:SetPoint("TOPLEFT", 45, -30 - (i - 1) * 47)
-    local button = UI:NewButton(panel, row[3](settings[row[2]]), 145, 34, function(button)
-      if row[2] == "engineClass" then
-        settings.engineClass = settings.engineClass == "50cc" and "100cc"
-          or (settings.engineClass == "100cc" and "150cc" or "50cc")
-      elseif row[2] == "difficulty" then
-        settings.difficulty = settings.difficulty == "Easy" and "Normal" or (settings.difficulty == "Normal" and "Hard" or "Easy")
-      elseif row[2] == "aiCount" then
-        settings.aiCount = settings.aiCount >= 7 and 3 or settings.aiCount + 2
-      elseif row[2] == "uiScale" then
-        settings.uiScale = settings.uiScale >= 1.2 and .8 or settings.uiScale + .1
-      else
-        settings[row[2]] = not settings[row[2]]
-      end
-      button.label:SetText(row[3](settings[row[2]]))
-    end)
-    button:SetPoint("TOPRIGHT", -45, -21 - (i - 1) * 47)
+  back:SetPoint("TOPLEFT", 25, -20)
+
+  local controls = {}
+  -- Two columns. Nine settings in one column is a scroll bar waiting to happen;
+  -- two columns of grouped rows fits the panel exactly and reads as a page.
+  local leftX, rightX, top = 34, 34 + COLUMN_W + 30, -62
+  local nextY = { top, top }
+  for _, group in ipairs(SETTING_GROUPS) do
+    local column = group.column or 1
+    local x = column == 1 and leftX or rightX
+    nextY[column] = nextY[column]
+      - self:BuildSettingGroup(page, group, x, nextY[column], controls)
   end
-  -- A hairline above the footer, so it reads as a separate zone rather than as
-  -- a tenth settings row that lost its button.
-  local rule = panel:CreateTexture(nil, "ARTWORK")
+
+  local restore = UI:NewButton(page, "RESTORE DEFAULTS", 180, 30, function()
+    for key, value in pairs(SETTING_DEFAULTS) do AK.db.settings[key] = value end
+    for _, control in ipairs(controls) do control:Refresh() end
+    self:SettingChanged("uiScale")
+  end)
+  restore:SetPoint("TOPRIGHT", -25, -20)
+  restore.tooltip = "Puts every setting on this page back to how it shipped."
+
+  -- The keyboard legend, along the bottom of the whole page rather than inside
+  -- one column's panel.
+  local rule = page:CreateTexture(nil, "ARTWORK")
   rule:SetTexture("Interface\\Buttons\\WHITE8x8")
-  rule:SetVertexColor(0.38, 0.65, 0.92, 0.30)
+  rule:SetVertexColor(0.38, 0.65, 0.92, 0.26)
   rule:SetHeight(1)
-  rule:SetPoint("BOTTOMLEFT", 45, 62)
-  rule:SetPoint("BOTTOMRIGHT", -45, 62)
-  local help = UI:NewText(panel, "Keyboard: W/Up accelerate / A-D or Left-Right steer / Space drift / Shift use item\nOn-screen controls are always available.", 13, AK.COLORS.muted, "CENTER")
-  help:SetPoint("BOTTOM", 0, 20)
+  rule:SetPoint("BOTTOMLEFT", 34, 52)
+  rule:SetPoint("BOTTOMRIGHT", -34, 52)
+  local help = UI:NewText(page,
+    "W or UP accelerate     A D or LEFT RIGHT steer     SPACE hop and drift     SHIFT use item     S or DOWN brake and reverse     ESC pause",
+    12, AK.COLORS.muted, "CENTER")
+  help:SetPoint("BOTTOM", 0, 32)
+  local advanced = UI:NewText(page,
+    "Camera, road and handling dials live in the workshop:  /kart tune",
+    11, { .44, .50, .60 }, "CENTER")
+  advanced:SetPoint("BOTTOM", 0, 14)
   page:Show()
 end
 

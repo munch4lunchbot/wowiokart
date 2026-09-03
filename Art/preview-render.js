@@ -508,8 +508,15 @@ for (let r = rows.length - 1; r >= 0; r--) {
     // Mirrors RaceUI:RenderRoad -- a surface painted on the road is drawn.
     const lapZ = ((row.segZ % track.length) + track.length) % track.length;
     const zone = (track._painted || []).find(z => lapZ >= z.from && lapZ <= z.to);
+    // Ramped at the ends of the zone, mirroring Terrain.PAINT_FADE. Without
+    // this the join is a hard line straight across the road -- which is exactly
+    // what a preview render of Zangarmarsh's water crossing used to show.
+    const fade = zone ? Math.min(12, (zone.to - zone.from) * 0.5) : 0;
+    const reach = zone
+      ? 0.72 * (fade > 0 ? clamp(Math.min(lapZ - zone.from, zone.to - lapZ) / fade, 0, 1) : 1)
+      : 0;
     const base = (zone && PAINT[zone.mat])
-      ? track.road.map((c, k) => c + (PAINT[zone.mat][k] - c) * 0.72)
+      ? track.road.map((c, k) => c + (PAINT[zone.mat][k] - c) * reach)
       : track.road;
     const tint = onRamp
       ? aerial([1.0, 0.74, 0.16], (band ? 1.0 : 0.55) * roadLight, mix)

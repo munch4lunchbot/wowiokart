@@ -211,6 +211,25 @@ function Race:Start(mode, options)
   if AK.PlaySfx then AK:PlaySfx("countdown") end
 end
 
+--- Run the same race again, from the lights.
+---
+--- Every kart game has this on the pause menu and it was the one thing missing
+--- from ours: a bad start or a shell on the last corner meant quitting to the
+--- menu and rebuilding the whole selection. Multiplayer is excluded -- you
+--- cannot restart a race other people are in -- and a Grand Prix restarts the
+--- CURRENT heat rather than the cup, which is what the pause menu of one is.
+function Race:Restart()
+  local race = self.current
+  if not race or race.mode == "attract" or race.mode == "multiplayer" then return end
+  -- A battle has no track id to hand back -- it is built from the arena pool by
+  -- its own entry point, which also re-rolls the stage.
+  if race.battle then return self:StartBattle() end
+  self:Start(race.mode, {
+    track = race.track and race.track.id,
+    grandPrix = race.grandPrix,
+  })
+end
+
 --- Attract mode: a real race running behind the menu with nobody driving.
 --- It reuses the entire renderer, so the title screen shows the actual game
 --- rather than a static panel.
@@ -471,9 +490,14 @@ function Race:TogglePause()
   local race = self.current
   if not race or race.mode == "multiplayer" then return end
   if race.state == AK.RACE_STATES.PAUSED then
-    race.state = AK.RACE_STATES.RACING
+    -- Resume to whatever was running, not blindly to RACING: pausing during
+    -- the cooldown lap and unpausing used to hand the player back a kart that
+    -- had already finished, and the field never came home.
+    race.state = race.resumeState or AK.RACE_STATES.RACING
+    race.resumeState = nil
     AK.RaceUI:Announce("GO!", AK.COLORS.lime)
-  elseif race.state == AK.RACE_STATES.RACING then
+  elseif race.state == AK.RACE_STATES.RACING or race.state == AK.RACE_STATES.COOLDOWN then
+    race.resumeState = race.state
     race.state = AK.RACE_STATES.PAUSED
     AK.RaceUI:Announce("PAUSED", AK.COLORS.gold)
   end
@@ -531,9 +555,11 @@ function Race:SpawnProjectile(race, owner, itemID, direction)
   elseif item.homing then
     projectile.target = self:GetAheadTarget(owner)
   elseif direction > 0 then
-    -- Thrown straight items inherit a touch of the thrower's slide, so they
-    -- track the road's bend instead of flying off tangentially.
-    projectile.drift = (owner.driftDirection or 0) * 0.15
+    -- Thrown straight items leave along the road's tangent, plus whatever angle
+    -- the thrower's own slide gives them. This used to be a lateral DRIFT rate,
+    -- which made a shell curve gently forever; it is an initial heading now, so
+    -- a shell fired mid-drift leaves at an angle and then flies straight.
+    projectile.heading = (owner.driftDirection or 0) * 0.045
   end
   table.insert(race.projectiles, projectile)
   return projectile
@@ -584,10 +610,33 @@ function Race:UpdateProjectiles(race, dt)
         end
       end
     else
-      -- Green shells run true down the road, bouncing off the verges rather
-      -- than sailing off into the scenery the moment the track bends.
+      -- A GREEN SHELL IS A SHOT, NOT A TRAM.
+      --
+      -- A projectile's position is stored road-relative -- distance along the
+      -- lap and lateral across it -- so a shell that simply holds its lateral
+      -- follows every bend the road takes, all the way round the circuit. It
+      -- never misses, and there is nothing to aim.
+      --
+      -- What it should do is fly straight through the world while the road
+      -- curves away underneath it. That is the same forward integration the
+      -- renderer uses to bend the road: carry a heading relative to the road's
+      -- tangent, turn it by the road's own curvature as the shell advances, and
+      -- let the lateral follow from it. Fired down a straight it goes dead
+      -- straight; fired into a bend it runs wide and finds the outside wall,
+      -- which is what makes lining one up worth doing.
+      local route = self:RouteOf(race, projectile)
+      local curve = AK.Math.RoadCurve(route, projectile.distance)
+      local travelled = projectile.speed * dt
+      projectile.heading = (projectile.heading or 0)
+        - curve * AK.TrackBuilder.CURVE_GAIN * travelled
+      -- Lateral is measured in road half-widths, so metres have to be scaled.
+      projectile.lateral = projectile.lateral
+        + projectile.heading * travelled / (AK.db.tuning.roadHalf or 9)
       if projectile.lateral > 1.0 or projectile.lateral < -1.0 then
         projectile.lateral = AK.Math.Clamp(projectile.lateral, -1.0, 1.0)
+        -- Reflect off the verge. A shell that keeps its heading through a wall
+        -- would grind along it instead of ricocheting away.
+        projectile.heading = -(projectile.heading or 0)
         projectile.drift = -(projectile.drift or 0)
         projectile.bounces = (projectile.bounces or 0) + 1
         if projectile.bounces > 3 then projectile.life = 0 end
@@ -1323,16 +1372,41 @@ function Race:UpdateRacing(race, dt)
         else
           vehicle.finished = true
           vehicle.finishTime = race.elapsed
+          -- The order they actually crossed in, recorded as it happens. The
+          -- standings are recomputed every tick from distance and can only
+          -- infer a finishing order after the fact; this is the real thing,
+          -- and it is what the ladder fills in from as the field comes home.
+          race.finishOrder = race.finishOrder or {}
+          table.insert(race.finishOrder, vehicle)
+          vehicle.finishPlace = #race.finishOrder
         end
       end
+    else
+      -- CROSSING THE LINE DOES NOT PARK THE KART.
+      --
+      -- A finished racer used to be skipped by this loop entirely, which meant
+      -- it stopped dead on the spot the instant it crossed -- a row of statues
+      -- on the start-finish straight while everyone else was still racing. In
+      -- every kart game ever made the winner keeps rolling, hands off the
+      -- wheel, and coasts away up the road. So do that: hand the kart to the
+      -- AI and let it drive on. It cannot be hit, it cannot hit anyone and it
+      -- cannot score another lap (all of that is already gated on `finished`),
+      -- so this is pure scenery -- but it is the difference between a race
+      -- ending and a race freezing.
+      self:CoastHome(race, vehicle, dt)
     end
   end
-  if race.recorder then AK.Ghost:Record(race.recorder, race.player, dt) end
+  -- Stop recording the ghost the moment the player is home. Past the flag the
+  -- kart is on autopilot, and a Time Trial ghost that includes a driverless
+  -- cooldown lap is not a ghost of anything.
+  if race.recorder and not race.player.finished then
+    AK.Ghost:Record(race.recorder, race.player, dt)
+  end
   if race.ghost then race.ghostState = AK.Ghost:Advance(race.ghost, dt) end
   if hostOrSolo then self:UpdateHazards(race, dt) end
   self:UpdateCheckpoints(race, dt)
   self:UpdateFalls(race, dt)
-  if race.mode ~= "attract" and AK.UpdateEngine then
+  if race.mode ~= "attract" and AK.UpdateEngine and not race.player.finished then
     AK:UpdateEngine(race.player, dt)
   end
   self:UpdateTelemetry(race, dt)
@@ -1344,8 +1418,11 @@ function Race:UpdateRacing(race, dt)
     self:CheckCollisions(race)
     self:UpdatePositions(race)
     self:CheckObjects(race, dt)
-    if race.mode ~= "attract" then self:ReportRaceMoments(race) end
-    if race.player.finished then self:FinishRace(race) end
+    -- Race commentary is for a driver. Past the flag there is no driver.
+    if race.mode ~= "attract" and not race.player.finished then
+      self:ReportRaceMoments(race)
+    end
+    if race.player.finished then self:AfterPlayerFinish(race) end
   else
     self:UpdatePositions(race)
     self:ReportRaceMoments(race)
@@ -1364,6 +1441,102 @@ function Race:UpdateRacing(race, dt)
   end
   -- Hop is an edge, not a held state: clear it once the frame has consumed it.
   self.controls.hopPressed = false
+end
+
+--- Hands a kart that has already crossed the line to the AI so it rolls on.
+--- Items are stripped: nobody wants a shell from someone who has finished.
+function Race:CoastHome(race, vehicle, dt)
+  if race.mode == "attract" then return end
+  -- The player has no AI brain until it needs one.
+  vehicle.ai = vehicle.ai or AK.AI:CreatePersonality(9)
+  local controls = AK.AI:Controls(race, vehicle, dt)
+  controls.itemPulse = false
+  AK.Physics:UpdateVehicle(race, vehicle, controls, dt)
+end
+
+--- True once every racer has a finish time.
+function Race:FieldIsHome(race)
+  for _, vehicle in ipairs(race.vehicles) do
+    if not vehicle.finished then return false end
+  end
+  return true
+end
+
+--- The player has crossed the line. The RACE has not ended.
+---
+--- This is the whole reason DNF existed. The old code ended the race on the
+--- player's flag and went straight to the results table, so anyone still on
+--- circuit -- which, if you win, is everybody -- never got a finish time and
+--- was printed as "DNF". Nobody has ever finished a kart race and been told
+--- the other seven retired.
+---
+--- So the flag starts a COOLDOWN instead: the player's kart goes on autopilot,
+--- the camera stays where it is, and the field comes home while a ladder fills
+--- in at the side of the screen. Only when the last kart is in does the race
+--- actually end.
+function Race:BeginCooldown(race)
+  if race.state ~= AK.RACE_STATES.RACING then return end
+  if race.battle or race.mode == "attract" then return self:FinishRace(race) end
+  race.state = AK.RACE_STATES.COOLDOWN
+  race.cooldown = { wall = 0, rate = 1 }
+  self:UpdatePositions(race)
+  AK.RaceUI:BeginCooldown(race, race.player.finishPlace or race.positions[race.player] or #race.vehicles)
+  if AK.PlaySfx then AK:PlaySfx("lap") end
+end
+
+--- Called every tick once the player is home, from inside UpdateRacing.
+function Race:AfterPlayerFinish(race)
+  if race.state == AK.RACE_STATES.RACING then
+    self:BeginCooldown(race)
+  elseif race.state == AK.RACE_STATES.COOLDOWN and self:FieldIsHome(race) then
+    self:FinishRace(race)
+  end
+end
+
+--- Everyone still out there gets a time, even if the cooldown ran out of
+--- patience. Extrapolated from where they are and how fast they are going, so
+--- the classification is complete and the gaps are still honest.
+function Race:ProjectRemainingFinishes(race)
+  local lapLength = race.track.length or 1000
+  for _, vehicle in ipairs(race.vehicles) do
+    if not vehicle.finished then
+      local togo = math.max(0, race.laps * lapLength - (vehicle.odometer or 0))
+      -- Never divide by a stopped kart.
+      local pace = math.max(12, vehicle.speed or 0)
+      vehicle.finished = true
+      vehicle.finishTime = race.elapsed + togo / pace
+      vehicle.projected = true
+      race.finishOrder = race.finishOrder or {}
+      table.insert(race.finishOrder, vehicle)
+      vehicle.finishPlace = #race.finishOrder
+    end
+  end
+end
+
+--- The cooldown lap. Real time at first, so a rival crossing two tenths behind
+--- you plays out at the speed it happened; then it winds on, because watching
+--- a straggler tour half a circuit is not entertainment.
+function Race:UpdateCooldown(race, dt)
+  local cool = race.cooldown
+  cool.wall = cool.wall + dt
+  -- Honest for the first beat and a half, then accelerating hard. race.elapsed
+  -- advances with the simulation, so finishing times stay true -- this is a
+  -- fast-forward, not a shortcut.
+  cool.rate = AK.Math.Clamp(1 + math.max(0, cool.wall - 1.5) * 4, 1, 12)
+  local slices = math.max(1, math.floor(cool.rate + 0.5))
+  for _ = 1, slices do
+    if race.state ~= AK.RACE_STATES.COOLDOWN then return end
+    self:UpdateRacing(race, dt)
+  end
+  if race.state ~= AK.RACE_STATES.COOLDOWN then return end
+  -- Hard stop. Twelve seconds of real time is already generous, and something
+  -- pathological -- a kart wedged against scenery on a track with no reset --
+  -- must never be able to hold the results screen hostage.
+  if cool.wall > 12 then
+    self:ProjectRemainingFinishes(race)
+    self:UpdatePositions(race)
+    self:FinishRace(race)
+  end
 end
 
 function Race:FinishRace(race)
@@ -1422,8 +1595,20 @@ function Race:FinishRace(race)
   -- straight to a table of numbers threw away the only moment the race has
   -- been building to. The simulation keeps running underneath, so the kart
   -- rolls on driverless while the card is up.
-  AK.RaceUI:FinishSequence(position, race.photoFinish)
-  C_Timer.After(2.2, function()
+  --
+  -- After a cooldown lap the card has ALREADY played -- it played when the
+  -- player crossed, which is when it means something. Firing the whole
+  -- sequence again here would flash the screen a second time for no event. All
+  -- that is new at this point is the photo finish, which could not be known
+  -- until the rival behind was home, so that is the only thing shown.
+  local hold = 2.2
+  if race.cooldown then
+    hold = race.photoFinish and 2.6 or 1.4
+    if race.photoFinish then AK.RaceUI:PhotoFinishCard(race.photoFinish) end
+  else
+    AK.RaceUI:FinishSequence(position, race.photoFinish)
+  end
+  C_Timer.After(hold, function()
     if self.current ~= race then return end
     self.updateFrame:Hide()
     -- Take the race scene down before showing results. Both frames sit at
@@ -1470,6 +1655,17 @@ function Race:RecordProgress(race, position)
   if race.player.usedStar then AK:UnlockAchievement("star_run") end
   local best = progress.bestTimes[race.track.id]
   if not best or race.elapsed < best then progress.bestTimes[race.track.id] = race.elapsed end
+  -- The best LAP, per circuit, kept for good. `records.bestLap` has been in the
+  -- saved-variable defaults since the addon shipped and nothing ever wrote a
+  -- single value into it, so the track cards had no record to show and the
+  -- table was pure dead weight.
+  AK.db.records = AK.db.records or { bestLap = {}, ghosts = {} }
+  AK.db.records.bestLap = AK.db.records.bestLap or {}
+  local lap = race.player.bestLap
+  local bestLap = AK.db.records.bestLap[race.track.id]
+  if lap and (not bestLap or lap < bestLap) then
+    AK.db.records.bestLap[race.track.id] = lap
+  end
 end
 
 --- One fixed simulation slice. Never called with a variable dt.
@@ -1529,6 +1725,8 @@ function Race:Step(race, dt)
     end
   elseif race.state == AK.RACE_STATES.RACING then
     self:UpdateRacing(race, dt)
+  elseif race.state == AK.RACE_STATES.COOLDOWN then
+    self:UpdateCooldown(race, dt)
   end
 end
 

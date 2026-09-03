@@ -163,7 +163,10 @@ AK.Tracks = {
   {
     id = "durotar", name = "Durotar Deathloop", subtitle = "Mind the lava", theme = "DUROTAR",
     sweep = 4.0,
-    length = 2500, laps = 3, color = { 0.49, 0.20, 0.08 }, road = { 0.42, 0.28, 0.18 },
+    -- Dark basalt against hot orange sand. The road used to be the same brown as
+    -- the ground either side of it, so at speed the single most important read
+    -- in a kart game -- where the track IS -- was carried entirely by the kerbs.
+    length = 2500, laps = 3, color = { 0.49, 0.20, 0.08 }, road = { 0.18, 0.15, 0.14 },
     skyTop = { 0.30, 0.11, 0.16 }, skyLow = { 0.95, 0.48, 0.20 }, glow = { 1.00, 0.62, 0.24 },
     weather = "ember", light = 0.92,
     hazardPlan = {
@@ -440,7 +443,9 @@ AK.Tracks = {
   {
     id = "netherstorm", name = "Netherstorm Turbo Circuit", subtitle = "The road is optional", theme = "NETHERSTORM",
     sweep = 2.5,
-    length = 2750, laps = 3, color = { 0.26, 0.12, 0.45 }, road = { 0.28, 0.22, 0.49 },
+    -- A pale arcane causeway over the void. Purple road on purple nebula was one
+    -- colour with a slightly different tint.
+    length = 2750, laps = 3, color = { 0.26, 0.12, 0.45 }, road = { 0.55, 0.52, 0.62 },
     skyTop = { 0.07, 0.03, 0.18 }, skyLow = { 0.44, 0.20, 0.62 }, glow = { 0.72, 0.42, 1.00 },
     weather = "ember", light = 0.80,
     hazardPlan = {
@@ -511,7 +516,8 @@ AK.Tracks = {
   {
     id = "thousandneedles", name = "Thousand Needles Mesa Run", subtitle = "Mind the gap. All of them.", theme = "THOUSAND NEEDLES",
     sweep = 2.8,
-    length = 2100, laps = 3, color = { 0.62, 0.34, 0.20 }, road = { 0.58, 0.42, 0.28 },
+    -- Bleached limestone across red mesa, rather than two shades of the same clay.
+    length = 2100, laps = 3, color = { 0.62, 0.34, 0.20 }, road = { 0.74, 0.68, 0.58 },
     skyTop = { 0.36, 0.20, 0.14 }, skyLow = { 0.92, 0.62, 0.38 }, glow = { 1.00, 0.78, 0.48 },
     weather = "none", light = 0.96,
     hazardPlan = {

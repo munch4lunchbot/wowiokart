@@ -12,7 +12,9 @@ AK.COLORS = {
   muted = { 0.66, 0.73, 0.83 },
 }
 
-AK.RACE_STATES = { COUNTDOWN = "countdown", RACING = "racing", FINISHED = "finished", PAUSED = "paused" }
+-- COOLDOWN is the lap after the player crosses: the flag is out for them, the
+-- race is still on for everyone else, and their kart is on autopilot.
+AK.RACE_STATES = { COUNTDOWN = "countdown", RACING = "racing", COOLDOWN = "cooldown", FINISHED = "finished", PAUSED = "paused" }
 AK.MAX_RACERS = 8
 
 -- Engine classes. Not a difficulty label: the same circuit at 150cc arrives

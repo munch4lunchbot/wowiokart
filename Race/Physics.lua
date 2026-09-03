@@ -568,22 +568,25 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
 
     local cover = AK.TrackBuilder:TunnelDepth(route, vehicle.distance)
     local room = AK.db.tuning.offroadRoom or 1.35
-    local barrier = room * (1 - 0.30 * cover) * edge
-
     -- A TUNNEL IS A SHAFT CUT TO THE ROAD. There is no verge inside one to run
-    -- along, and the walls are drawn hard against the tarmac.
+    -- along, and the walls are drawn hard against the tarmac -- so the room to
+    -- run wide shrinks to a graze allowance the moment the cover closes in.
+    local covered = cover > 0.35
+    local barrier = covered and (edge * 1.15) or (room * (1 - 0.30 * cover) * edge)
+
+    -- A TUNNEL WALL IS A WALL.
     --
-    -- Arriving off the road as the cover closed in used to hit the shrinking
-    -- barrier and be pushed INWARD, which tucked you into the rock and let you
-    -- drive the whole tunnel from outside the track -- through the wall, with
-    -- the world drawn around you. Being off the road under cover is simply off
-    -- the course, and gets the same lift-and-return as any other way of leaving
-    -- it. The 1.15 is a graze allowance so clipping a wall on the way in is a
-    -- scrape rather than an instant reset.
-    if cover > 0.35 and math.abs(vehicle.lateral) > edge * 1.15
-      and (vehicle.air or 0) <= 0 then
-      vehicle.falling = vehicle.falling or 0.01
-    elseif math.abs(vehicle.lateral) > barrier and (vehicle.air or 0) <= 0 then
+    -- Being off the road under cover used to set `falling` -- lifted out and
+    -- dropped back like going over a cliff. There is no cliff: outside the
+    -- shaft is solid rock. Worse, it was a trap. Durotar's Magma Cavern is a
+    -- 140m 2.8-curve bend on the narrowest road in the game, and measured over
+    -- a full race the field went into the void there THIRTY-FOUR times, each
+    -- reset dropping the kart straight back into the same corner: one racer
+    -- came home four minutes down. Scraping a tunnel wall costs you speed and
+    -- the corner, which is punishment enough and is what the wall impact below
+    -- was already tuned to deliver -- VergeHasWall walls tunnels already, so
+    -- this branch was only ever pre-empting it with something harsher.
+    if math.abs(vehicle.lateral) > barrier and (vehicle.air or 0) <= 0 then
       if not self:VergeHasWall(route, vehicle.distance) then
         -- Open country: nothing to hit, so you go over the edge and Lakitu
         -- brings you back.

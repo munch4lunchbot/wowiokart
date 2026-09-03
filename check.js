@@ -540,6 +540,38 @@ const borrowedScenery = [];
   }
 }
 
+// --- roads you cannot pick out from the ground beside them -------------------
+//
+// The single most important read in a kart game is where the track IS, and it
+// has to survive peripheral vision at 190km/h. Durotar shipped with a brown
+// road laid on brown sand -- 0.037 apart in luminance -- so the only thing
+// separating tarmac from desert was the kerb. Netherstorm was purple on purple
+// and Thousand Needles was clay on clay.
+//
+// Scored on luminance distance plus chroma distance, because either one alone
+// is enough to read: Ironforge is grey road on white snow (all luminance) and
+// Elwynn is brown road on green grass (mostly chroma). Both are fine. What is
+// never fine is being close on both at once.
+const camouflagedRoads = [];
+{
+  const tracksFile = path.join(ADDON, "Data", "Tracks.lua");
+  if (fs.existsSync(tracksFile)) {
+    const src = fs.readFileSync(tracksFile, "utf8");
+    const lum = (c) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+    const re = /id = "(\w+)",[\s\S]{0,600}?color = \{ ([\d.]+), ([\d.]+), ([\d.]+) \}, road = \{ ([\d.]+), ([\d.]+), ([\d.]+) \}/g;
+    for (const m of src.matchAll(re)) {
+      const ground = [+m[2], +m[3], +m[4]], road = [+m[5], +m[6], +m[7]];
+      const lg = lum(ground), lr = lum(road);
+      const cg = ground.map((v) => v - lg), cr = road.map((v) => v - lr);
+      const chroma = Math.hypot(cg[0] - cr[0], cg[1] - cr[1], cg[2] - cr[2]);
+      const score = Math.abs(lg - lr) + chroma;
+      if (score < 0.22)
+        camouflagedRoads.push(m[1] + "  road and ground are " + score.toFixed(3) +
+          " apart; the track vanishes into its own scenery (want 0.22+)");
+    }
+  }
+}
+
 console.log("files: " + toc.length + " listed, " + onDisk.length + " on disk");
 if (missing.length) console.log("  MISSING (in toc, not on disk): " + missing.join(", "));
 if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted.join(", "));
@@ -572,12 +604,14 @@ for (const u of sameLookingItems) console.log("  " + u);
 console.log("ipairs over a list that can hold a nil: " + nilProneLoops.length);
 for (const u of nilProneLoops) console.log("  " + u);
 console.log("circuits wearing another circuit's scenery: " + borrowedScenery.length);
-for (const u of borrowedScenery) console.log("  " + u);
+for (const b of borrowedScenery) console.log("  " + b);
+console.log("roads camouflaged against their own ground: " + camouflagedRoads.length);
+for (const c of camouflagedRoads) console.log("  " + c);
 
 const bad = errors.length + leaks.size + missing.length + unlisted.length
   + tooNarrow.length + unanchored.length + clamped.length + tableCalls.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
   + unfaded.length + unscaled.length + invisibleSurfaces.length + sameLookingItems.length
-  + nilProneLoops.length + borrowedScenery.length;
+  + nilProneLoops.length + borrowedScenery.length + camouflagedRoads.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);

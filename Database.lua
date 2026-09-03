@@ -5,11 +5,18 @@ local defaults = {
     uiScale = 1, sfx = true, engineNote = false, reducedEffects = false, difficulty = "Normal",
     aiCount = 7, showSpeed = true, showMinimap = true,
     engineClass = "150cc", mirror = false, debug = false,
+    -- How finely the road is sliced. Balanced draws about a quarter fewer
+    -- strips than High and is the single biggest frame-rate dial there is;
+    -- at 720p the difference is six pixels a strip against five.
+    roadDetail = "Balanced",
   },
   -- Cue -> FileDataID chosen by ear in-game via /kart sfxset. Empty by default;
   -- anything bound here wins over the built-in candidates.
   sfxOverride = {},
-  records = { bestLap = {}, bestRace = {}, ghosts = {} },
+  -- bestLap is written on every finish; ghosts hold the Time Trial replays.
+  -- `bestRace` used to sit here too and nothing ever read or wrote it -- the
+  -- race total already lives in progress.bestTimes.
+  records = { bestLap = {}, ghosts = {} },
   selection = { racer = "you", kart = "mechano", track = "oribos", cup = "eastern" },
   progress = { coins = 0, races = 0, wins = 0, podiums = 0, bestTimes = {}, achievements = {}, unlockedRacers = {}, unlockedKarts = {}, trophies = {} },
 }
