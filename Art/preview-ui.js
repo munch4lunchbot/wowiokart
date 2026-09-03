@@ -291,6 +291,13 @@ garage.forEach((name, i) => {
 });
 
 const footTop = garageTop + home.rowGap + home.garageH + home.footGap;
+// The whole left column has to stop above the panel's bottom edge. BuildHome
+// prints a warning about this to the chat frame, which nobody reads; here it
+// is a failure, and check.js runs it.
+if (footTop + home.footH > CH - 10) {
+  throw new Error("preview-ui: the home menu overflows its panel by "
+    + Math.ceil(footTop + home.footH - (CH - 10)) + "px");
+}
 const half = (home.modeW - 8) / 2;
 [["TROPHY ROOM", 0], ["SETTINGS", half + 8]].forEach(([name, dx]) => {
   const x = OX + M + dx, y = OY + footTop;
@@ -459,6 +466,91 @@ if (process.env.SCREEN === "results") {
   label(Math.round(W / 2 - 132), by2 + 15, "RACE AGAIN", 15, GOLD, "center");
   slice(tex.btn, Math.round(W / 2 + 132 - 120), by2, 240, 44, [0.13, 0.17, 0.25], 1);
   label(Math.round(W / 2 + 132), by2 + 15, "MAIN MENU", 15, MUTED, "center");
+}
+
+// ---- the settings screen, on demand: SCREEN=settings -------------------------
+//
+// Parsed from SETTING_GROUPS, so the rows, their explanations and the pickers
+// are the ones the game builds. The layout maths is BuildSettingGroup's.
+if (process.env.SCREEN === "settings") {
+  const src = MENU_SRC;
+  const groupsBlock = src.slice(src.indexOf("local SETTING_GROUPS = {"));
+  const body = groupsBlock.slice(0, groupsBlock.indexOf("\n}\n"));
+  const groups = [];
+  for (const chunk of body.split(/\n  \{\n/).slice(1)) {
+    const title = (chunk.match(/title = "([^"]+)"/) || [])[1];
+    if (!title) continue;
+    const column = +((chunk.match(/column = (\d)/) || [])[1] || 1);
+    const rows = [];
+    for (const rowChunk of chunk.split(/\{ key = "/).slice(1)) {
+      const name = (rowChunk.match(/name = "([^"]+)"/) || [])[1] || "";
+      const blurb = (rowChunk.match(/blurb = "([^"]+)"/) || [])[1] || "";
+      const labels = [...rowChunk.matchAll(/label = "([^"]+)"/g)].map((m) => m[1]);
+      rows.push({ name, blurb, labels });
+    }
+    groups.push({ title, column, rows });
+  }
+  const g = (re, d) => { const m = src.match(re); return m ? +m[1] : d; };
+  const ROW_H = g(/local ROW_H, GROUP_GAP, COLUMN_W = (\d+)/, 44);
+  const GROUP_GAP = g(/local ROW_H, GROUP_GAP, COLUMN_W = \d+, (\d+)/, 18);
+  const COLUMN_W = g(/local ROW_H, GROUP_GAP, COLUMN_W = \d+, \d+, (\d+)/, 434);
+  if (!groups.length) throw new Error("preview-ui: could not parse SETTING_GROUPS");
+
+  for (let i = 0; i < W * H; i++) {
+    fb[i * 3] = 0.030; fb[i * 3 + 1] = 0.040; fb[i * 3 + 2] = 0.070;
+  }
+  panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);
+  label(OX + CW / 2, OY - 18, "SETTINGS", 20, GOLD, "center");
+  slice(tex.btn, OX + 25, OY - 20, 120, 32, [0.18, 0.28, 0.42], 1);
+  label(OX + 85, OY - 10, "BACK", 12, GOLD, "center");
+  slice(tex.btn, OX + CW - 25 - 180, OY - 20, 180, 30, [0.13, 0.17, 0.25], 1);
+  label(OX + CW - 115, OY - 11, "RESTORE DEFAULTS", 11, MUTED, "center");
+
+  const leftX = OX + 34, rightX = OX + 34 + COLUMN_W + 30;
+  // BuildSettingGroup stacks from -52 inside the page and returns the height it
+  // used; these two accumulate it exactly the same way.
+  const top = OY - 40 + 62;
+  const yTop = [top, top];
+  for (const group of groups) {
+    const col = group.column - 1;
+    const x = col === 0 ? leftX : rightX;
+    const y = yTop[col];
+    label(x + 2, y, group.title, 11, GOLD);
+    blitUV(tex.hairline, x, y + 16, COLUMN_W, 2, 0, 1, 0, 1, [1, .78, .30], 0.35);
+    group.rows.forEach((row, index) => {
+      const rowTop = y + 24 + index * ROW_H;
+      label(x + 2, rowTop + 6, row.name, 13, PALE);
+      // Left-aligned, as the game sets it -- centring here would hide how much
+      // room a long explanation actually takes on the left of the column.
+      label(x + 2, rowTop + 27, row.blurb, 9, [.50, .56, .66]);
+      // The control: a segmented picker, or a stepper.
+      const cw = 168, cx = x + COLUMN_W - cw, cy = rowTop + 4;
+      if (row.labels.length) {
+        const gap = 4, cell = (cw - gap * (row.labels.length - 1)) / row.labels.length;
+        row.labels.forEach((lab, k) => {
+          const on = k === row.labels.length - 1;
+          slice(tex.btn, cx + k * (cell + gap), cy, cell, 22,
+            on ? [0.55, 0.42, 0.10] : [0.07, 0.11, 0.18], 1);
+          label(cx + k * (cell + gap) + cell / 2, cy + 7, lab, 9,
+            on ? [1, 0.94, 0.72] : [0.52, 0.58, 0.68], "center");
+        });
+      } else {
+        slice(tex.btn, cx, cy, 22, 22, [0.18, 0.28, 0.42], 1);
+        label(cx + 11, cy + 7, "<", 9, GOLD, "center");
+        slice(tex.btn, cx + cw - 22, cy, 22, 22, [0.18, 0.28, 0.42], 1);
+        label(cx + cw - 11, cy + 7, ">", 9, GOLD, "center");
+        slice(tex.btn, cx + (cw - (cw - 52)) / 2, cy, cw - 52, 22, [0.07, 0.11, 0.18], 1);
+        label(cx + cw / 2, cy + 7, "100%", 9, [1, 0.94, 0.72], "center");
+      }
+    });
+    yTop[col] = y + 24 + group.rows.length * ROW_H + GROUP_GAP;
+  }
+  const used = Math.max(yTop[0], yTop[1]) - (OY - 40);
+  blitUV(tex.hairline, OX + 34, OY - 40 + CH - 52, CW - 68, 2, 0, 1, 0, 1, [.38, .65, .92], 0.26);
+  label(OX + CW / 2, OY - 40 + CH - 42,
+    "W OR UP ACCELERATE     A D STEER     SPACE HOP AND DRIFT     SHIFT ITEM     ESC PAUSE",
+    10, MUTED, "center");
+  if (used > 458) throw new Error("preview-ui: settings overflows by " + Math.ceil(used - 458) + "px");
 }
 
 // ---- write ------------------------------------------------------------------

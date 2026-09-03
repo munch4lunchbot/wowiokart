@@ -323,3 +323,32 @@ const LOGO_GLYPHS = {
     return [r, g, b, 1];
   });
 }
+
+// ---- earned / not earned ---------------------------------------------------
+//
+// The trophy room marked an unlocked achievement with the character "*" and a
+// locked one with "-". Typing a shape instead of drawing one is the single most
+// legible sign that nobody looked at the screen -- and the comment beside it
+// was right that the marker has to differ in SHAPE, not just colour, so this is
+// a real tick and a real empty socket.
+writeTGA("tick.tga", 28, 28, (x, y, w, h) => {
+  const u = (x + 0.5) / w, v = (y + 0.5) / h;
+  // Two strokes: the short down-stroke and the long up-stroke of a check.
+  function stroke(ax, ay, bx, by, thickness) {
+    const dx = bx - ax, dy = by - ay;
+    const t = clamp(((u - ax) * dx + (v - ay) * dy) / (dx * dx + dy * dy), 0, 1);
+    const px = ax + dx * t - u, py = ay + dy * t - v;
+    return clamp(1 - Math.hypot(px, py) / thickness, 0, 1);
+  }
+  const a = Math.max(stroke(0.16, 0.52, 0.40, 0.76, 0.11),
+                     stroke(0.40, 0.76, 0.86, 0.22, 0.11));
+  return [1, 1, 1, Math.pow(a, 0.65)];
+});
+
+writeTGA("socket.tga", 28, 28, (x, y, w, h) => {
+  const u = (x + 0.5) / w - 0.5, v = (y + 0.5) / h - 0.5;
+  // A hollow ring: the same footprint as the tick, obviously empty.
+  const r = Math.hypot(u, v);
+  const ring = clamp(1 - Math.abs(r - 0.30) / 0.075, 0, 1);
+  return [1, 1, 1, Math.pow(ring, 0.8)];
+});

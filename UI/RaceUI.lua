@@ -683,6 +683,11 @@ function RaceUI:Build()
   self.forkSign:Hide()
   self.forkLabel = UI:NewText(frame, "", 15, AK.COLORS.lime, "CENTER")
   self.forkLabel:Hide()
+  self.forkArrow = frame:CreateTexture(nil, "OVERLAY")
+  self.forkArrow:SetTexture(ART .. "chevron.tga")
+  self.forkArrow:SetSize(10, 14)
+  self.forkArrow:SetVertexColor(unpack(AK.COLORS.lime))
+  self.forkArrow:Hide()
 
   -- When the camera is inside a tunnel there is rock in every direction, not
   -- just the ribbon receding ahead. The per-band walls draw the portal from
@@ -3122,8 +3127,16 @@ function RaceUI:RenderFork(race, player, camX, camZ)
         setShown(self.forkSign, true)
         self.forkLabel:ClearAllPoints()
         self.forkLabel:SetPoint("BOTTOM", self.frame, "CENTER", x, y + size * 1.05)
-        self.forkLabel:SetText((branch.name or "SHORTCUT"):upper()
-          .. (side < 0 and "  <<" or "  >>"))
+        -- The name alone; the direction is the ARROW beside it. This used to
+        -- read "RIVER FORD  <<", with the arrow typed out of angle brackets on
+        -- the one screen the player is actually looking at.
+        self.forkLabel:SetText((branch.name or "SHORTCUT"):upper())
+        self.forkArrow:ClearAllPoints()
+        self.forkArrow:SetPoint(side < 0 and "RIGHT" or "LEFT", self.forkLabel,
+          side < 0 and "LEFT" or "RIGHT", side < 0 and -6 or 6, 0)
+        self.forkArrow:SetTexCoord(side < 0 and 1 or 0, side < 0 and 0 or 1, 0, 1)
+        self.forkArrow:SetAlpha(self.forkLabel:GetAlpha())
+        setShown(self.forkArrow, true)
         self.forkLabel:SetAlpha(AK.Math.Clamp((FAR_Z - entryDz) / 90, 0, 1))
         setShown(self.forkLabel, true)
         signShown = true
@@ -3134,6 +3147,7 @@ function RaceUI:RenderFork(race, player, camX, camZ)
   if not signShown then
     setShown(self.forkSign, false)
     setShown(self.forkLabel, false)
+    setShown(self.forkArrow, false)
   end
   for i = shown + 1, FORK_SEGMENTS do
     local strip = self.forkStrips[i]

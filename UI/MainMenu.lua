@@ -321,12 +321,27 @@ function UI:NewStepper(parent, width, height, get, set, format)
     set(direction)
     group:Refresh()
   end
-  local down = self:NewButton(group, "<", height, height, function() nudge(-1) end)
+  --- An arrow, not the character ">". A chevron flipped through its texcoords
+  --- gives both directions from one file and is the same mark the menu rows and
+  --- the standings use, so every "this way" in the game is one shape.
+  local function arrow(button, pointsRight)
+    button.label:Hide()
+    local mark = button:CreateTexture(nil, "OVERLAY")
+    mark:SetTexture(ART .. "chevron.tga")
+    mark:SetSize(7, 10)
+    mark:SetPoint("CENTER")
+    mark:SetTexCoord(pointsRight and 0 or 1, pointsRight and 1 or 0, 0, 1)
+    mark:SetVertexColor(unpack(AK.COLORS.gold))
+    button.mark = mark
+  end
+  local down = self:NewButton(group, "", height, height, function() nudge(-1) end)
   down:SetPoint("LEFT", 0, 0)
   down.quiet = true
-  local up = self:NewButton(group, ">", height, height, function() nudge(1) end)
+  arrow(down, false)
+  local up = self:NewButton(group, "", height, height, function() nudge(1) end)
   up:SetPoint("RIGHT", 0, 0)
   up.quiet = true
+  arrow(up, true)
   local plate = self:NewButton(group, "", width - height * 2 - 8, height, function() nudge(1) end)
   plate:SetPoint("CENTER", 0, 0)
   plate.quiet = true
@@ -1006,11 +1021,15 @@ function Menu:ShowAchievements()
         got and { .10, .18, .12, .96 } or { .07, .09, .14, .94 })
       card:SetPoint("TOPLEFT", MARGIN + column * (cardWidth + GAP), -TOP - row * (cardHeight + GAP))
 
-      -- A filled versus hollow marker, so earned reads at a glance without
-      -- relying on colour alone.
-      local mark = UI:NewText(card, got and "*" or "-", 16,
-        got and AK.COLORS.gold or { .34, .38, .46 }, "LEFT")
-      mark:SetPoint("LEFT", 12, 0)
+      -- A tick versus an empty socket, so earned reads at a glance without
+      -- relying on colour alone. These were the characters "*" and "-": typing
+      -- a shape rather than drawing one is the loudest possible sign that
+      -- nobody ever looked at the screen.
+      local mark = card:CreateTexture(nil, "ARTWORK")
+      mark:SetTexture(ART .. (got and "tick.tga" or "socket.tga"))
+      mark:SetSize(14, 14)
+      mark:SetPoint("LEFT", 11, 0)
+      mark:SetVertexColor(unpack(got and AK.COLORS.gold or { .34, .38, .46 }))
 
       local name = UI:NewText(card, achievement.name, 14,
         got and AK.COLORS.gold or { .62, .66, .74 }, "LEFT")
@@ -1124,7 +1143,11 @@ local TUNING_DEFAULTS = { camBack = 6.0, hudScale = 100 }
 -- its explanation under it -- clears the keyboard legend along the bottom.
 -- Every previous version of this screen was laid out by hand-counted pixels
 -- and something always ended up printed underneath something else.
-local ROW_H, GROUP_GAP, COLUMN_W = 44, 18, 434
+-- GROUP_GAP is 14 rather than 18 because at 18 the left column -- five race
+-- rows plus two sound rows, each with its explanation -- overflowed the panel
+-- by four pixels. The screen printed a warning about it to the chat frame,
+-- where nobody was ever going to see it; Art/preview-ui.js fails outright now.
+local ROW_H, GROUP_GAP, COLUMN_W = 44, 14, 434
 
 --- Draws one group of settings into `parent`, top-left at (x, y). Returns the
 --- height it used, so the next group can be stacked under it without anybody
@@ -1147,8 +1170,11 @@ function Menu:BuildSettingGroup(parent, group, x, y, controls)
     local top = y - 24 - (index - 1) * ROW_H
     local label = UI:NewText(parent, row.name, 14, { .90, .94, 1 }, "LEFT")
     label:SetPoint("TOPLEFT", x + 2, top - 6)
+    -- Below the CONTROL, not just below the name. The picker occupies the
+    -- right 168px of the row from top-4 to top-26, and an explanation starting
+    -- at top-24 ran its last two pixels underneath it.
     local blurb = UI:NewText(parent, row.blurb, 10, { .50, .56, .66 }, "LEFT")
-    blurb:SetPoint("TOPLEFT", x + 2, top - 24)
+    blurb:SetPoint("TOPLEFT", x + 2, top - 27)
     blurb:SetWidth(COLUMN_W - 8)
     blurb:SetJustifyH("LEFT")
 
@@ -1199,7 +1225,9 @@ function Menu:ShowSettings()
   local controls = {}
   -- Two columns. Nine settings in one column is a scroll bar waiting to happen;
   -- two columns of grouped rows fits the panel exactly and reads as a page.
-  local leftX, rightX, top = 34, 34 + COLUMN_W + 30, -52
+  -- -62 clears the BACK button, which is 32px tall at -20. At -48 the first
+  -- section heading was printed through it.
+  local leftX, rightX, top = 34, 34 + COLUMN_W + 30, -62
   local nextY = { top, top }
   for _, group in ipairs(SETTING_GROUPS) do
     local column = group.column or 1
@@ -1236,9 +1264,13 @@ function Menu:ShowSettings()
   -- The layout is derived, not hand-placed, but a group can still be added
   -- that does not fit. Say so in the log rather than printing it over the
   -- keyboard legend and hoping somebody notices.
+  -- The footer rule sits 52px off the bottom of a 520-tall page, so the
+  -- columns have 468 minus a little breathing room. The old 440 was a guess
+  -- and it was pessimistic by twenty pixels, which is exactly enough to have
+  -- forced the layout tighter than it needed to be.
   local used = -math.min(nextY[1], nextY[2])
-  if used > 520 - 80 then
-    AK:Print("Settings page overflows its panel by " .. math.ceil(used - (520 - 80)) .. "px.")
+  if used > 458 then
+    AK:Print("Settings page overflows its panel by " .. math.ceil(used - 458) .. "px.")
   end
   page:Show()
 end

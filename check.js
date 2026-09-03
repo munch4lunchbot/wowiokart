@@ -590,6 +590,37 @@ const camouflagedRoads = [];
   }
 }
 
+// --- menu screens that do not fit -------------------------------------------
+//
+// Art/preview-ui.js composites each menu screen from the real art and the real
+// layout tables, and it asserts the things that layout code cannot check about
+// itself: that the tagline clears the content panel, that a track card's text
+// stays inside the card, that the settings columns stop above the footer. Every
+// one of those was true and broken at some point in the last hour, and each was
+// invisible from inside the Lua that drew it.
+//
+// So it runs here rather than when somebody remembers.
+const brokenScreens = [];
+{
+  const shots = fs.mkdtempSync(path.join(os.tmpdir(), "kartui-"));
+  for (const screen of ["home", "tracks", "settings", "results"]) {
+    try {
+      execFileSync("node", [path.join(ADDON, "Art", "preview-ui.js"), path.join(ADDON, "Art"),
+        path.join(shots, screen + ".png")],
+        { stdio: "pipe", env: { ...process.env, SCREEN: screen, W: "1400", H: "840" } });
+    } catch (e) {
+      // The MESSAGE line, not the echoed source line above it -- node prints
+      // the offending `throw new Error(...)` first, which contains the same
+      // words and none of the numbers.
+      const lines = ((e.stderr || "") + "").split("\n");
+      const why = lines.find((l) => /^Error: /.test(l.trim()))
+        || lines.find((l) => /preview-ui:/.test(l)) || "preview-ui.js failed";
+      brokenScreens.push(screen + "  " + why.trim());
+    }
+  }
+  fs.rmSync(shots, { recursive: true, force: true });
+}
+
 // --- locals used above the line that declares them ---------------------------
 //
 // Lua scopes a local from its DECLARATION onward, so a function body written
@@ -679,6 +710,8 @@ if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted
 if (!languageServerRan)
   console.log("  NOTE: the Lua language server is not on this machine, so the " +
     "syntax and leaked-local checks below looked at nothing. Set LUA_LS.");
+console.log("menu screens that do not fit: " + brokenScreens.length);
+for (const b of brokenScreens) console.log("  " + b);
 console.log("locals used above their declaration: " + usedTooEarly.length);
 for (const u of usedTooEarly) console.log("  " + u);
 console.log("screens still made of BackdropTemplate: " + addonLookingWindows.length);
@@ -723,6 +756,7 @@ const bad = errors.length + leaks.size + missing.length + unlisted.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
   + unfaded.length + unscaled.length + invisibleSurfaces.length + sameLookingItems.length
   + nilProneLoops.length + borrowedScenery.length + camouflagedRoads.length
-  + wontCompile.length + addonLookingWindows.length + usedTooEarly.length;
+  + wontCompile.length + addonLookingWindows.length + usedTooEarly.length
+  + brokenScreens.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);
