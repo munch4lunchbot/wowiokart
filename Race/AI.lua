@@ -523,7 +523,7 @@ function AI:ShowPanel(report)
     local width = PAD * 2
     for _, column in ipairs(REPORT_COLUMNS) do width = width + column.width end
 
-    local frame = CreateFrame("Frame", "AzerothKartAIReport", UIParent, "BackdropTemplate")
+    local frame = CreateFrame("Frame", "AzerothKartAIReport", UIParent)
     -- Sized from the column list and the biggest field we can ever show, never
     -- hard-coded: 8 AI plus a player row plus the header.
     frame:SetSize(width, TOP + ROW * (AK.MAX_RACERS + 2) + 46)
@@ -536,12 +536,7 @@ function AI:ShowPanel(report)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-    frame:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 },
-    })
-    frame:SetBackdropColor(0.03, 0.05, 0.09, 0.97)
-    frame:SetBackdropBorderColor(unpack(AK.COLORS.gold))
+    UI:SkinWindow(frame, { 0.045, 0.075, 0.125, 0.97 })
     frame:Hide()
     self.panel = frame
 

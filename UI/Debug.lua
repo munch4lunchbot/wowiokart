@@ -82,7 +82,7 @@ local ROWS = {
 
 function Debug:Build()
   if self.frame then return end
-  local frame = CreateFrame("Frame", "AzerothKartDebug", UIParent, "BackdropTemplate")
+  local frame = CreateFrame("Frame", "AzerothKartDebug", UIParent)
   frame:SetSize(430, 40 + #ROWS * 16)
   frame:SetPoint("TOPLEFT", 200, -40)
   frame:SetFrameStrata("TOOLTIP")
@@ -91,12 +91,7 @@ function Debug:Build()
   frame:RegisterForDrag("LeftButton")
   frame:SetScript("OnDragStart", frame.StartMoving)
   frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-  frame:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 },
-  })
-  frame:SetBackdropColor(0.02, 0.03, 0.05, 0.92)
-  frame:SetBackdropBorderColor(0.3, 0.9, 0.5, 0.9)
+  AK.UI:SkinWindow(frame, { 0.03, 0.05, 0.08, 0.94 })
   frame:Hide()
   self.frame = frame
 

@@ -114,16 +114,17 @@ function Results:Build()
     local row = CreateFrame("Frame", nil, self.table)
     row:SetSize(724, ROW_HEIGHT)
     row:SetPoint("TOPLEFT", 18, -20 - (i - 1) * (ROW_HEIGHT + ROW_GAP))
-    row.bg = row:CreateTexture(nil, "BACKGROUND")
-    row.bg:SetTexture(ART .. "panel.tga")
-    row.bg:SetAllPoints()
+    -- The same shaped plate the buttons wear. A standings row used to be a
+    -- stretched gradient with a square 4px bar down its left edge, which is
+    -- what a list widget looks like; these are the eight lines the whole race
+    -- was for and they should look like part of the same object family.
+    row.plate = UI:NewPlate(row, "BACKGROUND", 0)
     row.accent = row:CreateTexture(nil, "ARTWORK")
-    row.accent:SetTexture("Interface\\Buttons\\WHITE8x8")
-    row.accent:SetPoint("TOPLEFT")
-    row.accent:SetPoint("BOTTOMLEFT")
-    row.accent:SetWidth(4)
+    row.accent:SetTexture(ART .. "chevron.tga")
+    row.accent:SetSize(9, 13)
+    row.accent:SetPoint("LEFT", 8, 0)
     row.place = UI:NewText(row, "", 17, AK.COLORS.gold, "LEFT")
-    row.place:SetPoint("LEFT", 14, 0)
+    row.place:SetPoint("LEFT", 24, 0)
     row.name = UI:NewText(row, "", 15, { .92, .95, 1 }, "LEFT")
     row.name:SetPoint("LEFT", 76, 0)
     row.kart = UI:NewText(row, "", 12, AK.COLORS.muted, "LEFT")
@@ -210,18 +211,22 @@ function Results:Animate(elapsed)
 end
 
 local function styleRow(row, place, isPlayer)
+  -- The chevron only marks YOUR row and the winner's. Marking all eight makes
+  -- it decoration; marking two makes it information.
   if isPlayer then
-    row.bg:SetVertexColor(0.16, 0.42, 0.28, 1)
+    row.plate:Tint({ 0.14, 0.40, 0.26 })
     row.accent:SetVertexColor(unpack(AK.COLORS.lime))
+    row.accent:Show()
   elseif place == 1 then
-    row.bg:SetVertexColor(0.42, 0.32, 0.10, 1)
+    row.plate:Tint({ 0.46, 0.34, 0.09 })
     row.accent:SetVertexColor(unpack(AK.COLORS.gold))
+    row.accent:Show()
   elseif place <= 3 then
-    row.bg:SetVertexColor(0.16, 0.22, 0.34, 1)
-    row.accent:SetVertexColor(0.55, 0.68, 0.88, 1)
+    row.plate:Tint({ 0.15, 0.21, 0.33 })
+    row.accent:Hide()
   else
-    row.bg:SetVertexColor(0.11, 0.14, 0.21, 1)
-    row.accent:SetVertexColor(0.28, 0.33, 0.42, 1)
+    row.plate:Tint({ 0.10, 0.13, 0.20 })
+    row.accent:Hide()
   end
 end
 

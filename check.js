@@ -590,6 +590,29 @@ const camouflagedRoads = [];
   }
 }
 
+// --- screens still made of BackdropTemplate ----------------------------------
+//
+// BackdropTemplate gives you a filled quad with a one-pixel square border for
+// free, and that is precisely what every configuration window in World of
+// Warcraft is made of. It is the single strongest visual statement a screen can
+// make that it is an addon panel rather than part of a game, and it costs
+// nothing to reach for -- which is why five separate windows here had reached
+// for it. Shape comes from art now (UI:NewPanel, UI:SkinWindow, UI:NewButton);
+// this is the guard that stops the easy thing creeping back in.
+const addonLookingWindows = [];
+for (const rel of onDisk.map((r) => r.replace(/\\/g, "/"))) {
+  // The harness STUBS BackdropTemplate -- it has to, it is pretending to be a
+  // WoW client. Checking the addon's own files is the point.
+  if (/^verify-/.test(path.basename(rel))) continue;
+  const raw = fs.readFileSync(path.join(ADDON, rel), "utf8");
+  const src = raw.replace(/--[^\n]*/g, "");
+  for (const m of src.matchAll(/BackdropTemplate|:SetBackdrop\s*\(/g)) {
+    const line = src.slice(0, m.index).split("\n").length;
+    addonLookingWindows.push(rel + ":" + line + "  " + m[0].trim() +
+      " -- use UI:NewPanel or UI:SkinWindow");
+  }
+}
+
 // --- does it actually COMPILE ------------------------------------------------
 //
 // The language-server check above is the good one, and it is not always here.
@@ -622,6 +645,8 @@ if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted
 if (!languageServerRan)
   console.log("  NOTE: the Lua language server is not on this machine, so the " +
     "syntax and leaked-local checks below looked at nothing. Set LUA_LS.");
+console.log("screens still made of BackdropTemplate: " + addonLookingWindows.length);
+for (const a of addonLookingWindows) console.log("  " + a);
 console.log("will not compile: " + wontCompile.length);
 for (const w of wontCompile) console.log("  " + w);
 console.log("syntax errors: " + errors.length);
@@ -662,6 +687,6 @@ const bad = errors.length + leaks.size + missing.length + unlisted.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
   + unfaded.length + unscaled.length + invisibleSurfaces.length + sameLookingItems.length
   + nilProneLoops.length + borrowedScenery.length + camouflagedRoads.length
-  + wontCompile.length;
+  + wontCompile.length + addonLookingWindows.length;
 console.log(bad ? "FAIL" : "PASS");
 process.exit(bad ? 1 : 0);

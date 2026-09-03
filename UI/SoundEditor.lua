@@ -121,7 +121,7 @@ function Editor:Build()
   if self.frame then return end
   local UI = AK.UI
 
-  local frame = CreateFrame("Frame", "AzerothKartSoundEditor", UIParent, "BackdropTemplate")
+  local frame = CreateFrame("Frame", "AzerothKartSoundEditor", UIParent)
   frame:SetSize(620, 116 + ROWS * ROW_HEIGHT)
   frame:SetPoint("CENTER", 0, -40)
   frame:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -131,12 +131,9 @@ function Editor:Build()
   frame:RegisterForDrag("LeftButton")
   frame:SetScript("OnDragStart", frame.StartMoving)
   frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-  frame:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 },
-  })
-  frame:SetBackdropColor(0.03, 0.05, 0.09, 0.97)
-  frame:SetBackdropBorderColor(unpack(AK.COLORS.gold))
+  -- The same shaped panel the menu uses. This window was reached by a slash
+  -- command and looked like a different, older program from the rest.
+  AK.UI:SkinWindow(frame, { 0.045, 0.075, 0.125, 0.97 })
   frame:Hide()
   self.frame = frame
   self.rows = {}

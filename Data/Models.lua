@@ -132,7 +132,7 @@ end
 function AK:PreviewNPC(creatureID)
   local preview = self.npcPreview
   if not preview then
-    preview = CreateFrame("Frame", "AzerothKartNPCPreview", UIParent, "BackdropTemplate")
+    preview = CreateFrame("Frame", "AzerothKartNPCPreview", UIParent)
     preview:SetSize(300, 340)
     preview:SetPoint("CENTER")
     preview:SetFrameStrata("DIALOG")
@@ -141,12 +141,7 @@ function AK:PreviewNPC(creatureID)
     preview:RegisterForDrag("LeftButton")
     preview:SetScript("OnDragStart", preview.StartMoving)
     preview:SetScript("OnDragStop", preview.StopMovingOrSizing)
-    preview:SetBackdrop({
-      bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8",
-      edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 },
-    })
-    preview:SetBackdropColor(0.03, 0.05, 0.09, 0.96)
-    preview:SetBackdropBorderColor(unpack(self.COLORS.gold))
+    self.UI:SkinWindow(preview, { 0.045, 0.075, 0.125, 0.96 })
     preview.model = Model:New(preview, 260, 260, -0.5, 1)
     preview.model:SetPoint("TOP", 0, -34)
     preview.label = self.UI:NewText(preview, "", 13, self.COLORS.gold, "CENTER")

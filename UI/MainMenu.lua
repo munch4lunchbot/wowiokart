@@ -26,25 +26,24 @@ local PANEL_U = { { 0, PC0 }, { PC0, PC1 }, { PC1, 1 } }
 --- what every configuration window in World of Warcraft is made of; square
 --- corners on a dark rectangle is the most recognisable "this is an addon" cue
 --- there is. See Art/generate-art-ui.js.
-function UI:NewPanel(parent, width, height, color)
-  local panel = CreateFrame("Frame", nil, parent)
-  panel:SetSize(width, height)
-  local tint = color or AK.COLORS.panel
-  panel.pieces = {}
+--- The nine pieces, plus the two methods that place and colour them.
+local function buildPanelPlate(frame)
+  frame.pieces = frame.pieces or {}
   for row = 1, 3 do
     for col = 1, 3 do
-      local piece = panel:CreateTexture(nil, "BACKGROUND", nil, 0)
+      local piece = frame:CreateTexture(nil, "BACKGROUND", nil, 0)
       piece:SetTexture(ART .. "panelplate.tga")
       piece:SetTexCoord(PANEL_U[col][1], PANEL_U[col][2], PANEL_U[row][1], PANEL_U[row][2])
-      panel.pieces[#panel.pieces + 1] = piece
+      frame.pieces[#frame.pieces + 1] = piece
       piece.row, piece.col = row, col
     end
   end
   --- Corners keep the texture's pixels; edges stretch along one axis; the
   --- middle stretches both. Capped at half the panel so a small one does not
   --- have its corners overlap into a smear.
-  function panel:LayoutPlate()
+  function frame:LayoutPlate()
     local w, h = self:GetWidth(), self:GetHeight()
+    if not w or w <= 0 or not h or h <= 0 then return end
     local cw = math.min(PANEL_CORNER, w * 0.5)
     local ch = math.min(PANEL_CORNER, h * 0.5)
     for _, piece in ipairs(self.pieces) do
@@ -56,12 +55,33 @@ function UI:NewPanel(parent, width, height, color)
         piece.row == 2 and math.max(1, h - ch * 2) or ch)
     end
   end
-  function panel:SetPlateColor(c)
+  function frame:SetPlateColor(c)
     for _, piece in ipairs(self.pieces) do
       piece:SetVertexColor(c[1], c[2], c[3], c[4] or 1)
     end
   end
-  panel:LayoutPlate()
+  frame:LayoutPlate()
+  frame:HookScript("OnSizeChanged", function(self) self:LayoutPlate() end)
+end
+
+--- Give an EXISTING frame the panel plate. Windows that build their own frame
+--- -- the workshop, the sound editor, the AI report -- were all still made of
+--- BackdropTemplate and a one-pixel square border, so the parts of the product
+--- a player reaches through a slash command looked like a different, older
+--- program from the parts they reach through the menu.
+function UI:SkinWindow(frame, color)
+  frame.pieces = {}
+  buildPanelPlate(frame)
+  frame:SetPlateColor(color or AK.COLORS.panel)
+  return frame
+end
+
+function UI:NewPanel(parent, width, height, color)
+  local panel = CreateFrame("Frame", nil, parent)
+  panel:SetSize(width, height)
+  local tint = color or AK.COLORS.panel
+  panel.pieces = {}
+  buildPanelPlate(panel)
   panel:SetPlateColor(tint)
   -- Warm light catching the top edge. It fades out before the corner curve
   -- starts, so it reads as an edge rather than as a line drawn across a box.
@@ -72,7 +92,6 @@ function UI:NewPanel(parent, width, height, color)
   gleam:SetHeight(3)
   gleam:SetVertexColor(1, 0.86, 0.55, 0.40)
   panel.gleam = gleam
-  panel:SetScript("OnSizeChanged", function(self) self:LayoutPlate() end)
   return panel
 end
 
@@ -97,6 +116,10 @@ BTN.u0 = BTN.cap / BTN.texW
 BTN.u1 = (BTN.texW - BTN.cap) / BTN.texW
 
 --- Three textures making one plate. `blend` for the body, "ADD" for the sheen.
+---
+--- Exposed on UI as well as used here: results rows, the finishing ladder and
+--- anything else that wants to be an object rather than a filled rectangle
+--- needs the same three-slice, and a second copy of it would drift.
 local function newPlate(frame, layer, file, sublevel, mode)
   local pieces = {}
   for index = 1, 3 do
@@ -327,6 +350,17 @@ local function trackRecord(trackId)
   if lap then parts[#parts + 1] = "LAP " .. AK.RaceUI:FormatTime(lap) end
   if race then parts[#parts + 1] = "RACE " .. AK.RaceUI:FormatTime(race) end
   return table.concat(parts, "   ")
+end
+
+--- Attach a button plate to any frame. Returns a handle with Layout and Tint,
+--- so a row in a table can wear the same shape as a button without being one.
+function UI:NewPlate(frame, layer, sublevel, file)
+  local pieces = newPlate(frame, layer or "BACKGROUND", file or "btn.tga", sublevel or 0)
+  local handle = { pieces = pieces }
+  function handle:Layout(width, height) layoutPlate(self.pieces, width, height) end
+  function handle:Tint(color, alpha) tintPlate(self.pieces, color, alpha) end
+  handle:Layout(frame:GetWidth(), frame:GetHeight())
+  return handle
 end
 
 --- A STAT BAR: ten segments, lit to the value.
@@ -786,7 +820,8 @@ function Menu:ShowSelection(kind)
       AK.db.selection[kind] = entry.id
       self:ShowHome()
     end)
-    if AK.db.selection[kind] == entry.id then card:SetRestStyle({ .13, .22, .25, 1 }, AK.COLORS.gold) end
+    local chosen = AK.db.selection[kind] == entry.id
+    if chosen then card:SetRestStyle({ 0.44, 0.33, 0.09 }, { 1, 0.95, 0.80 }) end
     local col, row = (index - 1) % columns, math.floor((index - 1) / columns)
     card:SetPoint("TOPLEFT", MARGIN + col * (cardWidth + GAP), -TOP - row * (cardHeight + GAP))
     local icon = card:CreateTexture(nil, "ARTWORK")
@@ -804,12 +839,19 @@ function Menu:ShowSelection(kind)
         icon:Show()
       end)
     end
-    local name = UI:NewText(card, entry.name, 16, AK.COLORS.gold, "CENTER")
+    local name = UI:NewText(card, entry.name, 16,
+      chosen and { 1, 0.95, 0.80 } or AK.COLORS.gold, "CENTER")
     name:SetPoint("TOPLEFT", 7, -72)
     name:SetPoint("TOPRIGHT", -7, -72)
-    if AK.db.selection[kind] == entry.id then
-      local selected = UI:NewText(card, "SELECTED", 10, AK.COLORS.lime, "CENTER")
-      selected:SetPoint("BOTTOM", 0, 8)
+    if chosen then
+      -- A gold card IS the selection. Printing the word "SELECTED" under it as
+      -- well is a caption on a picture of itself; a mark in the corner is how
+      -- a game says it.
+      local tick = card:CreateTexture(nil, "OVERLAY")
+      tick:SetTexture(ART .. "chevron.tga")
+      tick:SetSize(12, 16)
+      tick:SetPoint("TOPLEFT", 9, -9)
+      tick:SetVertexColor(1, 0.95, 0.80, 1)
     end
     local detail = UI:NewText(card, "", 12, AK.COLORS.muted, "CENTER")
     detail:SetPoint("TOPLEFT", 9, -99)

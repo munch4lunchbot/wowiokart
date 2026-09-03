@@ -85,13 +85,13 @@ local function Stepper(parent, steps, onStep)
   return holder
 end
 
-local function backdrop(frame, r, g, b, a, border)
-  frame:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 },
-  })
-  frame:SetBackdropColor(r, g, b, a)
-  frame:SetBackdropBorderColor(unpack(border or { 0.16, 0.22, 0.32, 1 }))
+--- The shaped panel plate, not a filled quad with a one-pixel square border.
+--- The workshop is reached by a slash command and was the last screen still
+--- made of BackdropTemplate; every window in the addon now wears the same
+--- object. `border` is kept in the signature because callers pass one, and is
+--- now what the plate is TINTED with when a cell wants to look picked.
+local function backdrop(frame, r, g, b, a)
+  AK.UI:SkinWindow(frame, { r, g, b, a })
 end
 
 --- One tuning value: label, range bar, number, and a pair of steppers.
@@ -835,7 +835,7 @@ function Workshop:BuildModelPane(pane)
   local gx = 150
   for i = 1, 8 do
     local col, row = (i - 1) % 4, math.floor((i - 1) / 4)
-    local cell = CreateFrame("Button", nil, pane, "BackdropTemplate")
+    local cell = CreateFrame("Button", nil, pane)
     cell:SetSize(150, 186)
     cell:SetPoint("TOPLEFT", gx + col * 156, -46 - row * 194)
     backdrop(cell, 0.05, 0.07, 0.11, 1)
@@ -874,8 +874,11 @@ function Workshop:BuildModelPane(pane)
         self:RefreshModels()
       end
     end)
-    cell:SetScript("OnEnter", function() cell:SetBackdropBorderColor(unpack(AK.COLORS.gold)) end)
-    cell:SetScript("OnLeave", function() cell:SetBackdropBorderColor(0.16, 0.22, 0.32, 1) end)
+    -- Lit rather than outlined: the plate has no border to recolour.
+    cell:SetScript("OnEnter", function() cell:SetPlateColor({ 0.13, 0.17, 0.25, 1 }) end)
+    cell:SetScript("OnLeave", function()
+      cell:SetPlateColor(cell.akPicked and { 0.40, 0.30, 0.09, 1 } or { 0.05, 0.07, 0.11, 1 })
+    end)
     self.cells[i] = cell
   end
 
@@ -1007,7 +1010,10 @@ function Workshop:RefreshModels()
     cell.label:SetText(tostring(id))
     local mine = racer and racer.model and racer.model.creature == id
     cell.label:SetTextColor(unpack(mine and AK.COLORS.gold or { .9, .85, .7 }))
-    cell:SetBackdropBorderColor(unpack(mine and AK.COLORS.gold or { 0.16, 0.22, 0.32, 1 }))
+    -- Remembered on the cell so OnLeave can put the right colour back rather
+    -- than always resetting to unpicked.
+    cell.akPicked = mine
+    cell:SetPlateColor(mine and { 0.40, 0.30, 0.09, 1 } or { 0.05, 0.07, 0.11, 1 })
   end
   for _, entry in ipairs(self.racerButtons or {}) do
     local selected = entry.id == AK.db.selection.racer
@@ -1041,7 +1047,7 @@ end
 function Workshop:Build()
   if self.frame then return end
 
-  local frame = CreateFrame("Frame", "AzerothKartWorkshop", UIParent, "BackdropTemplate")
+  local frame = CreateFrame("Frame", "AzerothKartWorkshop", UIParent)
   frame:SetSize(WIDTH, HEIGHT)
   frame:SetPoint("CENTER", 0, 0)
   -- FULLSCREEN_DIALOG, never TOOLTIP: GameTooltip lives at TOOLTIP strata, so a
@@ -1054,7 +1060,7 @@ function Workshop:Build()
   frame:RegisterForDrag("LeftButton")
   frame:SetScript("OnDragStart", frame.StartMoving)
   frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-  backdrop(frame, 0.03, 0.05, 0.09, 0.97, AK.COLORS.gold)
+  backdrop(frame, 0.045, 0.075, 0.125, 0.97)
   -- 1120x720 is wider than a 4:3 client's UIParent (1024) and within 48px of a
   -- 16:9 one's height, so the panel hung off both edges on the first and had no
   -- margin at all on the second. It is a fixed-size centred frame, so scaling

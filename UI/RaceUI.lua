@@ -540,7 +540,7 @@ end
 
 function RaceUI:Build()
   if self.frame then return end
-  local frame = CreateFrame("Frame", "AzerothKartRace", UIParent, "BackdropTemplate")
+  local frame = CreateFrame("Frame", "AzerothKartRace", UIParent)
   frame:SetAllPoints(UIParent)
   frame:SetFrameStrata("FULLSCREEN_DIALOG")
   frame:EnableKeyboard(true)
