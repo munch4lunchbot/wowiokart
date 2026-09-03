@@ -28,7 +28,7 @@ AK.Tracks = {
   {
     id = "oribos", name = "Oribos Ring Run", subtitle = "The Eternal City, at speed", theme = "ORIBOS",
     style = "oribos", sweep = 3.2,
-    length = 2600, laps = 3, color = { 0.17, 0.13, 0.26 }, road = { 0.50, 0.46, 0.42 },
+    length = 2600, laps = 3, color = { 0.17, 0.13, 0.26 }, road = { 0.72, 0.66, 0.54 },
     skyTop = { 0.05, 0.03, 0.12 }, skyLow = { 0.38, 0.22, 0.55 }, glow = { 0.55, 0.85, 1.00 },
     weather = "ember", light = 0.86, archSpacing = 150,
     hazardPlan = {
@@ -301,8 +301,16 @@ AK.Tracks = {
   {
     id = "ironforge", name = "Ironforge Ice Circuit", subtitle = "No traction? No problem.", theme = "DUN MOROGH",
     sweep = 2.4,
-    length = 2450, laps = 3, color = { 0.62, 0.78, 0.88 }, road = { 0.41, 0.53, 0.66 },
-    skyTop = { 0.44, 0.55, 0.68 }, skyLow = { 0.84, 0.90, 0.95 }, glow = { 0.92, 0.95, 1.00 },
+    -- A COLD BLUE SKY OVER WHITE SNOW OVER DARK STONE.
+    --
+    -- Every one of these used to sit in the same pale blue-grey band, and a
+    -- render of the circuit came back as one flat colour from the mountains to
+    -- the bumper -- road, verge, treeline and sky all within a few percent of
+    -- each other. A snow track wants exactly three values, well apart: the ice
+    -- painted on the road then reads as ice, because there is something darker
+    -- underneath it for it to be lighter than.
+    length = 2450, laps = 3, color = { 0.80, 0.87, 0.94 }, road = { 0.17, 0.22, 0.31 },
+    skyTop = { 0.16, 0.32, 0.58 }, skyLow = { 0.72, 0.84, 0.96 }, glow = { 0.95, 0.97, 1.00 },
     weather = "snow", light = 0.95,
     hazardPlan = {
       { kind = "traffic", name = "Mine Cart", count = 3, at = 0.10, spacing = 240, speed = 34, lateral = -0.4, radius = 3.6,
@@ -368,7 +376,7 @@ AK.Tracks = {
   {
     id = "deadmines", name = "The Deadmines Run", subtitle = "Hard hats strongly advised", theme = "WESTFALL",
     sweep = 3.8,
-    length = 2500, laps = 3, color = { 0.13, 0.17, 0.23 }, road = { 0.35, 0.27, 0.20 },
+    length = 2500, laps = 3, color = { 0.09, 0.12, 0.17 }, road = { 0.62, 0.50, 0.36 },
     skyTop = { 0.03, 0.04, 0.10 }, skyLow = { 0.16, 0.19, 0.34 }, glow = { 0.42, 0.46, 0.72 },
     -- 0.55 multiplied into every tint turned the whole scene to pitch --
     -- video frames measured the road at RGB ~15. Dark comes from the palette
@@ -445,7 +453,7 @@ AK.Tracks = {
     sweep = 2.5,
     -- A pale arcane causeway over the void. Purple road on purple nebula was one
     -- colour with a slightly different tint.
-    length = 2750, laps = 3, color = { 0.26, 0.12, 0.45 }, road = { 0.55, 0.52, 0.62 },
+    length = 2750, laps = 3, color = { 0.26, 0.12, 0.45 }, road = { 0.20, 0.19, 0.27 },
     skyTop = { 0.07, 0.03, 0.18 }, skyLow = { 0.44, 0.20, 0.62 }, glow = { 0.72, 0.42, 1.00 },
     weather = "ember", light = 0.80,
     hazardPlan = {
@@ -517,7 +525,7 @@ AK.Tracks = {
     id = "thousandneedles", name = "Thousand Needles Mesa Run", subtitle = "Mind the gap. All of them.", theme = "THOUSAND NEEDLES",
     sweep = 2.8,
     -- Bleached limestone across red mesa, rather than two shades of the same clay.
-    length = 2100, laps = 3, color = { 0.62, 0.34, 0.20 }, road = { 0.74, 0.68, 0.58 },
+    length = 2100, laps = 3, color = { 0.62, 0.34, 0.20 }, road = { 0.30, 0.25, 0.21 },
     skyTop = { 0.36, 0.20, 0.14 }, skyLow = { 0.92, 0.62, 0.38 }, glow = { 1.00, 0.78, 0.48 },
     weather = "none", light = 0.96,
     hazardPlan = {
@@ -581,7 +589,7 @@ AK.Tracks = {
   {
     id = "zangarmarsh", name = "Zangarmarsh Spore Run", subtitle = "The bog always wins", theme = "ZANGARMARSH",
     sweep = 3.0,
-    length = 2300, laps = 3, color = { 0.16, 0.34, 0.38 }, road = { 0.40, 0.44, 0.42 },
+    length = 2300, laps = 3, color = { 0.16, 0.34, 0.38 }, road = { 0.22, 0.24, 0.24 },
     skyTop = { 0.08, 0.18, 0.26 }, skyLow = { 0.34, 0.62, 0.60 }, glow = { 0.55, 0.95, 0.85 },
     weather = "rain", light = 0.86,
     hazardPlan = {
@@ -644,7 +652,9 @@ AK.Tracks = {
   {
     id = "icecrown", name = "Icecrown Spire Descent", subtitle = "All downhill. Twice.", theme = "ICECROWN",
     sweep = 2.7,
-    length = 2250, laps = 3, color = { 0.16, 0.20, 0.30 }, road = { 0.42, 0.46, 0.54 },
+    -- Dark saronite under driven snow. Both used to sit in the same dim blue,
+    -- and the ice painted across a third of the descent sat there with them.
+    length = 2250, laps = 3, color = { 0.66, 0.74, 0.86 }, road = { 0.19, 0.21, 0.29 },
     skyTop = { 0.02, 0.04, 0.10 }, skyLow = { 0.20, 0.30, 0.46 }, glow = { 0.58, 0.86, 1.00 },
     weather = "snow", light = 0.76,
     hazardPlan = {

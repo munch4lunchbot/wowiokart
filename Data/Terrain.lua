@@ -56,7 +56,11 @@ Terrain.TYPES = {
   ICE = {
     id = "ICE", name = "Ice",
     speed = 0.96, acceleration = 0.85, steering = 1.10, traction = 0.22,
-    drift = 1.35, rumble = 0.10, drivable = true, tint = { .78, .90, 1.0 },
+    -- Deep glacial blue, not near-white. Ice tinted almost the colour of the
+    -- snow beside it made Ironforge one flat blue-grey from bumper to horizon,
+    -- and a surface that takes three quarters of your grip away has to be the
+    -- most obvious thing on the road, not the least.
+    drift = 1.35, rumble = 0.10, drivable = true, tint = { .26, .46, .70 },
   },
   WATER = {
     id = "WATER", name = "Water",

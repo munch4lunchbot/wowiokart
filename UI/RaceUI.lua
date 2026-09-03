@@ -1409,6 +1409,20 @@ local SKYLINE = {
                     treeTint = { .24, .28, .44 } },
   netherstorm   = { mtn = { h = .15, tint = { .52, .33, .72 }, a = .90, float = .05 },
                     treeArt = "shard.tga", treeTint = { .58, .38, .86 } },
+  -- These three had no entry at all and fell through to the default: no ridge
+  -- line behind them, and a wall of plain forest green on the horizon of a
+  -- mesa, a bog and a frozen citadel. Same fault the props had, one layer
+  -- further back -- and further back is where it is least likely to be noticed
+  -- and most likely to make three circuits look like the same place.
+  thousandneedles = { mtn = { h = .17, tint = { .66, .40, .26 }, a = .95 },
+                    hill = { h = .075, tint = { .54, .32, .20 } },
+                    treeArt = "spire.tga", treeTint = { .60, .40, .26 } },
+  zangarmarsh   = { mtn = { h = .09, tint = { .28, .46, .50 }, a = .75 },
+                    hill = { h = .085, tint = { .18, .38, .38 } },
+                    treeArt = "sporecap.tga", treeTint = { .34, .58, .56 } },
+  icecrown      = { mtn = { h = .20, tint = { .30, .34, .48 }, a = .95 },
+                    hill = { h = .07, tint = { .22, .26, .38 } },
+                    treeArt = "spire.tga", treeTint = { .20, .23, .32 } },
 }
 
 --- Re-anchor everything pinned to the horizon. Called whenever the tuned
@@ -2783,9 +2797,12 @@ local PROP_KINDS = {
     { art = "sporecap.tga", w = 1.00, h = 1.00, tint = { 0.66, 0.50, 0.32 }, min = 1.4, max = 3.0 },
   },
   -- Snow-laden firs and ice. Pale, and it reads against the white ground.
+  -- Dark evergreens and bare grey rock, so the snow has something to be white
+  -- against. Both used to be tinted almost the colour of the snow itself.
   ironforge = {
-    { art = "tree.tga",  w = 0.58, h = 1.00, tint = { 0.40, 0.54, 0.58 }, min = 4.0, max = 10.0 },
-    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.70, 0.84, 0.95 }, min = 1.8, max = 4.5 },
+    { art = "tree.tga",  w = 0.58, h = 1.00, tint = { 0.13, 0.30, 0.28 }, min = 4.0, max = 10.0 },
+    { art = "tree.tga",  w = 0.52, h = 1.15, tint = { 0.09, 0.22, 0.24 }, min = 5.0, max = 12.0 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.46, 0.54, 0.62 }, min = 1.8, max = 4.5 },
   },
   -- Underground: no trees at all, just cut rock and timber.
   deadmines = {
@@ -3232,6 +3249,15 @@ function RaceUI:RenderRoad(race, player)
   self.tunnelDepth = camDepth
   -- Under cover the whole scene loses its daylight, which is most of what
   -- sells a tunnel as a place rather than as a differently textured road.
+  --
+  -- But not the ROAD, not that hard. Deadmines is authored dark (light 0.72) on
+  -- a dark palette, and inside its shafts the full 0.48 took the tarmac to RGB
+  -- 13 -- measured, on a rendered frame. That is not atmosphere, it is a track
+  -- you cannot see, and it is the same fault the palette comment above this
+  -- circuit says was already fixed once for the open sections. The walls and
+  -- the verge carry the dark; the road stays the lit ribbon running through it,
+  -- which is both legible and what a tunnel actually looks like.
+  local roadLight = light * (1 - camDepth * 0.20)
   light = light * (1 - camDepth * 0.48)
 
   -- Aerial perspective on the ground plane.
@@ -3340,7 +3366,7 @@ function RaceUI:RenderRoad(race, player)
         -- Hazard-striped launch surface: unmistakable, and it scrolls at you.
         local band = (math.floor(segZ / 2.2) % 2 == 0)
         local hot = band and 1.0 or 0.55
-        strip.road:SetVertexColor(aerial(1.0, 0.74, 0.16, hot * light, mix))
+        strip.road:SetVertexColor(aerial(1.0, 0.74, 0.16, hot * roadLight, mix))
       else
         -- A SURFACE PAINTED ON THE ROAD HAS TO BE VISIBLE.
         --
@@ -3363,7 +3389,17 @@ function RaceUI:RenderRoad(race, player)
           g = g + (paint.tint[2] - g) * reach
           b = b + (paint.tint[3] - b) * reach
         end
-        strip.road:SetVertexColor(aerial(r, g, b, (dark and 0.96 or 1.0) * light, mix))
+        -- A LEGIBILITY FLOOR. A dark palette, a night circuit and a tunnel all
+        -- multiply, and three modest decisions can compound into a road at RGB
+        -- 13. Whatever the lighting says, the tarmac keeps enough value to be
+        -- seen -- lifted as a whole so the colour's hue survives the rescue.
+        local litR, litG, litB = r * roadLight, g * roadLight, b * roadLight
+        local peak = math.max(litR, litG, litB)
+        if peak > 0.001 and peak < 0.17 then
+          local rescue = 0.17 / peak
+          litR, litG, litB = litR * rescue, litG * rescue, litB * rescue
+        end
+        strip.road:SetVertexColor(aerial(litR, litG, litB, dark and 0.96 or 1.0, mix))
       end
       setShown(strip.road, true)
 

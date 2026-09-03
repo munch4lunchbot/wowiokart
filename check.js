@@ -541,41 +541,52 @@ const borrowedScenery = [];
     const end = table.indexOf("\n}\n");
     const keys = new Set([...table.slice(0, end).matchAll(/^  (\w+) = \{$/gm)].map(m => m[1]));
     const tracks = fs.readFileSync(tracksFile, "utf8");
-    for (const m of tracks.matchAll(/\n  \{\n    id = "(\w+)"/g))
+    // The SKYLINE table is the same thing one layer further back: the ridge
+    // line and the treeline on the horizon. Three circuits had no entry, so a
+    // mesa, a bog and a frozen citadel all had the same wall of forest green
+    // behind them and no mountains at all.
+    const skyStart = src.indexOf("local SKYLINE = {");
+    const skyKeys = new Set(skyStart >= 0
+      ? [...src.slice(skyStart, src.indexOf("\n}\n", skyStart)).matchAll(/^  (\w+)\s+= \{/gm)]
+        .map((m) => m[1])
+      : []);
+    for (const m of tracks.matchAll(/\n  \{\n    id = "(\w+)"/g)) {
       if (!keys.has(m[1]))
         borrowedScenery.push(m[1] + "  has no PROP_KINDS entry, so it wears the default forest");
+      if (skyStart >= 0 && !skyKeys.has(m[1]))
+        borrowedScenery.push(m[1] + "  has no SKYLINE entry, so its horizon is the default forest");
+    }
   }
 }
 
-// --- roads you cannot pick out from the ground beside them -------------------
+// --- roads you cannot pick out from the verge beside them --------------------
 //
-// The single most important read in a kart game is where the track IS, and it
-// has to survive peripheral vision at 190km/h. Durotar shipped with a brown
-// road laid on brown sand -- 0.037 apart in luminance -- so the only thing
-// separating tarmac from desert was the kerb. Netherstorm was purple on purple
-// and Thousand Needles was clay on clay.
+// The single most important read in a kart game, and it has to survive
+// peripheral vision at 190km/h.
 //
-// Scored on luminance distance plus chroma distance, because either one alone
-// is enough to read: Ironforge is grey road on white snow (all luminance) and
-// Elwynn is brown road on green grass (mostly chroma). Both are fine. What is
-// never fine is being close on both at once.
+// This does not model it. Two earlier versions did and both were wrong in a way
+// that mattered: the first compared the road against the track's authored
+// GROUND colour, which is not what is drawn next to it -- RenderRoad lifts the
+// verge toward its own luminance, times 2.15, then normalises, so every verge
+// in the game ends up in the top third of the range and a dark ground renders
+// bright. Netherstorm passed with a pale road on a dark purple ground and then
+// rendered pale-on-pale. The second modelled the lift and still missed the
+// texture means, the track light and the distance haze.
+//
+// So it measures. Art/verify-contrast.js renders every circuit through the real
+// projection with the real art and samples the rendered pixels either side of
+// the tarmac, at every strip whose verge is on screen. That takes a few seconds
+// and it is the only version of this check that has ever been right.
 const camouflagedRoads = [];
 {
-  const tracksFile = path.join(ADDON, "Data", "Tracks.lua");
-  if (fs.existsSync(tracksFile)) {
-    const src = fs.readFileSync(tracksFile, "utf8");
-    const lum = (c) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
-    const re = /id = "(\w+)",[\s\S]{0,600}?color = \{ ([\d.]+), ([\d.]+), ([\d.]+) \}, road = \{ ([\d.]+), ([\d.]+), ([\d.]+) \}/g;
-    for (const m of src.matchAll(re)) {
-      const ground = [+m[2], +m[3], +m[4]], road = [+m[5], +m[6], +m[7]];
-      const lg = lum(ground), lr = lum(road);
-      const cg = ground.map((v) => v - lg), cr = road.map((v) => v - lr);
-      const chroma = Math.hypot(cg[0] - cr[0], cg[1] - cr[1], cg[2] - cr[2]);
-      const score = Math.abs(lg - lr) + chroma;
-      if (score < 0.22)
-        camouflagedRoads.push(m[1] + "  road and ground are " + score.toFixed(3) +
-          " apart; the track vanishes into its own scenery (want 0.22+)");
+  try {
+    execFileSync("node", [path.join(ADDON, "Art", "verify-contrast.js")], { stdio: "pipe" });
+  } catch (e) {
+    for (const line of ((e.stdout || "") + "").split("\n")) {
+      const m = line.match(/^\s+(\w+)\s+([\d.]+)\s+\(worst strip [\d.]+\)\s+<--\s+(.+)$/);
+      if (m) camouflagedRoads.push(m[1] + "  " + m[3] + " (separation " + m[2] + ")");
     }
+    if (!camouflagedRoads.length) camouflagedRoads.push("Art/verify-contrast.js failed to run");
   }
 }
 
@@ -643,7 +654,7 @@ console.log("ipairs over a list that can hold a nil: " + nilProneLoops.length);
 for (const u of nilProneLoops) console.log("  " + u);
 console.log("circuits wearing another circuit's scenery: " + borrowedScenery.length);
 for (const b of borrowedScenery) console.log("  " + b);
-console.log("roads camouflaged against their own ground: " + camouflagedRoads.length);
+console.log("roads that vanish into their own verge: " + camouflagedRoads.length);
 for (const c of camouflagedRoads) console.log("  " + c);
 
 const bad = errors.length + leaks.size + missing.length + unlisted.length

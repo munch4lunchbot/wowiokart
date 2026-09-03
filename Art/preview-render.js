@@ -326,21 +326,41 @@ if (tex.cloud) {
 // row of cones on a hard seam was the strongest "flat cardboard" tell we had.
 // Heights are fractions of screen height, never absolute pixels -- absolute
 // sizes are how the skyline shrank to nothing on larger client resolutions.
-const SKYLINE = {
-  oribos:        {},
-  elwynn:        { mtn: { h: .12, tint: [.55, .64, .80], a: .85 }, hill: { h: .085, tint: [.34, .52, .30] },
-                   treeTint: [.26, .46, .27] },
-  durotar:       { mtn: { h: .19, tint: [.60, .32, .22], a: .95 }, hill: { h: .07, tint: [.50, .30, .17] },
-                   treeTint: [.46, .25, .13] },
-  stranglethorn: { mtn: { h: .11, tint: [.38, .54, .52], a: .80 }, hill: { h: .10, tint: [.16, .36, .25] },
-                   treeTint: [.17, .42, .22] },
-  ironforge:     { mtn: { h: .22, tint: [.80, .87, .97], a: 1.0 }, hill: { h: .08, tint: [.60, .70, .83] },
-                   treeTint: [.42, .55, .62] },
-  deadmines:     { mtn: { h: .10, tint: [.20, .24, .40], a: .90 }, hill: { h: .06, tint: [.15, .19, .30] },
-                   treeTint: [.24, .28, .44] },
-  netherstorm:   { mtn: { h: .15, tint: [.52, .33, .72], a: .90, float: .05 },
-                   treeArt: "shard", treeTint: [.58, .38, .86] },
-};
+// SKYLINE, PARSED FROM RaceUI.lua RATHER THAN COPIED FROM IT.
+//
+// It used to be a hand-transcribed duplicate, and a duplicate of authored data
+// is a duplicate that drifts: three circuits were added to the game's table and
+// never to this one, so a preview of them showed a ridge line the game did not
+// draw (or the other way round) and the harness that exists to catch scenery
+// faults was itself wearing the wrong scenery.
+const SKYLINE = (() => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "UI", "RaceUI.lua"), "utf8");
+  const table = src.slice(src.indexOf("local SKYLINE = {"));
+  const body = table.slice(0, table.indexOf("\n}\n"));
+  const out = {};
+  const heads = [...body.matchAll(/^  (\w+)\s+= \{/gm)];
+  const rgb = (t) => t.split(",").map(Number);
+  for (let i = 0; i < heads.length; i++) {
+    const chunk = body.slice(heads[i].index,
+      i + 1 < heads.length ? heads[i + 1].index : body.length);
+    const entry = {};
+    for (const layer of ["mtn", "hill"]) {
+      const m = chunk.match(new RegExp(layer +
+        " = \\{ h = ([\\d.]+), tint = \\{ ([\\d.,\\s]+) \\}(?:, a = ([\\d.]+))?(?:, float = ([\\d.]+))? \\}"));
+      if (m) {
+        entry[layer] = { h: +m[1], tint: rgb(m[2]) };
+        if (m[3] !== undefined) entry[layer].a = +m[3];
+        if (m[4] !== undefined) entry[layer].float = +m[4];
+      }
+    }
+    const art = chunk.match(/treeArt = "([\w.]+)"/);
+    if (art) entry.treeArt = art[1].replace(".tga", "");
+    const tint = chunk.match(/treeTint = \{ ([\d.,\s]+) \}/);
+    if (tint) entry.treeTint = rgb(tint[1]);
+    out[heads[i][1]] = entry;
+  }
+  return out;
+})();
 const skyline = SKYLINE[TRACK_ID] || {};
 // One full-width quad per layer, the ridge sliding inside it via texture
 // coordinates -- identical to the addon's SetTexCoord scroll.
@@ -462,6 +482,17 @@ const PAINT = (() => {
 // most of the screen.
 const roadCamDepth = tunnelDepth(camZ);
 const roadLight = light * (1 - roadCamDepth * 0.48);
+// The road takes far less of the cover dimming than the rest of the scene --
+// see RaceUI:RenderRoad. Under a shaft the walls carry the dark; the tarmac
+// stays the lit ribbon running through it.
+const tarmacLight = light * (1 - roadCamDepth * 0.20);
+/** RaceUI's legibility floor: a dark palette times a dark track times a tunnel
+ *  can compound to a road at RGB 13, so the tarmac keeps a minimum value. */
+function legible(c, lit) {
+  const v = c.map((x) => x * lit);
+  const peak = Math.max(...v);
+  return (peak > 0.001 && peak < 0.17) ? v.map((x) => x * (0.17 / peak)) : v;
+}
 const roadHaze = [
   (track.skyLow[0] * 0.58 + track.glow[0] * 0.42) * roadLight,
   (track.skyLow[1] * 0.58 + track.glow[1] * 0.42) * roadLight,
@@ -523,8 +554,8 @@ for (let r = rows.length - 1; r >= 0; r--) {
       ? track.road.map((c, k) => c + (PAINT[zone.mat][k] - c) * reach)
       : track.road;
     const tint = onRamp
-      ? aerial([1.0, 0.74, 0.16], (band ? 1.0 : 0.55) * roadLight, mix)
-      : aerial(base, (dark ? .96 : 1) * roadLight, mix);
+      ? aerial([1.0, 0.74, 0.16], (band ? 1.0 : 0.55) * tarmacLight, mix)
+      : aerial(legible(base, tarmacLight), dark ? .96 : 1, mix);
     blit(tex.road, SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx,
       -uR, uR, v0 / ROAD_TILE, v1 / ROAD_TILE, tint, 1);
     if (tex.roadshade)
@@ -906,4 +937,17 @@ for (let y = 0; y < H; y++) { rgb[y * (W * 3 + 1)] = 0; for (let x = 0; x < W; x
 const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4); ihdr[8] = 8; ihdr[9] = 2;
 fs.writeFileSync(OUT, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
   chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(rgb)), chunk("IEND", Buffer.alloc(0))]));
+// Where the road actually IS on screen, per strip. Anything measuring the
+// rendered frame -- "can you tell the road from the verge" -- has to sample
+// inside and outside the tarmac, and on a bending circuit those places are
+// nowhere near a fixed pair of coordinates.
+if (process.env.ROAD_ROWS) {
+  fs.writeFileSync(process.env.ROAD_ROWS, JSON.stringify(rows.map((r) => ({
+    y: Math.round(SY(r.y)), left: Math.round(SX(r.midX - r.midHalf)),
+    right: Math.round(SX(r.midX + r.midHalf)),
+    // Under cover there is no verge at all -- outside the shaft is rock -- so
+    // anything asking "can you tell the road from the grass" has to skip these.
+    cover: r.cover || 0,
+  }))));
+}
 console.log("rendered", OUT, "at distance", PLAYER_DIST);
