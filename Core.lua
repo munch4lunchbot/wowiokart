@@ -11,6 +11,13 @@ end
 
 SLASH_AZEROTHKART1 = "/kart"
 SLASH_AZEROTHKART2 = "/azerothkart"
+-- %w, NOT %a, FOR A CUE NAME.
+--
+-- Cue names carry digits -- driftTier1, driftTier2, driftTier3 -- and a
+-- letters-only pattern simply does not match them, so `/kart sfxset driftTier1
+-- 12345` fell through every branch and OPENED THE GARAGE. Four of the sound
+-- commands could not address the three rungs of the drift ladder, which
+-- Audio.lua calls the single most valuable cue in the game.
 SlashCmdList["AZEROTHKART"] = function(message)
   message = (message or ""):lower():match("^%s*(.-)%s*$")
   if message == "race" then
@@ -27,8 +34,8 @@ SlashCmdList["AZEROTHKART"] = function(message)
     AK.SoundEditor:Toggle()
   elseif message == "sfx" then
     AK:AuditionSfx()
-  elseif message:match("^sfx%s+%a+$") then
-    AK:AuditionSfx(message:match("^sfx%s+(%a+)$"))
+  elseif message:match("^sfx%s+%w+$") then
+    AK:AuditionSfx(message:match("^sfx%s+(%w+)$"))
   elseif message == "sfxstop" then
     AK:StopPreview()
   elseif message:match("^sfxdensity%s+%d+$") then
@@ -45,15 +52,15 @@ SlashCmdList["AZEROTHKART"] = function(message)
     -- Explore the game's own audio library by ear. Anything worth keeping gets
     -- bound to a cue with sfxset.
     AK:TrySoundFile(tonumber(message:match("(%d+)")))
-  elseif message:match("^sfxset%s+%a+%s+%d+$") then
-    local cue, id = message:match("^sfxset%s+(%a+)%s+(%d+)$")
+  elseif message:match("^sfxset%s+%w+%s+%d+$") then
+    local cue, id = message:match("^sfxset%s+(%w+)%s+(%d+)$")
     AK:SetCueSound(cue, tonumber(id))
-  elseif message:match("^sfxclear%s+%a+$") then
-    AK:SetCueSound(message:match("^sfxclear%s+(%a+)$"), nil)
-  elseif message == "sfxmute" or message:match("^sfxmute%s+%a+$") then
+  elseif message:match("^sfxclear%s+%w+$") then
+    AK:SetCueSound(message:match("^sfxclear%s+(%w+)$"), nil)
+  elseif message == "sfxmute" or message:match("^sfxmute%s+%w+$") then
     -- The blunt instrument, for when the sound set is being worked on and the
     -- race needs to shut up first. Bare `sfxmute` silences everything.
-    AK:MuteCue(message:match("^sfxmute%s+(%a+)$") or "all")
+    AK:MuteCue(message:match("^sfxmute%s+(%w+)$") or "all")
   elseif message == "sfxunmute" then
     AK:UnmuteAll()
   elseif message == "debug" then
@@ -74,8 +81,15 @@ SlashCmdList["AZEROTHKART"] = function(message)
     AK:Print("sound: |cffffd100sound|r the editor  |  |cffffd100sfx|r audition every cue  |  |cffffd100sfx <cue>|r one cue  |  |cffffd100sfxrate <cue>|r hear it 8x at its real density -- the only way to judge 'repetitive'")
     AK:Print("sound: |cffffd100sfxid <fileID>|r try any game sound  |  |cffffd100sfxset <cue> <fileID>|r bind it  |  |cffffd100sfxclear <cue>|r  |  |cffffd100sfxreport|r what resolved")
     AK:Print("sound: |cffffd100sfxmute|r silence every cue  |  |cffffd100sfxmute <cue>|r just one  |  |cffffd100sfxunmute|r bring them all back  |  |cffffd100sfxstop|r cut what is playing")
-  else
+  elseif message == "" then
     AK.Menu:Show()
+  else
+    -- A MISTYPED COMMAND MUST NOT LOOK LIKE A WORKING ONE. Anything unmatched
+    -- used to open the garage, which is indistinguishable from bare `/kart` --
+    -- so a command with a typo in it, or one whose pattern quietly failed to
+    -- match, reported success by showing you a menu.
+    AK:Print(("|cff%s%s|r is not a command. Try |cffffd100/kart help|r.")
+      :format(AK:ColorHex(AK.COLORS.danger), message))
   end
 end
 

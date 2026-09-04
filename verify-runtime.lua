@@ -1221,6 +1221,55 @@ if loadFailures == 0 then
     C_ChatInfo.SendAddonMessage = realSend
   end)
 
+  -- EVERY COMMAND THE HELP TEXT ADVERTISES HAS TO BE A COMMAND.
+  --
+  -- `/kart sfxset driftTier1 12345` matched nothing and opened the GARAGE,
+  -- because the cue-name pattern was letters-only and every rung of the drift
+  -- ladder has a digit in its name. Falling through to the menu is what made it
+  -- invisible: a mistyped command and a working one looked the same.
+  ok("every slash command the help text advertises works", function()
+    local said = {}
+    local realPrint = AK.Print
+    AK.Print = function(_, text) said[#said + 1] = tostring(text) end
+    local function run(command)
+      wipe(said)
+      SlashCmdList["AZEROTHKART"](command)
+      for _, line in ipairs(said) do
+        assert(not line:find("is not a command"),
+          ("/kart %s is advertised but not handled"):format(command))
+      end
+    end
+
+    -- One with a digit in the cue name for every command that takes one: that
+    -- is the case that was broken.
+    for _, command in ipairs({
+      "", "help", "race", "stop", "tune", "roster", "debug", "beats",
+      "trial", "aireport", "sound", "sfxedit",
+      "sfx", "sfx driftTier1", "sfx boost",
+      "sfxrate driftTier3", "sfxreport", "sfxstop",
+      "sfxset driftTier2 12345", "sfxclear driftTier2",
+      "sfxmute", "sfxmute driftTier1", "sfxunmute",
+      "sfxid 566000", "sfxtest 566000", "sfxdensity 566000",
+      "npc 36648",
+    }) do run(command) end
+
+    -- And a genuine typo must SAY so rather than opening a menu.
+    wipe(said)
+    SlashCmdList["AZEROTHKART"]("sfxsett driftTier1 1")
+    local complained = false
+    for _, line in ipairs(said) do
+      if line:find("is not a command") then complained = true end
+    end
+    AK.Print = realPrint
+    assert(complained, "a mistyped command was swallowed instead of reported")
+    AK.Race:Stop(true)
+    if AK.Debug.frame and AK.Debug.frame:IsShown() then AK.Debug:Toggle() end
+    if AK.Workshop.frame and AK.Workshop.frame:IsShown() then AK.Workshop:Toggle() end
+    if AK.SoundEditor.frame and AK.SoundEditor.frame:IsShown() then AK.SoundEditor:Toggle() end
+    AK.Menu:Hide()
+    say(("        %d commands dispatched, typos reported"):format(27))
+  end)
+
   ok("the menu, the workshop and the sound editor all build", function()
     AK.Menu:Build()
     AK.Menu:Show()
