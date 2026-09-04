@@ -18,6 +18,12 @@ local SEGMENTS = 150
 --- finely the road is sliced, which nobody thinks about in strips.
 local SEGMENT_DETAIL = { Low = 84, Balanced = 116, High = SEGMENTS }
 local FORK_SEGMENTS = 40
+--- Where the road stops being sliced by screen height and starts being sliced
+--- by metres. See the long note in RenderRoad.
+local DETAIL_Z = 120
+--- How many strips the far tail gets, at most. They are thin and cheap to look
+--- at; what they buy is a far road that bends.
+local TAIL_SEGMENTS = 22
 local TUNNEL_HEIGHT = 7.5        -- metres from road to tunnel ceiling
 local TUNNEL_TILE = 5.0          -- metres per repeat of the rock texture
 local PROPS = 54                 -- roadside scenery frames in flight at once
@@ -27,6 +33,29 @@ local PROP_SPACING = 9           -- metres between props on each side
 -- cannot see yet, and every track felt like a straight partly because the bend
 -- only appeared once you were already in it.
 local FAR_Z = 330
+--- How far the AIR reaches, in metres. Distinct from FAR_Z on purpose.
+---
+--- Fog and aerial haze used to be measured as a fraction of the draw distance,
+--- which quietly made the weather a function of a SLIDER: wind the draw
+--- distance out and the same hillside 200m away got clearer, wind it in and it
+--- got murkier. Worse, it meant the road could never fade INTO anything -- the
+--- last strip sat at the same haze whatever the setting, so the road ENDED, in
+--- a hard edge with open ground beyond it, instead of dissolving at the
+--- horizon. The atmosphere is a property of the world; only how much of the
+--- world you are shown is a setting.
+local HAZE_Z = 330
+--- How far out a piece of roadside FURNITURE is drawn, in metres.
+---
+--- Also not a fraction of FAR_Z, and for a reason the props already learned
+--- the hard way: past about 120m the road has usually swung off the side of
+--- the display, so anything drawn out there enters at the screen edge and
+--- travels inward rather than appearing on the road and simply growing. That
+--- limit belongs to the PROJECTION, so it is a distance in metres -- pulled in
+--- only when the road itself is drawn shorter than that, which is the one case
+--- where a post could otherwise stand beyond the end of the tarmac.
+local function reach(metres)
+  return math.min(FAR_Z * 0.9, metres)
+end
 --- Nearer than this, a trackside object is never faded for being off-axis: it
 --- is genuinely sweeping past you, not stranded off the road by a corner.
 ---
@@ -44,6 +73,22 @@ local STRIPE_LENGTH = 4.5
 -- square, so 4.8m gives roughly 1.2m paving stones.
 local ROAD_TILE = 4.2
 local GRASS_TILE = 3.0
+--- Mean luminance the ground textures are baked to.
+---
+--- Not a guess and not a measurement of the rendered frame: road.tga and
+--- grass.tga are levelled to exactly these by OUTPUT_LEVEL in
+--- Art/generate-art-ground.js. A strip that has dropped its texture for flat
+--- colour multiplies by its own file's mean, which is what makes the changeover
+--- invisible instead of a bright step across the field. If those targets move,
+--- these move with them.
+local ROAD_MEAN = 0.82
+local GRASS_MEAN = 0.80
+--- Fewest screen pixels one repeat of a texture is allowed to occupy.
+---
+--- There is no mipmapping here, so a texture minified past about this reads as
+--- an interference pattern rather than as a surface. See the note in the strip
+--- loop -- this is what caps the tiling on a distant strip.
+local MIN_TEXEL = 18
 local BOOST_FOV = 0.075
 local SPECTATOR_SPACING = 42
 local SPECTATOR_SLOTS = 6
@@ -414,7 +459,30 @@ end
 --- How much the distance haze has eaten this far out. Shared so an object's
 --- shadow fades on exactly the same curve as the road it is sitting on.
 function RaceUI:FogAt(dz)
-  return AK.Math.Clamp(1 - (dz / FAR_Z) * self.T.fogStrength, 0.22, 1)
+  return AK.Math.Clamp(1 - (dz / HAZE_Z) * self.T.fogStrength, 0.22, 1)
+end
+
+--- A lit colour blended toward the colour of the air, `dz` metres out.
+---
+--- THE ROAD DID THIS. NOTHING STANDING ON IT DID.
+---
+--- Every trackside thing was tinted `colour * fog`, and fog is a MULTIPLIER --
+--- it does not move a colour toward the air, it moves it toward BLACK. So the
+--- ground receded correctly into a pale wash while the rocks, trees, posts,
+--- pickups and rival karts sitting on that ground got darker and darker, down
+--- to the 0.20 floor. Photographed at 300m on Elwynn that is a field of hard
+--- black blobs on pale grass, which is exactly backwards: distance drains
+--- contrast, it does not add it. It was most of why the far half of the screen
+--- read as noise rather than as somewhere further away.
+---
+--- Same haze colour and same curve the road strips use, published by
+--- RenderRoad, so ground and everything on it recede together.
+function RaceUI:Aerial(r, g, b, lit, dz)
+  r, g, b = r * lit, g * lit, b * lit
+  local haze = self.haze
+  if not haze then return r, g, b, 1 end
+  local mix = (self.hazeCap or 0) * (AK.Math.Clamp(dz / HAZE_Z, 0, 1) ^ 0.85)
+  return r + (haze[1] - r) * mix, g + (haze[2] - g) * mix, b + (haze[3] - b) * mix, 1
 end
 
 --- Depth-sorted frame level for a trackside thing.
@@ -430,13 +498,18 @@ local DEPTH_BUCKETS = 74
 
 --- Which of the 74 depth buckets this distance falls in, 0 furthest.
 ---
---- Spread across the WHOLE draw distance. The old form clamped `FAR_Z - dz` at
---- 148, which was fine when FAR_Z was 210 but silently broke when it went to
---- 330: everything nearer than 182m saturated into a single bucket, so the
---- entire near field -- where things actually overlap -- had no depth sorting
---- at all and fell back to creation order.
+--- Spread in 1/z, exactly like the road's own strips, and NOT scaled by the
+--- draw distance. Two earlier forms each failed by tying this to something
+--- else: clamping `FAR_Z - dz` at 148 saturated the whole near field into a
+--- single bucket, and dividing by FAR_Z means winding the draw distance out
+--- spends three quarters of the buckets on scenery past 150m while the near
+--- field -- the only place things actually overlap -- loses its sorting and
+--- falls back to creation order. In 1/z half the buckets land inside the first
+--- thirty metres, which is where they are needed, and the answer for a given
+--- distance in metres is now the same at every setting.
 local function depthBucket(dz)
-  return math.floor(AK.Math.Clamp((FAR_Z - dz) / FAR_Z, 0, 1) * (DEPTH_BUCKETS - 1))
+  local near = 1 / (1 + math.max(0, dz) * 0.03)
+  return math.floor(AK.Math.Clamp(near, 0, 1) * (DEPTH_BUCKETS - 1))
 end
 
 function RaceUI:DepthLevel(kind, dz)
@@ -1023,6 +1096,23 @@ function RaceUI:Build()
   self.cooldownScrim = makeTexture(self.hudLayer, "BACKGROUND", { 0.01, 0.02, 0.05, 1 }, 0)
   self.cooldownScrim:SetAllPoints()
   self.cooldownScrim:SetAlpha(0)
+
+  -- THE RECOVERY VEIL.
+  --
+  -- Going off the course repositions the kart -- up to a full respawn spacing
+  -- BACKWARDS -- in a single simulation tick, and nothing in the renderer knew
+  -- it had happened. The whole world jump-cut, mid-corner, with the camera
+  -- still glued to a kart that was suddenly somewhere else. That is the
+  -- awkward teleport, and it cannot be smoothed out by moving the camera:
+  -- there is nothing continuous between the two places.
+  --
+  -- So it is hidden. The screen closes over the reposition and opens again
+  -- with the kart already set down, which is what every game that has ever
+  -- picked a player up and put them back does. Above the world and above the
+  -- HUD, because for that moment you are out of play.
+  self.recoveryVeil = makeTexture(self.hudLayer, "OVERLAY", { 0.02, 0.03, 0.06, 1 }, 6)
+  self.recoveryVeil:SetAllPoints()
+  self.recoveryVeil:SetAlpha(0)
 
   self.ladder = CreateFrame("Frame", nil, self.hudLayer)
   self.ladder:SetSize(LADDER.w, LADDER.h)
@@ -1982,6 +2072,37 @@ function RaceUI:PhotoFinishCard(photo)
   self:Shake(14)
 end
 
+--- Close the screen over a recovery and open it again on the other side.
+---
+--- The simulation's fall runs FALL_TIME, then repositions, then holds for
+--- LIFT_TIME + DROP_TIME. The veil has to be FULLY closed at the reposition --
+--- that is the single frame with a cut in it -- so it shuts over the fall and
+--- opens over the set-down. Read from AK.Race so the two cannot drift: the
+--- renderer asking "how far through is this" beats the renderer keeping its own
+--- copy of a timeline the simulation owns.
+function RaceUI:UpdateRecovery(race)
+  if not self.recoveryVeil then return end
+  local player = race.player
+  local falling = player and player.falling
+  if not falling or player.finished then
+    self.recoveryVeil:SetAlpha(0)
+    return
+  end
+  local closeBy = AK.Race.FALL_TIME
+  local openFrom = closeBy + AK.Race.LIFT_TIME
+  local total = openFrom + AK.Race.DROP_TIME
+  local alpha
+  if falling < closeBy then
+    -- Shutting. Eased so the last of it is quick and the cut lands in the dark.
+    alpha = AK.Math.Clamp(falling / closeBy, 0, 1) ^ 0.7
+  elseif falling < openFrom then
+    alpha = 1
+  else
+    alpha = 1 - AK.Math.Clamp((falling - openFrom) / math.max(0.01, total - openFrom), 0, 1)
+  end
+  self.recoveryVeil:SetAlpha(alpha)
+end
+
 --- Chequered flash plus the position card, held before the results screen.
 function RaceUI:FinishSequence(position, photo)
   local ordinal = { "1ST", "2ND", "3RD" }
@@ -2555,7 +2676,7 @@ function RaceUI:RenderArches(race, camX, camZ)
   -- Pulled in from 0.45 when the circuits got firmer corners. A tighter lap
   -- swings the road off the side of the screen sooner, so an arch at 149m was
   -- faded away 58% of the time -- spawned into space the road has already left.
-  local archFar = FAR_Z * 0.38
+  local archFar = reach(125)
   local first = math.ceil(camZ / spacing)
   for slot, arch in ipairs(self.arches) do
     local index = first + slot - 1
@@ -2573,11 +2694,11 @@ function RaceUI:RenderArches(race, camX, camZ)
       local x, y, pixelsPerMetre = self:Project(dz, worldX, camX, worldY)
       -- 17m wide, 13m tall; the art's opening lines up with the road.
       local width = pixelsPerMetre * 17
-      local fog = AK.Math.Clamp(1 - (dz / FAR_Z) * tuning.fogStrength * 0.8, 0.3, 1) * light
+      local fog = AK.Math.Clamp(1 - (dz / HAZE_Z) * tuning.fogStrength * 0.8, 0.3, 1) * light
       arch:ClearAllPoints()
       arch:SetPoint("BOTTOM", self.frame, "CENTER", x, y)
       arch:SetSize(width, width * 0.95)
-      arch:SetVertexColor(fog, fog * 0.98, fog * 1.02, 1)
+      arch:SetVertexColor(self:Aerial(1, 0.98, 1.02, fog, dz))
       arch:SetAlpha(self:DepthFade(dz, archFar) * self:EdgeFade(x, dz))
       setShown(arch, true)
     else
@@ -2596,7 +2717,7 @@ function RaceUI:RenderPosts(race, camX, camZ)
   -- were drawn to -- so well over half of every post spawned out there was
   -- never seen, and the ones that were came in from the side of the display.
   -- The speed cue posts exist for comes from the ones sweeping past inside 40m.
-  local postFar = FAR_Z * 0.36
+  local postFar = reach(119)
   local first = math.ceil(camZ / spacing)
   for slot, pair in ipairs(self.posts) do
     local index = first + slot - 1
@@ -2608,7 +2729,7 @@ function RaceUI:RenderPosts(race, camX, camZ)
       local halfWidthPixels = pixelsPerMetre * tuning.roadHalf * AK.Math.RoadWidth(self.route or race.track, segZ)
       local width = math.max(1, pixelsPerMetre * 0.18)
       local height = math.max(2, pixelsPerMetre * 1.15)
-      local fog = AK.Math.Clamp(1 - (dz / FAR_Z) * tuning.fogStrength, 0.22, 1)
+      local fog = AK.Math.Clamp(1 - (dz / HAZE_Z) * tuning.fogStrength, 0.22, 1)
       -- Alternating colour so the posts strobe past rather than blur together.
       local red = (index % 2 == 0)
       local r, g, b = red and .88 or .95, red and .26 or .95, red and .20 or .96
@@ -2622,14 +2743,14 @@ function RaceUI:RenderPosts(race, camX, camZ)
       pair.left:ClearAllPoints()
       pair.left:SetPoint("BOTTOM", self.frame, "CENTER", x - offset, y)
       pair.left:SetSize(width, height)
-      pair.left:SetVertexColor(r * fog, g * fog, b * fog, 1)
+      pair.left:SetVertexColor(self:Aerial(r, g, b, fog, dz))
       local near = self:DepthFade(dz, postFar)
       pair.left:SetAlpha(near * self:EdgeFade(x - offset, dz))
       setShown(pair.left, true)
       pair.right:ClearAllPoints()
       pair.right:SetPoint("BOTTOM", self.frame, "CENTER", x + offset, y)
       pair.right:SetSize(width, height)
-      pair.right:SetVertexColor(r * fog, g * fog, b * fog, 1)
+      pair.right:SetVertexColor(self:Aerial(r, g, b, fog, dz))
       pair.right:SetAlpha(near * self:EdgeFade(x + offset, dz))
       setShown(pair.right, true)
     else
@@ -2653,7 +2774,7 @@ function RaceUI:RenderFinish(race, camX, camZ)
   -- 182m out and was readable on only 39% of a lap. 132m is a little over two
   -- seconds of warning at racing pace, for a landmark the lap counter and the
   -- map have both already told you about.
-  local finishFar = FAR_Z * 0.40
+  local finishFar = reach(132)
   if dz < 0.5 or dz > finishFar then
     setShown(finish, false)
     return
@@ -2665,9 +2786,9 @@ function RaceUI:RenderFinish(race, camX, camZ)
   local farX, farY = self:Project(dz + 2.5, farWorldX, camX, farWorldY)
   local halfWidthPixels = pixelsPerMetre * tuning.roadHalf * AK.Math.RoadWidth(self.route or race.track, lineZ)
   local bandHeight = math.max(2, farY - y)
-  local fog = AK.Math.Clamp(1 - (dz / FAR_Z) * tuning.fogStrength, 0.25, 1)
+  local fog = AK.Math.Clamp(1 - (dz / HAZE_Z) * tuning.fogStrength, 0.25, 1)
 
-  finish:SetFrameLevel(self.frame:GetFrameLevel() + 2 + math.floor(AK.Math.Clamp(FAR_Z - dz, 1, 150)))
+  finish:SetFrameLevel(self.frame:GetFrameLevel() + 2 + depthBucket(dz) * 2)
   -- One alpha on the parent, so the checkerboard, both gantry posts, the banner
   -- and the label all fade together rather than the line dissolving in pieces.
   finish:SetAlpha(self:DepthFade(dz, finishFar) * self:EdgeFade(x, dz))
@@ -2691,7 +2812,7 @@ function RaceUI:RenderFinish(race, camX, camZ)
       block:SetPoint("BOTTOM", self.frame, "CENTER",
         centre - halfWidthPixels + columnWidth * (column + 0.5), y + rowHeight * row)
       block:SetSize(columnWidth + 1, rowHeight + 1)
-      block:SetVertexColor(shadeValue * fog, shadeValue * fog, shadeValue * fog, 1)
+      block:SetVertexColor(self:Aerial(shadeValue, shadeValue, shadeValue, fog, dz))
       setShown(block, true)
     else
       setShown(block, false)
@@ -2716,20 +2837,20 @@ function RaceUI:RenderFinish(race, camX, camZ)
     finish.leftPost:ClearAllPoints()
     finish.leftPost:SetPoint("BOTTOM", self.frame, "CENTER", x - span, y)
     finish.leftPost:SetSize(postWidth, postHeight)
-    finish.leftPost:SetVertexColor(.82 * fog, .84 * fog, .90 * fog, 1)
+    finish.leftPost:SetVertexColor(self:Aerial(.82, .84, .90, fog, dz))
     finish.rightPost:ClearAllPoints()
     finish.rightPost:SetPoint("BOTTOM", self.frame, "CENTER", x + span, y)
     finish.rightPost:SetSize(postWidth, postHeight)
-    finish.rightPost:SetVertexColor(.82 * fog, .84 * fog, .90 * fog, 1)
+    finish.rightPost:SetVertexColor(self:Aerial(.82, .84, .90, fog, dz))
     local bannerHeight = math.max(3, pixelsPerMetre * 1.1)
     finish.banner:ClearAllPoints()
     finish.banner:SetPoint("BOTTOM", self.frame, "CENTER", x, y + postHeight - bannerHeight)
     finish.banner:SetSize(span * 2 + postWidth, bannerHeight)
-    finish.banner:SetVertexColor(.10 * fog, .14 * fog, .22 * fog, 1)
+    finish.banner:SetVertexColor(self:Aerial(.10, .14, .22, fog, dz))
     finish.bannerEdge:ClearAllPoints()
     finish.bannerEdge:SetPoint("BOTTOM", self.frame, "CENTER", x, y + postHeight - bannerHeight)
     finish.bannerEdge:SetSize(span * 2 + postWidth, math.max(1, bannerHeight * 0.14))
-    finish.bannerEdge:SetVertexColor(1 * fog, .76 * fog, .20 * fog, 1)
+    finish.bannerEdge:SetVertexColor(self:Aerial(1, .76, .20, fog, dz))
     finish.label:ClearAllPoints()
     finish.label:SetPoint("CENTER", self.frame, "CENTER", x, y + postHeight - bannerHeight * 0.5)
     local player = race.player
@@ -2750,7 +2871,7 @@ function RaceUI:RenderSpectators(race, camX, camZ)
   -- The crowd is decoration, so it gets the shortest range of the scenery: a
   -- spectator at the old 205m was a faded speck off the side of the screen
   -- half the time, and these are MODELS -- the most expensive thing per head.
-  local crowdFar = FAR_Z * 0.40
+  local crowdFar = reach(132)
   local first = math.ceil(camZ / SPECTATOR_SPACING)
   for slot, seat in ipairs(self.spectators) do
     local index = first + slot - 1
@@ -2766,7 +2887,7 @@ function RaceUI:RenderSpectators(race, camX, camZ)
       -- the frame's bottom to the road buries the lower half of the body.
       seat:SetPoint("CENTER", self.frame, "CENTER", x, y + size * 0.34)
       seat:SetSize(size * 2.2, size * 2.2)
-      seat:SetFrameLevel(self.frame:GetFrameLevel() + 2 + math.floor(AK.Math.Clamp(FAR_Z - dz, 1, 140)))
+      seat:SetFrameLevel(self.frame:GetFrameLevel() + 2 + depthBucket(dz) * 2)
       seat:SetAlpha(self:DepthFade(dz, crowdFar) * self:EdgeFade(x, dz))
       seat.model.akZoom = tuning.specZoom / math.max(0.01, tuning.modelZoom)
       AK.Model:Reframe(seat.model)
@@ -2972,7 +3093,7 @@ function RaceUI:RenderProps(race, camX, camZ)
       if height > 2 and x > -self.halfWidth * 2.2 and x < self.halfWidth * 2.2 then
         local kind = prop.kind
         local width = height * (kind.w / kind.h)
-        local fog = AK.Math.Clamp(1 - (dz / FAR_Z) * tuning.fogStrength, 0.20, 1) * light
+        local fog = AK.Math.Clamp(1 - (dz / HAZE_Z) * tuning.fogStrength, 0.20, 1) * light
         local tint = kind.tint
         local shade = prop.shade * fog
 
@@ -2981,7 +3102,7 @@ function RaceUI:RenderProps(race, camX, camZ)
         frame:SetSize(math.max(1, width), math.max(1, height))
         -- Nearer props draw over farther ones, matching the road strips.
         frame:SetFrameLevel(self.frame:GetFrameLevel() + 1
-          + math.floor(AK.Math.Clamp(FAR_Z - dz, 1, 150)))
+          + depthBucket(dz) * 2)
         -- Only when it actually changes, for the reason RenderKarts already
         -- states: re-binding the same file every frame costs for nothing. Props
         -- are the worse case of the two -- 54 of them against eight karts -- and
@@ -2992,7 +3113,7 @@ function RaceUI:RenderProps(race, camX, camZ)
           frame.artApplied = kind.artPath
           frame.art:SetTexture(kind.artPath)
         end
-        frame.art:SetVertexColor(tint[1] * shade, tint[2] * shade, tint[3] * shade, 1)
+        frame.art:SetVertexColor(self:Aerial(tint[1], tint[2], tint[3], shade, dz))
         -- A contact shadow is what stops a sprite looking pasted onto the
         -- grass; without one everything hovers.
         frame.shadow:ClearAllPoints()
@@ -3097,8 +3218,8 @@ function RaceUI:RenderFork(race, player, camX, camZ)
               local height = math.max(1, y - previousY)
               local midX = (x + previousX) * .5
               local midHalf = (halfWidthPixels + previousW) * .5
-              local fog = AK.Math.Clamp(1 - (dz / FAR_Z) * tuning.fogStrength, 0.22, 1) * light
-              local mix = hazeCap * (AK.Math.Clamp(dz / FAR_Z, 0, 1) ^ 0.85)
+              local fog = AK.Math.Clamp(1 - (dz / HAZE_Z) * tuning.fogStrength, 0.22, 1) * light
+              local mix = hazeCap * (AK.Math.Clamp(dz / HAZE_Z, 0, 1) ^ 0.85)
               local uRoad = tuning.roadHalf / ROAD_TILE
               strip.road:SetTexCoord(-uRoad, uRoad, (bd - span / FORK_SEGMENTS) / ROAD_TILE, bd / ROAD_TILE)
               strip.road:ClearAllPoints()
@@ -3207,7 +3328,7 @@ function RaceUI:RenderRoad(race, player)
   -- Draw distance is tunable, and everything downstream -- props, posts, arches,
   -- the fork ribbon, the fog curve -- reads this same upvalue, so setting it
   -- here is what makes the slider apply live.
-  FAR_Z = tuning.drawDistance or 330
+  FAR_Z = tuning.drawDistance or 560
   -- Rebuild the forward bend for this frame before anything is projected; every
   -- road, prop, post and racer position below reads from it.
   self:BuildBend(track, camZ)
@@ -3291,8 +3412,35 @@ function RaceUI:RenderRoad(race, player)
     end
     self.activeSegments = detail
   end
-  local nearU, farU = 1 / nearZ, 1 / FAR_Z
-  local step = (nearU - farU) / (detail - 1)
+  -- HOW THE ROAD IS SLICED, AND WHY IT IS NOT ALL ONE RULE.
+  --
+  -- Uniform in 1/z gives every strip the same height on screen. That is the
+  -- right answer for the near road and the wrong one for the far road, because
+  -- 1/z is a singularity at the horizon: measured, the LAST strip was covering
+  -- everything from 262m to 560m -- three hundred metres of road -- as a single
+  -- flat quad at a single lateral position. A corner out there was therefore
+  -- not drawn as a corner. It was drawn as a straight smear pointing wherever
+  -- the midpoint of that quad happened to land, and the three strips before it
+  -- were not much better. That is the whole of "distance gets tough": the band
+  -- you read an approaching corner in, roughly 100m to 300m out, was being
+  -- described by about four quads.
+  --
+  -- So the budget is split. The near band is spread in 1/z out to DETAIL_Z and
+  -- still carries ~98% of the road's height on screen, so the tarmac in front
+  -- of you is sliced exactly as smoothly as before. The tail is spread in
+  -- METRES from there to the draw distance: those strips are thin -- the last
+  -- few are sub-pixel and pile into the dozen rows below the horizon -- but
+  -- they are sampled often enough to FOLLOW the bend, so the far road curves
+  -- away instead of pointing off in one straight line.
+  local tailCount = 0
+  if FAR_Z > DETAIL_Z * 1.15 then
+    tailCount = math.min(TAIL_SEGMENTS, math.floor(detail * 0.16))
+  end
+  local nearCount = detail - tailCount
+  local detailZ = tailCount > 0 and DETAIL_Z or FAR_Z
+  local nearU, farU = 1 / nearZ, 1 / detailZ
+  local step = (nearU - farU) / math.max(1, nearCount - 1)
+  local tailStep = tailCount > 0 and (FAR_Z - detailZ) / tailCount or 0
   local previousX, previousY, previousW, previousZ
   local previousCeilY
   -- How enclosed the CAMERA is, which drives the whole scene's lighting.
@@ -3336,6 +3484,10 @@ function RaceUI:RenderRoad(race, player)
   -- there instead. Capped so the far road never washes out entirely -- you
   -- still have to be able to read where it goes.
   local hazeCap = AK.Math.Clamp(0.62 * tuning.fogStrength, 0, 0.72) * (1 - camDepth)
+  -- Published for :Aerial, so every renderer that runs after this one -- props,
+  -- posts, arches, the finish gantry, pickups, hazards, shells and karts -- can
+  -- recede into the SAME air as the ground they are standing on.
+  self.haze, self.hazeCap = haze, hazeCap
   --- Lit surface colour blended toward the horizon. Returns r, g, b, a so it
   --- drops straight into SetVertexColor.
   local function aerial(r, g, b, lit, mix)
@@ -3357,7 +3509,12 @@ function RaceUI:RenderRoad(race, player)
   -- called on it, still needs the clear -- this shortcut is only safe because
   -- these particular textures never do either.
   for i = 0, detail - 1 do
-    local dz = 1 / (nearU - i * step)
+    local dz
+    if i < nearCount then
+      dz = 1 / (nearU - i * step)
+    else
+      dz = detailZ + tailStep * (i - nearCount + 1)
+    end
     local segZ = camZ + dz
     local strip = self.strips[i + 1]
     local worldX, worldY = self:RoadAt(track, segZ)
@@ -3385,30 +3542,94 @@ function RaceUI:RenderRoad(race, player)
       local onRamp = AK.TrackBuilder:RampAt(track, segZ) ~= nil
       -- Distance fog, scaled by the track's ambient light so night circuits go
       -- dark into the distance instead of staying flatly lit.
-      local fog = AK.Math.Clamp(1 - (dz / FAR_Z) * tuning.fogStrength, 0.22, 1) * light
+      local fog = AK.Math.Clamp(1 - (dz / HAZE_Z) * tuning.fogStrength, 0.22, 1) * light
       -- How much air is between the camera and this strip, 0 at the bumper.
       -- Slightly super-linear so the near half of the road stays crisp and the
       -- wash concentrates where the depth cue is actually needed.
-      local mix = hazeCap * (AK.Math.Clamp(dz / FAR_Z, 0, 1) ^ 0.85)
+      local mix = hazeCap * (AK.Math.Clamp(dz / HAZE_Z, 0, 1) ^ 0.85)
 
       -- Subtle banding. High contrast turned the field into a striped lawn.
       -- World-locked UVs. Tying the texture to metres rather than to pixels is
       -- what keeps the paving a constant real size: the old pixel-based repeat
       -- crammed ~15 tilings across the near road, so the slabs were a blur.
       -- The strip spans prevSegZ..segZ, so map exactly that range.
-      local vNear, vFar = previousZ / ROAD_TILE, segZ / ROAD_TILE
-      local uRoad = roadHalf / ROAD_TILE
-      strip.road:SetTexCoord(-uRoad, uRoad, vNear, vFar)
-      local uGrass = (self.halfWidth / math.max(1, pixelsPerMetre)) / GRASS_TILE
-      strip.grass:SetTexCoord(-uGrass, uGrass, previousZ / GRASS_TILE, segZ / GRASS_TILE)
+      -- A STRIP MAY NOT TILE ITSELF INTO A MOIRE PATTERN.
+      --
+      -- There is no mipmapping here, so a quad four pixels tall with sixty
+      -- repeats of the paving mapped down it does not read as distant paving:
+      -- it reads as an interference pattern. It was far worse for the grass,
+      -- which is drawn the full width of the screen -- at 300m the verge
+      -- texture repeated over two hundred times inside a single strip. That
+      -- shimmering scalloped band under the treeline in every screenshot was
+      -- that, not terrain.
+      --
+      -- One repeat of a ground texture is TILE metres across and lands on
+      -- `pixelsPerMetre * TILE` pixels of screen, so that product is the whole
+      -- test: while it is comfortably above a pixel the texture is a surface,
+      -- and below MIN_TEXEL it is noise. Down the strip the same is true of the
+      -- V range, which is capped against the strip's own height. Past the
+      -- crossover the texture is dropped for flat colour with the file's mean
+      -- folded in -- capping the repeat count instead was tried first and only
+      -- traded the shimmer for a regular, obviously artificial lattice.
+      local vSpanCap = math.max(0.08, height / MIN_TEXEL)
+
+      local flatRoad = pixelsPerMetre * ROAD_TILE < MIN_TEXEL
+      if strip.roadFlat ~= flatRoad then
+        strip.roadFlat = flatRoad
+        -- Only ON THE CHANGE. Re-binding the same file every frame across 150
+        -- strips is exactly the waste the no-ClearAllPoints note above is
+        -- about, and a strip's distance barely moves between frames.
+        if flatRoad then
+          strip.road:SetTexture(SOLID)
+          strip.road:SetTexCoord(0, 1, 0, 1)
+        else
+          strip.road:SetTexture(ART .. "road.tga", "REPEAT", "REPEAT")
+        end
+      end
+      if not flatRoad then
+        local vNear, vFar = previousZ / ROAD_TILE, segZ / ROAD_TILE
+        if vFar - vNear > vSpanCap then vFar = vNear + vSpanCap end
+        local uRoad = roadHalf / ROAD_TILE
+        strip.road:SetTexCoord(-uRoad, uRoad, vNear, vFar)
+      end
+
+      local flatGround = pixelsPerMetre * GRASS_TILE < MIN_TEXEL
+      if strip.grassFlat ~= flatGround then
+        strip.grassFlat = flatGround
+        if flatGround then
+          strip.grass:SetTexture(SOLID)
+          strip.grass:SetTexCoord(0, 1, 0, 1)
+        else
+          strip.grass:SetTexture(ART .. "grass.tga", "REPEAT", "REPEAT")
+        end
+      end
+      if not flatGround then
+        -- The coord RANGE is -u..u, so the texture repeats 2u times across the
+        -- quad; the pitch that MIN_TEXEL is measured against is the product
+        -- above, not this number.
+        local uGrass = (self.halfWidth / math.max(1, pixelsPerMetre)) / GRASS_TILE
+        local vGrassNear, vGrassFar = previousZ / GRASS_TILE, segZ / GRASS_TILE
+        if vGrassFar - vGrassNear > vSpanCap then
+          vGrassFar = vGrassNear + vSpanCap
+        end
+        strip.grass:SetTexCoord(-uGrass, uGrass, vGrassNear, vGrassFar)
+      end
 
       strip.grass:SetPoint("BOTTOM", self.frame, "CENTER", 0, previousY)
       strip.grass:SetSize(self.halfWidth * 2, height)
       -- The verge is lifted well above the track's base colour. Tinting the
       -- texture by the raw colour produced a flat slab with no visible detail
       -- at all -- the ground read as void rather than as terrain.
-      strip.grass:SetVertexColor(aerial(vergeColor[1], vergeColor[2], vergeColor[3],
-        (dark and tuning.grassContrast or 1.0) * light, mix))
+      -- Flat past FLAT_Z, texture-mean folded in so the join does not show. The
+      -- light/dark banding goes too: at this range the bands are compressed to
+      -- less than a strip each, so all they can do is flicker.
+      if flatGround then
+        strip.grass:SetVertexColor(aerial(vergeColor[1], vergeColor[2], vergeColor[3],
+          GRASS_MEAN * light, mix))
+      else
+        strip.grass:SetVertexColor(aerial(vergeColor[1], vergeColor[2], vergeColor[3],
+          (dark and tuning.grassContrast or 1.0) * light, mix))
+      end
       setShown(strip.grass, true)
 
       strip.road:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
@@ -3417,7 +3638,8 @@ function RaceUI:RenderRoad(race, player)
         -- Hazard-striped launch surface: unmistakable, and it scrolls at you.
         local band = (math.floor(segZ / 2.2) % 2 == 0)
         local hot = band and 1.0 or 0.55
-        strip.road:SetVertexColor(aerial(1.0, 0.74, 0.16, hot * roadLight, mix))
+        strip.road:SetVertexColor(aerial(1.0, 0.74, 0.16,
+          hot * roadLight * (flatRoad and ROAD_MEAN or 1), mix))
       else
         -- A SURFACE PAINTED ON THE ROAD HAS TO BE VISIBLE.
         --
@@ -3450,7 +3672,10 @@ function RaceUI:RenderRoad(race, player)
           local rescue = 0.17 / peak
           litR, litG, litB = litR * rescue, litG * rescue, litB * rescue
         end
-        strip.road:SetVertexColor(aerial(litR, litG, litB, dark and 0.96 or 1.0, mix))
+        -- A strip that has dropped its texture carries the file's mean instead,
+        -- so the surface does not brighten as it crosses over.
+        strip.road:SetVertexColor(aerial(litR, litG, litB,
+          (dark and 0.96 or 1.0) * (flatRoad and ROAD_MEAN or 1), mix))
       end
       setShown(strip.road, true)
 
@@ -3720,7 +3945,11 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
   -- travelled inward -- "sliding in from the distance instead of just being on
   -- the track". Pulling the draw distance back to where the road is reliably on
   -- screen is what makes a pickup appear ON the road and simply grow.
-  local objectFar = FAR_Z * 0.36
+  -- That threshold is in METRES (see `reach`), not a fraction of the draw
+  -- distance: how far ahead the road stays on screen is a property of the bend
+  -- model, and winding the See-ahead slider out must not start flinging
+  -- pickups back off the edges again.
+  local objectFar = reach(119)
   -- ANYTHING BEHIND THE KART IS BEHIND THE KART.
   --
   -- `dz` is measured from the CAMERA, which trails the kart by camBack -- so a
@@ -3858,7 +4087,7 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
           frame.iconApplied = style.icon
           frame.icon:SetTexture(style.icon)
         end
-        frame.icon:SetVertexColor(color[1] * fog, color[2] * fog, color[3] * fog)
+        frame.icon:SetVertexColor(self:Aerial(color[1], color[2], color[3], fog, dz))
         -- Fixed width, pulsing only in brightness. A flat plate that also
         -- breathes in and out reads as sliding around on the road.
         frame.ring:SetSize(size * 1.46, math.max(2, size * 0.06))
@@ -3877,7 +4106,7 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
           frame.iconApplied = style.icon
           frame.icon:SetTexture(style.icon)
         end
-        frame.icon:SetVertexColor(fog, fog, fog)
+        frame.icon:SetVertexColor(self:Aerial(1, 1, 1, fog, dz))
         frame.ring:SetSize(size * (1.05 + pulse * .10), math.max(2, size * 0.05))
         frame.ring:SetAlpha((.45 + pulse * .45) * fog)
       end
@@ -3912,7 +4141,7 @@ function RaceUI:RenderHazards(race, camX, camZ)
   -- Same shortened draw distance as the trackside objects, for the same reason:
   -- past it the road has bent off-screen and a hazard out there is a creature
   -- model floating at the display edge. See RenderObjects for the measurements.
-  local hazardFar = FAR_Z * 0.36
+  local hazardFar = reach(119)
   local hFadeFrom = hazardFar * 0.70
 
   local hCount = 0
@@ -4102,7 +4331,7 @@ function RaceUI:RenderProjectiles(race, camX, camZ)
       -- on the road stops reading as a spellbook button someone dropped.
       shot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
       local tint = item.tint or { 1, 1, 1 }
-      shot.icon:SetVertexColor(tint[1] * fog, tint[2] * fog, tint[3] * fog)
+      shot.icon:SetVertexColor(self:Aerial(tint[1], tint[2], tint[3], fog, dz))
       shot.glow:SetSize(size * 1.9, size * 1.9)
       shot.glow:SetVertexColor(item.color[1], item.color[2], item.color[3], 1)
       shot.glow:SetAlpha((moving and (0.35 + 0.25 * math.sin(projectile.age * 14)) or 0.18) * fog)
@@ -4189,7 +4418,16 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
     local drawZ = self:Lerped(vehicle.prevDistance, vehicle.distance, race.alpha, 3)
     local drawLateral = self:Lerped(vehicle.prevLateral, vehicle.lateral, race.alpha, 0.5)
     local dz = AK.Math.SignedLoopDistance(camZ % (self.route or race.track).length, drawZ % (self.route or race.track).length, (self.route or race.track).length)
-    if dz > 0.9 and dz < FAR_Z and not vehicle.finished and self:OnRoute(race, vehicle) then
+    -- A KART BEING RECOVERED IS NOT IN THE WORLD.
+    --
+    -- Nothing in the renderer read `falling`, so a kart that had gone off the
+    -- course kept being drawn on the road it left -- and then, at the instant
+    -- the simulation put it back at its recovery point, jumped bodily
+    -- backwards up the track. On a rival right beside you that reads as the
+    -- game breaking. It is gone while it is out of play, and comes back where
+    -- it comes back.
+    if not vehicle.falling
+      and dz > 0.9 and dz < FAR_Z and not vehicle.finished and self:OnRoute(race, vehicle) then
       local baseX, worldY = self:RoadAt(self.route or race.track, drawZ)
       local x, y, pixelsPerMetre = self:Project(dz, baseX + drawLateral * tuning.roadHalf, camX, worldY)
       -- A kart is about 2.2m wide; scale the sprite by the same projection as
@@ -4325,7 +4563,10 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
         local flash = 0.6 + 0.4 * math.sin(race.elapsed * 22)
         br, bg, bb = 1, 0.75 * flash + 0.25, 0.25 * flash
       end
-      kart.body:SetVertexColor(br, bg, bb)
+      -- Rivals recede into the same air as the road under them; without this
+      -- a kart 300m away was drawn at full saturation, a bright chip floating
+      -- on hazed ground with nothing tying it to the distance.
+      kart.body:SetVertexColor(self:Aerial(br, bg, bb, 1, dz))
       kart.body:SetDesaturated(vehicle.stun > 0)
 
       -- Front slice: the bottom `kartLip` fraction of the same texture, drawn
@@ -4650,6 +4891,7 @@ function RaceUI:Render(race)
 
   self:UpdatePresentation(race, dt)
   self:UpdateLadder(race)
+  self:UpdateRecovery(race)
   -- On the cooldown lap nobody is driving: the item box, the drift meter and
   -- the control legend are all instruments for a driver who no longer exists,
   -- so they fade back and leave the screen to the ladder and the road.

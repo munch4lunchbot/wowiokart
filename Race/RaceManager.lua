@@ -942,10 +942,37 @@ end
 -- point on the road and dropped. The recovery is deliberately slow enough that
 -- a failed shortcut is genuinely worse than driving the long way round, which
 -- is what gives risky lines their risk.
-local FALL_TIME, LIFT_TIME, DROP_TIME = 0.55, 0.85, 0.45
+-- Published on Race so the renderer can veil exactly this timeline rather than
+-- keeping a second copy of it. Shortened from 0.55/0.85/0.45: 1.85 seconds of
+-- being put back was a long time to spend watching a stationary kart, and most
+-- of it used to be spent watching nothing at all happen.
+local FALL_TIME, LIFT_TIME, DROP_TIME = 0.42, 0.34, 0.52
+Race.FALL_TIME, Race.LIFT_TIME, Race.DROP_TIME = FALL_TIME, LIFT_TIME, DROP_TIME
 
 --- The last valid road position at or before `distance`.
+--- How far back a recovery puts you. Short on purpose.
+local RECOVERY_BACK = 18
+
 function Race:RespawnPointFor(track, distance)
+  -- BACK TO WHERE YOU LEFT, not to the last checkpoint.
+  --
+  -- Recovery points are built one per authored layout piece, and pieces run
+  -- from 55 to 210 metres -- so going off at the end of a long one sent you
+  -- back the whole length of it. Measured on Durotar, a single recovery moved
+  -- the kart SIXTY-SIX METRES up the track. That is a second and a half of
+  -- driving handed back on top of the second and a half spent being picked up,
+  -- for a mistake that in every kart game ever made costs you the pick-up and
+  -- nothing else.
+  --
+  -- The road is solid wherever you were -- a fall is leaving it SIDEWAYS -- so
+  -- a short step back is safe by construction.
+  local near = distance - RECOVERY_BACK
+  if not AK.TrackBuilder:RampAt(track, near) then
+    return { distance = near, lateral = 0 }
+  end
+  -- Unless that lands mid-launch, which is exactly what the authored points
+  -- exist to avoid: they are placed at the start of every piece that is not a
+  -- ramp, so the nearest one behind you is always before the ramp.
   if track.respawns then
     local best, bestGap = nil, math.huge
     for _, point in ipairs(track.respawns) do
@@ -954,8 +981,7 @@ function Race:RespawnPointFor(track, distance)
     end
     if best then return best end
   end
-  -- No authored points: fall back to a little way behind where you left.
-  return { distance = distance - 24, lateral = 0 }
+  return { distance = near, lateral = 0 }
 end
 
 function Race:UpdateFalls(race, dt)

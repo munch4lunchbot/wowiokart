@@ -127,7 +127,7 @@ console.log("");
 // them. This reports how much of each lap an object at a given depth is fully
 // visible, partly faded, or gone.
 const EDGE_FADE = 0.62, EDGE_GONE = 1.02;   // must match RaceUI:EdgeFade
-const OBJ_FAR = Math.round(DRAW * 0.36);
+const OBJ_FAR = Math.round(Math.min(DRAW * 0.9, 119));   // mirrors reach(119)
 const SAMPLE = [60, 100, 140, OBJ_FAR];
 
 console.log("Object visibility over a lap  (edge fade " + EDGE_FADE + "-" + EDGE_GONE +
@@ -186,13 +186,17 @@ console.log("Scene elements at the far end of their own draw range");
 console.log("");
 console.log("  element        range      readable at that range");
 
-// These must match the `*Far` values in UI/RaceUI.lua.
+// These must match the `reach(...)` calls in UI/RaceUI.lua -- METRES, not
+// fractions of the draw distance. They were fractions, which made this report
+// (and the renderer it mirrors) move every time the See-ahead slider moved:
+// raising the draw distance flung the furniture back out to where the road has
+// already left the screen, which is the exact fault the ranges exist to stop.
 const CLASSES = [
-  { name: "objects", far: 0.36 },
-  { name: "posts", far: 0.36 },
-  { name: "spectators", far: 0.40 },
-  { name: "arches", far: 0.38 },
-  { name: "finish", far: 0.40 },
+  { name: "objects", far: 119 },
+  { name: "posts", far: 119 },
+  { name: "spectators", far: 132 },
+  { name: "arches", far: 125 },
+  { name: "finish", far: 132 },
 ];
 
 const tracks = [];
@@ -205,7 +209,7 @@ for (let i = 0; i < starts.length; i++) {
 
 let thinnest = { name: "-", pct: 100 };
 for (const cls of CLASSES) {
-  const dz = Math.round(DRAW * cls.far);
+  const dz = Math.round(Math.min(DRAW * 0.9, cls.far));
   let worst = 100;
   for (const t of tracks) {
     let seen = 0, n = 0;

@@ -90,7 +90,27 @@ const T = (function () {
   return out;
 })();
 // Overridable so a value can be swept and measured rather than argued about.
-const SEGMENTS = +(process.env.SEGMENTS || 150), FAR_Z = +(process.env.FAR_Z || T.drawDistance || 330);
+const SEGMENTS = +(process.env.SEGMENTS || 150), FAR_Z = +(process.env.FAR_Z || T.drawDistance || 560);
+// The AIR reaches a fixed distance; only how much of the world you are shown is
+// a setting. Mirrors HAZE_Z in UI/RaceUI.lua -- if these two drift, the preview
+// starts flattering the game again.
+const HAZE_Z = 330;
+// Roadside furniture is limited in METRES, not as a fraction of the draw
+// distance. Mirrors `reach` in UI/RaceUI.lua.
+const furnitureReach = m => Math.min(FAR_Z * 0.9, m);
+const MIN_TEXEL = 18;
+// Mirrors ROAD_MEAN / GRASS_MEAN in UI/RaceUI.lua -- the baked mean of each
+// ground texture, folded in when a strip drops its texture for flat colour.
+const ROAD_MEAN = 0.82, GRASS_MEAN = 0.80;
+// Mirrors RaceUI:Aerial -- a lit colour blended toward the air, not multiplied
+// toward black. Filled in once the haze colour is known (it depends on the
+// track's own palette and light), and used by every trackside renderer below.
+let AERIAL = null;
+const aerialAt = (c, lit, dz) => {
+  if (!AERIAL) return c.map(v => v * lit);
+  const mix = AERIAL.cap * Math.pow(clamp(dz / HAZE_Z, 0, 1), 0.85);
+  return c.map((v, k) => { const t = v * lit; return t + (AERIAL.haze[k] - t) * mix; });
+};
 const STRIPE = 4.5, CURVE_SCALE = +(process.env.CS || 30);
 // NONORM=1 drops the global peak-fit in the compile, so authored curvature
 // keeps its absolute size and a hairpin stays a hairpin regardless of what else
@@ -525,14 +545,24 @@ const aerial = (c, lit, mix) => c.map((v, k) => {
   const s = v * lit;
   return s + (roadHaze[k] - s) * mix;
 });
+AERIAL = { haze: roadHaze, cap: hazeCap };
 
 const lift = T.camDepth * T.camHeight * HH;
 const nearZ = Math.max(1.2, lift / (T.horizon + HH + 60));
-const nu = 1 / nearZ, fu = 1 / FAR_Z, step = (nu - fu) / (SEGMENTS - 1);
+// Split strip budget -- near band in 1/z, far tail in metres. Mirrors
+// DETAIL_Z / TAIL_SEGMENTS and the loop in UI/RaceUI.lua:RenderRoad.
+const DETAIL_Z = 120, TAIL_SEGMENTS = 22;
+const tailCount = FAR_Z > DETAIL_Z * 1.15
+  ? Math.min(TAIL_SEGMENTS, Math.floor(SEGMENTS * 0.16)) : 0;
+const nearCount = SEGMENTS - tailCount;
+const detailZ = tailCount > 0 ? DETAIL_Z : FAR_Z;
+const nu = 1 / nearZ, fu = 1 / detailZ, step = (nu - fu) / Math.max(1, nearCount - 1);
+const tailStep = tailCount > 0 ? (FAR_Z - detailZ) / tailCount : 0;
 const rows = [];
 let pX = null, pY = null, pW = null, pZ = null, pCeil = null;
 for (let i = 0; i < SEGMENTS; i++) {
-  const dz = 1 / (nu - i * step), segZ = camZ + dz;
+  const dz = i < nearCount ? 1 / (nu - i * step) : detailZ + tailStep * (i - nearCount + 1);
+  const segZ = camZ + dz;
   const [x, y, ppm] = project(dz, bend(dz), roadHeight(segZ));
   const hwPx = ppm * T.roadHalf * roadWidth(segZ);
   if (pY !== null && y > pY) {
@@ -546,18 +576,30 @@ for (let i = 0; i < SEGMENTS; i++) {
 // far to near, so crests occlude
 for (let r = rows.length - 1; r >= 0; r--) {
   const row = rows[r];
-  const fog = clamp(1 - (row.dz / FAR_Z) * T.fogStrength, .22, 1) * roadLight;
-  const mix = hazeCap * Math.pow(clamp(row.dz / FAR_Z, 0, 1), 0.85);
+  const fog = clamp(1 - (row.dz / HAZE_Z) * T.fogStrength, .22, 1) * roadLight;
+  const mix = hazeCap * Math.pow(clamp(row.dz / HAZE_Z, 0, 1), 0.85);
   const idx = Math.floor(row.segZ / STRIPE), dark = idx % 2 === 0;
   const rz=((row.segZ%track.length)+track.length)%track.length;
   const onRamp = track._ramps.some(r=>rz>=r[0]&&rz<=r[1]);
   const yTop = SY(row.y + row.h), hpx = row.h + 1;
   const v0 = row.prevZ, v1 = row.segZ;
+  const vSpanCap = Math.max(0.08, row.h / MIN_TEXEL);
 
   if (tex.grass) {
-    const uG = (HW / Math.max(1, row.ppm)) / GRASS_TILE;
-    blit(tex.grass, 0, yTop, W, hpx, -uG, uG, v0 / GRASS_TILE, v1 / GRASS_TILE,
-      aerial(verge, (dark ? T.grassContrast : 1) * roadLight, mix), 1);
+    if (row.ppm * GRASS_TILE < MIN_TEXEL) {
+      // One repeat is now smaller than MIN_TEXEL pixels: flat colour with the
+      // texture's mean folded in, because there is nothing left to tile but a
+      // moire pattern. Mirrors the flatGround branch in UI/RaceUI.lua.
+      rect(0, yTop, W, hpx, ...aerial(verge, GRASS_MEAN * roadLight, mix), 1);
+    } else {
+      // Repeat cap mirrors MIN_TEXEL in UI/RaceUI.lua: past one repeat per
+      // MIN_TEXEL pixels the tiling is a moire pattern, not terrain.
+      const uG = (HW / Math.max(1, row.ppm)) / GRASS_TILE;
+      const gv0 = v0 / GRASS_TILE;
+      const gv1 = Math.min(v1 / GRASS_TILE, gv0 + vSpanCap);
+      blit(tex.grass, 0, yTop, W, hpx, -uG, uG, gv0, gv1,
+        aerial(verge, (dark ? T.grassContrast : 1) * roadLight, mix), 1);
+    }
   }
   if (tex.road) {
     const uR = T.roadHalf / ROAD_TILE;
@@ -575,11 +617,19 @@ for (let r = rows.length - 1; r >= 0; r--) {
     const base = (zone && PAINT[zone.mat])
       ? track.road.map((c, k) => c + (PAINT[zone.mat][k] - c) * reach)
       : track.road;
+    const flatRoad = row.ppm * ROAD_TILE < MIN_TEXEL;
+    const meanFix = flatRoad ? ROAD_MEAN : 1;
     const tint = onRamp
-      ? aerial([1.0, 0.74, 0.16], (band ? 1.0 : 0.55) * tarmacLight, mix)
-      : aerial(legible(base, tarmacLight), dark ? .96 : 1, mix);
-    blit(tex.road, SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx,
-      -uR, uR, v0 / ROAD_TILE, v1 / ROAD_TILE, tint, 1);
+      ? aerial([1.0, 0.74, 0.16], (band ? 1.0 : 0.55) * tarmacLight * meanFix, mix)
+      : aerial(legible(base, tarmacLight), (dark ? .96 : 1) * meanFix, mix);
+    if (flatRoad) {
+      rect(SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx, ...tint, 1);
+    } else {
+      const rv0 = v0 / ROAD_TILE;
+      const rv1 = Math.min(v1 / ROAD_TILE, rv0 + vSpanCap);
+      blit(tex.road, SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx,
+        -uR, uR, rv0, rv1, tint, 1);
+    }
     if (tex.roadshade)
       blit(tex.roadshade, SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx,
         0, 1, 0, 1, [0, 0, 0], 0.85 * (1 - mix));
@@ -698,10 +748,10 @@ const PROP_KINDS = (() => {
     const height = ppm * pr.size;
     if (height <= 2 || x < -HW * 2.2 || x > HW * 2.2) continue;
     const width = height * (pr.kind.w / pr.kind.h);
-    const fog = clamp(1 - (dz / FAR_Z) * T.fogStrength, 0.20, 1) * light;
+    const fog = clamp(1 - (dz / HAZE_Z) * T.fogStrength, 0.20, 1) * light;
     const shade = pr.shade * fog;
     blit(art, SX(x - width / 2), SY(y) - height, width, height, 0, 1, 0, 1,
-      pr.kind.tint.map(c => c * shade), 1);
+      aerialAt(pr.kind.tint, shade, dz), 1);
   }
 }
 
@@ -713,11 +763,11 @@ if (tex.arch && track.archSpacing) {
     // Mirrors RaceUI:RenderArches -- dropped once you are under it (a billboard
     // cannot leave the frame overhead, it just smears across the screen edges)
     // and pulled in to where the road is still reliably on screen.
-    if (dz > 6 && dz < FAR_Z * 0.38) {
+    if (dz > 6 && dz < furnitureReach(125)) {
       const [x, y, ppm] = project(dz, bend(dz), roadHeight(az));
       const w = ppm * 17, h = w * 0.95;
-      const f = clamp(1 - (dz / FAR_Z) * T.fogStrength * .8, .3, 1) * light;
-      blit(tex.arch, SX(x - w / 2), SY(y) - h, w, h, 0, 1, 0, 1, [f, f * .98, f * 1.02], 1);
+      const f = clamp(1 - (dz / HAZE_Z) * T.fogStrength * .8, .3, 1) * light;
+      blit(tex.arch, SX(x - w / 2), SY(y) - h, w, h, 0, 1, 0, 1, aerialAt([1, .98, 1.02], f, dz), 1);
     }
   }
 }
@@ -726,12 +776,12 @@ if (tex.arch && track.archSpacing) {
 const firstPost = Math.ceil(camZ / T.postSpacing);
 for (let s = 23; s >= 0; s--) {
   const pz = (firstPost + s) * T.postSpacing, dz = pz - camZ;
-  if (dz > 1 && dz < FAR_Z * .8) {
+  if (dz > 1 && dz < furnitureReach(119)) {
     const [x, y, ppm] = project(dz, bend(dz), roadHeight(pz));
     const hwp = ppm * T.roadHalf, w = Math.max(1, ppm * .18), h = Math.max(2, ppm * 1.15);
-    const fog = clamp(1 - (dz / FAR_Z) * T.fogStrength, .22, 1);
+    const fog = clamp(1 - (dz / HAZE_Z) * T.fogStrength, .22, 1);
     const red = (firstPost + s) % 2 === 0;
-    const c = red ? [.88 * fog, .26 * fog, .20 * fog] : [.95 * fog, .95 * fog, .96 * fog];
+    const c = aerialAt(red ? [.88, .26, .20] : [.95, .95, .96], fog, dz);
     const off = hwp + w * 2.2;
     rect(SX(x - off), SY(y) - h, w, h, ...c, 1);
     rect(SX(x + off), SY(y) - h, w, h, ...c, 1);
@@ -812,7 +862,7 @@ for (const entry of visibleObjects) {
   const az = camZ + dz;
   const [x, y, ppm] = project(dz, bend(dz) + o.lateral * T.roadHalf, roadHeight(az));
   const size = objSize(ppm, st.size);
-  const fog = clamp(1 - (dz / FAR_Z) * T.fogStrength, 0.22, 1);
+  const fog = clamp(1 - (dz / HAZE_Z) * T.fogStrength, 0.22, 1);
   const t = tex[st.tex];
   const hover = (!OLDOBJ && st.float) ? size * 0.20 : (OLDOBJ && st.float ? size * 0.55 : 0);
 

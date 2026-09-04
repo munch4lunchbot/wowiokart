@@ -69,8 +69,16 @@ Tuning.defs = {
   -- Lives with the camera, not with the AI. Workshop builds one TAB per
   -- section, so sitting in the AI block put "how far down the road is drawn"
   -- on the opponents tab, where nobody tuning the view would ever look for it.
-  { key = "drawDistance", label = "See ahead (m)", default = 330, rev = 6, step = 20, min = 120, max = 620,
-    hint = "How far down the road is drawn. Higher gives more warning before a corner arrives, which is most of what makes a circuit readable." },
+  -- 330 -> 560 (rev 7). At 330 the road did not reach the horizon: it stopped
+  -- at a hard horizontal edge partway up the frame with open ground between
+  -- its end and the treeline, so the far field read as a painted backdrop with
+  -- a strip of tarmac laid on it rather than as a road going somewhere. The
+  -- strips are spread uniformly in 1/z, so where the LAST one lands is the
+  -- only thing this changes -- the near road is sliced exactly as finely at
+  -- 560 as at 330, and the count is identical. It is close to free, and it is
+  -- the difference between seeing the corner after next and guessing at it.
+  { key = "drawDistance", label = "See ahead (m)", default = 560, rev = 7, step = 20, min = 120, max = 900,
+    hint = "How far down the road is drawn. Higher gives more warning before a corner arrives, which is most of what makes a circuit readable.\nThe road is sliced into the same number of strips whatever this says, so raising it costs almost nothing." },
   { key = "shakeScale", label = "Camera shake", default = 1.0, step = 0.1, min = 0, max = 3.0 },
   { key = "boostFov", label = "Speed lens kick", default = 0.075, step = 0.01, min = 0, max = 0.3 },
   { key = "camYaw", label = "Turn into corners", default = 1.0, step = 0.1, min = 0, max = 3.0,

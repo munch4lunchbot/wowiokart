@@ -47,8 +47,8 @@ local widgetCalls = 0
 widget.__index = function(self, key)
   local fixed = rawget(widget, key)
   if fixed then
-    -- Show/Hide/SetShown are hot too, and they are real methods below.
-    if key == "Show" or key == "Hide" or key == "SetShown" then
+    -- Show/Hide/SetShown/SetPoint are hot too, and they are real methods below.
+    if key == "Show" or key == "Hide" or key == "SetShown" or key == "SetPoint" then
       widgetCalls = widgetCalls + 1
     end
     return fixed
@@ -84,6 +84,19 @@ function widget:Hide() self.akShown = false return self end
 -- texture is visible, so they are kept.
 function widget:SetVertexColor(r, g, b, a)
   self.akColor = { r or 1, g or 1, b or 1, a or 1 }
+  return self
+end
+--- Recorded for the same reason: WHERE a strip was put is the whole question
+--- in "does the road actually reach the horizon". Both call forms appear in the
+--- renderer -- (point, x, y) and (point, relativeTo, relativePoint, x, y) -- and
+--- they are told apart by whether the second argument is a number.
+function widget:SetPoint(point, a, b, c, d)
+  self.akAnchor = point
+  if type(a) == "number" then
+    self.akX, self.akY = a, b
+  else
+    self.akX, self.akY = c, d
+  end
   return self
 end
 function widget:SetSize(w, h) self.akWidth, self.akHeight = w, h return self end
@@ -627,6 +640,76 @@ if loadFailures == 0 then
     AK.Race:Stop(true)
   end)
 
+  -- THE ROAD HAS TO REACH THE HORIZON, AND HAVE DETAIL WHEN IT GETS THERE.
+  --
+  -- Two faults, one picture. The strips were spread uniformly in 1/z all the
+  -- way to the draw distance, which is right for the near road and a
+  -- singularity at the far end: measured, the LAST strip covered everything
+  -- from 226m to 560m as a single flat quad, at one lateral position and one
+  -- width. So the road did not converge, it stopped -- a blunt end hanging in
+  -- mid-air with open ground between it and the treeline -- and a corner three
+  -- hundred metres out was drawn as a straight smear pointing wherever that
+  -- quad's midpoint happened to land.
+  --
+  -- Both are visible in the geometry the renderer hands the client, so both are
+  -- measured rather than described. Strips uniform in 1/z are uniform in screen
+  -- height, so the count of them near the horizon IS the far-field resolution:
+  -- the old schedule could only ever put four in the last twenty pixels, and
+  -- the split schedule puts the whole tail there.
+  ok("the road runs all the way to the horizon", function()
+    local worstGap, gapAt, worstTail, tailAt = -math.huge, "", math.huge, ""
+    for _, id in ipairs({ "elwynn", "durotar", "icecrown" }) do
+      AK.Race:Start("quick", { track = id })
+      local race = AK.Race.current
+      race.player.ai = race.player.ai or AK.AI:CreatePersonality(9)
+      -- A CREST IS NOT A FAULT. Over a rise the far road is genuinely behind
+      -- the hill and RenderRoad drops those strips, exactly as it should -- as
+      -- it does on a descending road, where the far surface projects BELOW its
+      -- own near strips. So both numbers are the best the circuit manages over
+      -- the run: how close to the horizon the road ever gets, and how finely
+      -- the far field is ever sliced. Every circuit has to be able to do both
+      -- SOMEWHERE; no circuit has to do them on a blind crest.
+      local best, mostTail = math.huge, 0
+      for _ = 1, math.ceil(20 / FRAME) do
+        local wanted = AK.AI:Controls(race, race.player, FRAME)
+        wipe(AK.Race.controls)
+        for k, v in pairs(wanted) do AK.Race.controls[k] = v end
+        AK.Race.controls.accelerate = true
+        AK.Race:Update(FRAME)
+
+        local horizon = AK.db.tuning.horizon
+        local top, nearHorizon = nil, 0
+        for _, strip in ipairs(AK.RaceUI.strips) do
+          local road = strip.road
+          if road and road.akShown and road.akY and road.akHeight then
+            local edge = road.akY + road.akHeight
+            if not top or edge > top then top = edge end
+            if edge > horizon - 20 then nearHorizon = nearHorizon + 1 end
+          end
+        end
+        if top then
+          local gap = horizon - top
+          if gap < best then best = gap end
+          if nearHorizon > mostTail then mostTail = nearHorizon end
+        end
+      end
+      if best > worstGap then worstGap, gapAt = best, id end
+      if mostTail < worstTail then worstTail, tailAt = mostTail, id end
+      AK.Race:Stop(true)
+    end
+    say(("        road reaches within %.1fpx of the horizon on open ground (%s); "
+      .. "at best %d strips in the last 20px (%s)")
+      :format(worstGap, gapAt, worstTail, tailAt))
+    assert(worstGap < 12,
+      ("the road never gets closer than %.1f pixels to the horizon on %s -- "
+        .. "it ends in mid-air"):format(worstGap, gapAt))
+    -- Uniform 1/z managed four here, whatever the draw distance was set to.
+    assert(worstTail >= 10,
+      ("only %d road strips are drawn in the last 20 pixels before the horizon "
+        .. "on %s: the far road is a handful of flat quads again, and cannot bend")
+        :format(worstTail, tailAt))
+  end)
+
   -- A FORK MUST NOT BE A JUMP CUT.
   --
   -- Taking a branch swaps the route the kart is measured against, and every
@@ -675,6 +758,53 @@ if loadFailures == 0 then
     -- is the camera jumping rather than following.
     assert(worst < 1.2,
       ("the camera slipped %.2fm from the kart at a fork on %s"):format(worst, worstAt))
+  end)
+
+  -- THE CUT HAS TO HAPPEN IN THE DARK.
+  --
+  -- A recovery moves the kart up to a full respawn spacing BACKWARDS in one
+  -- simulation tick. There is nothing continuous between the two places, so it
+  -- cannot be smoothed -- it can only be covered. This drives a real fall and
+  -- checks the veil is fully shut on the frame the world actually jumps.
+  ok("a recovery is covered, not jump cut", function()
+    AK.Race:Start("quick", { track = "durotar" })
+    local race = AK.Race.current
+    race.player.ai = race.player.ai or AK.AI:CreatePersonality(9)
+    -- Get properly under way first: a recovery from the grid is not the case
+    -- that matters and the respawn point would be behind the start line.
+    for _ = 1, math.ceil(20 / FRAME) do
+      AK.Race.controls.accelerate = true
+      AK.Race:Update(FRAME)
+    end
+    local before = race.player.distance
+    race.player.falling = 0.01
+    local jumped, veilAtCut, sawLift = 0, nil, false
+    for _ = 1, math.ceil(4 / FRAME) do
+      local wasLifted = race.player.lifted
+      AK.Race:Update(FRAME)
+      if race.player.lifted and not wasLifted then
+        sawLift = true
+        jumped = math.abs(race.player.distance - before)
+        veilAtCut = AK.RaceUI.recoveryVeil.akAlpha or 0
+      end
+      if not race.player.falling then break end
+    end
+    assert(sawLift, "the fall never reached the point where the kart is picked up")
+    say(("        durotar recovery: the world moved %.0fm, veil %.2f at the cut")
+      :format(jumped, veilAtCut or 0))
+    assert(jumped > 5, "the recovery did not actually move the kart, so this proves nothing")
+    -- And it must not throw you halfway back up the circuit. The penalty for
+    -- going off is the pick-up, not a lap.
+    assert(jumped < 40,
+      ("a recovery moved the kart %.0fm backwards; that is a lap penalty"):format(jumped))
+    assert((veilAtCut or 0) > 0.99,
+      ("the world jumped %.0fm with the veil at %.2f -- that is a visible cut")
+        :format(jumped, veilAtCut or 0))
+    -- And it has to open again, or the screen stays black.
+    for _ = 1, math.ceil(3 / FRAME) do AK.Race:Update(FRAME) end
+    assert((AK.RaceUI.recoveryVeil.akAlpha or 1) < 0.02,
+      "the recovery veil never opened again")
+    AK.Race:Stop(true)
   end)
 
   ok("time trial and battle both run", function()

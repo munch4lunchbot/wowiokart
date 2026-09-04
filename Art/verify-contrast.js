@@ -78,6 +78,7 @@ function separation(a, b) {
 // next, and the first version of this check duly reported that Elwynn's brown
 // road was indistinguishable from its green verge.
 const WANT = 0.20;
+const WANT_FAR = 0.13;
 
 const shots = fs.mkdtempSync(path.join(os.tmpdir(), "kartcontrast-"));
 const worst = [];
@@ -89,7 +90,7 @@ for (const id of tracks) {
   // a shaft from horizon to bumper, so every strip is covered and there is
   // nothing to measure -- which the first version of this reported, accurately,
   // as "0 usable samples".
-  const seps = [];
+  const seps = [], farSeps = [];
   let taken = 0;
   for (const at of [180, 420, 900]) {
     const out = path.join(shots, id + "-" + at + ".png");
@@ -97,11 +98,19 @@ for (const id of tracks) {
     execFileSync("node", [path.join(__dirname, "preview-render.js"), __dirname, out, String(at)],
       { env: { ...process.env, TRACK: id, ROAD_ROWS: rowFile }, stdio: "ignore" });
     const im = readPNG(out);
-    const rows = JSON.parse(fs.readFileSync(rowFile, "utf8"))
+    // NEAR and FAR are different questions. Near, the road is most of the
+    // screen and it is obvious; far, both it and the ground beside it are
+    // washed most of the way to the same haze colour, and "where does the road
+    // go" is exactly what stops being answerable. Only the near half was ever
+    // measured, so the far half was never a number at all.
+    const all = JSON.parse(fs.readFileSync(rowFile, "utf8"))
       // Under cover there is no verge to compare against -- outside the shaft
       // is solid rock -- so a tunnel is measured on the open sections only.
-      .filter((r) => r.y > im.h * 0.42 && r.y < im.h - 8 && (r.cover || 0) < 0.15);
-    for (const row of rows) {
+      .filter((r) => r.y < im.h - 8 && (r.cover || 0) < 0.15);
+    const rows = all.filter((r) => r.y > im.h * 0.42);
+    const farRows = all.filter((r) => r.y <= im.h * 0.42 && r.y > im.h * 0.20);
+    for (const row of rows.concat(farRows)) {
+      const isFar = row.y <= im.h * 0.42;
       const half = (row.right - row.left) / 2;
       if (half < 40) continue;
       const roadX = Math.round(row.left + half * 0.45);
@@ -117,7 +126,7 @@ for (const id of tracks) {
         console.log("   @" + at + " y" + row.y, "road", r.map((x) => x.toFixed(2)).join(","),
           "verge", v.map((x) => x.toFixed(2)).join(","), "sep", sep.toFixed(3));
       }
-      seps.push(sep);
+      (isFar ? farSeps : seps).push(sep);
     }
   }
   if (taken < 8) {
@@ -126,10 +135,16 @@ for (const id of tracks) {
     continue;
   }
   seps.sort((a, b) => a - b);
+  farSeps.sort((a, b) => a - b);
   const low = seps[seps.length >> 1];
-  const flag = low < WANT ? "  <-- the road disappears into the verge" : "";
-  console.log(`  ${id.padEnd(16)} ${low.toFixed(3)}   (worst strip ${seps[0].toFixed(3)})${flag}`);
-  if (low < WANT) worst.push(id);
+  const far = farSeps.length ? farSeps[farSeps.length >> 1] : low;
+  // The far field is allowed to be softer than the near field -- that is what
+  // distance looks like -- but not to vanish.
+  const bad = low < WANT || far < WANT_FAR;
+  const flag = low < WANT ? "  <-- the road disappears into the verge"
+    : (far < WANT_FAR ? "  <-- the road vanishes into the distance" : "");
+  console.log(`  ${id.padEnd(16)} near ${low.toFixed(3)}   far ${far.toFixed(3)}${flag}`);
+  if (bad) worst.push(id);
 }
 fs.rmSync(shots, { recursive: true, force: true });
 console.log(worst.length
