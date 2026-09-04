@@ -24,6 +24,10 @@ local DETAIL_Z = 120
 --- How many strips the far tail gets, at most. They are thin and cheap to look
 --- at; what they buy is a far road that bends.
 local TAIL_SEGMENTS = 22
+--- How far off a shortcut announces itself, in metres. The ribbon is drawn as
+--- far as the road is; the SIGN and its name are a warning, and a warning has a
+--- range of its own.
+local FORK_NOTICE = 200
 local TUNNEL_HEIGHT = 7.5        -- metres from road to tunnel ceiling
 local TUNNEL_TILE = 5.0          -- metres per repeat of the rock texture
 local PROPS = 54                 -- roadside scenery frames in flight at once
@@ -3182,18 +3186,12 @@ function RaceUI:RenderFork(race, player, camX, camZ)
       local span = math.min(branch.length, math.max(0, FAR_Z - entryDz))
       local light = (self.light or 1) * tuning.nightBoost
       local roadColor = track.road or { .34, .34, .38 }
-      -- The same aerial-perspective wash RenderRoad applies, so the shortcut
-      -- ribbon recedes with the tarmac it leaves rather than staying flat.
-      local skyLow = track.skyLow or { .8, .88, .96 }
-      local trackGlow = track.glow or { 1, .93, .72 }
-      local haze1 = (skyLow[1] * 0.58 + trackGlow[1] * 0.42) * light
-      local haze2 = (skyLow[2] * 0.58 + trackGlow[2] * 0.42) * light
-      local haze3 = (skyLow[3] * 0.58 + trackGlow[3] * 0.42) * light
-      local hazeCap = AK.Math.Clamp(0.62 * tuning.fogStrength, 0, 0.72)
-      local function aerial(r, g, b, lit, mix)
-        r, g, b = r * lit, g * lit, b * lit
-        return r + (haze1 - r) * mix, g + (haze2 - g) * mix, b + (haze3 - b) * mix, 1
-      end
+      -- The wash comes from RenderRoad, which has already run this frame. It
+      -- used to be recomputed here from the track's own sky and glow, which was
+      -- the same arithmetic minus one term: the copy left out the `(1 -
+      -- camDepth)` that kills the haze under cover, so inside Deadmines the
+      -- shortcut ribbon receded toward a SKY that is not there while the tarmac
+      -- beside it stayed rock-lit.
       local previousX, previousY, previousW
 
       if span > 2 then
@@ -3218,24 +3216,59 @@ function RaceUI:RenderFork(race, player, camX, camZ)
               local height = math.max(1, y - previousY)
               local midX = (x + previousX) * .5
               local midHalf = (halfWidthPixels + previousW) * .5
-              local fog = AK.Math.Clamp(1 - (dz / HAZE_Z) * tuning.fogStrength, 0.22, 1) * light
-              local mix = hazeCap * (AK.Math.Clamp(dz / HAZE_Z, 0, 1) ^ 0.85)
-              local uRoad = tuning.roadHalf / ROAD_TILE
-              strip.road:SetTexCoord(-uRoad, uRoad, (bd - span / FORK_SEGMENTS) / ROAD_TILE, bd / ROAD_TILE)
+              -- Same rule as the main road: a texture minified past MIN_TEXEL
+              -- is a moire pattern, so out there the ribbon is flat colour
+              -- with road.tga's own baked mean folded in.
+              local flatRibbon = pixelsPerMetre * ROAD_TILE < MIN_TEXEL
+              if strip.roadFlat ~= flatRibbon then
+                strip.roadFlat = flatRibbon
+                if flatRibbon then
+                  strip.road:SetTexture(SOLID)
+                  strip.road:SetTexCoord(0, 1, 0, 1)
+                else
+                  strip.road:SetTexture(ART .. "road.tga", "REPEAT", "REPEAT")
+                end
+              end
+              if not flatRibbon then
+                local uRoad = tuning.roadHalf / ROAD_TILE
+                local vNear = (bd - span / FORK_SEGMENTS) / ROAD_TILE
+                local vFar = bd / ROAD_TILE
+                local cap = math.max(0.08, height / MIN_TEXEL)
+                if vFar - vNear > cap then vFar = vNear + cap end
+                strip.road:SetTexCoord(-uRoad, uRoad, vNear, vFar)
+              end
               strip.road:ClearAllPoints()
               strip.road:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
               strip.road:SetSize(math.max(2, midHalf * 2), height)
               -- The same wash the main road gets. Fogging the ribbon by
               -- brightness alone while the tarmac beside it recedes toward the
               -- horizon made the shortcut read as a decal laid over the scene.
-              strip.road:SetVertexColor(aerial(roadColor[1], roadColor[2], roadColor[3], 0.94 * light, mix))
+              strip.road:SetVertexColor(self:Aerial(roadColor[1], roadColor[2], roadColor[3],
+                0.94 * light * (flatRibbon and ROAD_MEAN or 1), dz))
               setShown(strip.road, true)
 
               -- Bright rails so the alternate line reads as a road and not as
               -- a shadow on the grass.
-              local rail = AK.Math.Clamp(midHalf * 0.055, 1, 18)
-              local glow = 0.6 + 0.4 * math.sin(race.elapsed * 6 - bd * 0.2)
-              local rr, rg, rb = aerial(0.35 * glow, 1.0 * glow, 0.45 * glow, light, mix)
+              --
+              -- THE FLOOR IS THE POINT. Scaled off the ribbon's own width alone,
+              -- the rails came out at ONE PIXEL between about sixty and a
+              -- hundred and fifty metres -- which is the entire window in which
+              -- the player has to notice a shortcut and decide to take it. By
+              -- the time they were wide enough to see you were already at the
+              -- split. Two and a half pixels is still a hairline on the near
+              -- ribbon and is the difference between a lit alternate line and a
+              -- speckle in the grass at distance.
+              local rail = AK.Math.Clamp(midHalf * 0.055, 2.5, 18)
+              -- LOUD. Photographed thirty metres from Elwynn's river ford, the
+              -- rails came out at RGB (0.21, 0.60, 0.27) -- a mid green on
+              -- brown tarmac, which is a marking, not a signal. The alternate
+              -- line has to be picked out of a scene it is lying directly on
+              -- top of, because a branch leaves from the road's own edge and
+              -- overlaps it for the first fifty metres. The pulse now runs
+              -- between three quarters and full rather than between a little
+              -- over half and full, and the hue is a lime rather than a leaf.
+              local glow = 0.75 + 0.25 * math.sin(race.elapsed * 6 - bd * 0.2)
+              local rr, rg, rb = self:Aerial(0.48 * glow, 1.0 * glow, 0.30 * glow, light, dz)
               -- Unrolled. This was `ipairs({ { strip.edgeLeft, -1 }, ... })`,
               -- which allocated three tables per strip per frame -- a hundred
               -- and twenty pieces of garbage every frame a fork is on screen,
@@ -3257,7 +3290,14 @@ function RaceUI:RenderFork(race, player, camX, camZ)
       end
 
       -- The sign, planted on the branch's side of the split.
-      if entryDz > 2 and entryDz < FAR_Z then
+      --
+      -- NOTICED AT A FIXED DISTANCE, not at the draw distance. Both the gate
+      -- and the label's fade were measured against FAR_Z, so winding the
+      -- See-ahead slider out lit the shortcut sign up half a kilometre early
+      -- and pinned its name to the sky above the treeline for most of a lap.
+      -- "There is a shortcut coming" is a fact about the road, not about how
+      -- far the renderer has been told to draw.
+      if entryDz > 2 and entryDz < FORK_NOTICE then
         local signX, signY = self:RoadAt(track, branch.entry)
         local x, y, pixelsPerMetre = self:Project(entryDz,
           signX + side * tuning.roadHalf * entryWidth * 1.05, camX, signY)
@@ -3272,7 +3312,13 @@ function RaceUI:RenderFork(race, player, camX, camZ)
         self.forkSign:SetVertexColor(0.55 * flash, 1.0 * flash, 0.62 * flash, 1)
         setShown(self.forkSign, true)
         self.forkLabel:ClearAllPoints()
-        self.forkLabel:SetPoint("BOTTOM", self.frame, "CENTER", x, y + size * 1.05)
+        -- KEPT ON SCREEN. The sign stands beside the road, and on a bend the
+        -- road is off at the edge of the display long before the split arrives
+        -- -- so the label, anchored to the sign, was being drawn half off the
+        -- right of the frame with its own name unreadable. The arrow beside it
+        -- still says which way; the words only have to be legible.
+        local labelX = AK.Math.Clamp(x, -self.halfWidth + 130, self.halfWidth - 130)
+        self.forkLabel:SetPoint("BOTTOM", self.frame, "CENTER", labelX, y + size * 1.05)
         -- The name alone; the direction is the ARROW beside it. This used to
         -- read "RIVER FORD  <<", with the arrow typed out of angle brackets on
         -- the one screen the player is actually looking at.
@@ -3283,7 +3329,7 @@ function RaceUI:RenderFork(race, player, camX, camZ)
         self.forkArrow:SetTexCoord(side < 0 and 1 or 0, side < 0 and 0 or 1, 0, 1)
         self.forkArrow:SetAlpha(self.forkLabel:GetAlpha())
         setShown(self.forkArrow, true)
-        self.forkLabel:SetAlpha(AK.Math.Clamp((FAR_Z - entryDz) / 90, 0, 1))
+        self.forkLabel:SetAlpha(AK.Math.Clamp((FORK_NOTICE - entryDz) / 90, 0, 1))
         setShown(self.forkLabel, true)
         signShown = true
       end

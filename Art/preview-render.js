@@ -111,6 +111,7 @@ const aerialAt = (c, lit, dz) => {
   const mix = AERIAL.cap * Math.pow(clamp(dz / HAZE_Z, 0, 1), 0.85);
   return c.map((v, k) => { const t = v * lit; return t + (AERIAL.haze[k] - t) * mix; });
 };
+const { drawText } = require("./hud-font.js");
 const STRIPE = 4.5, CURVE_SCALE = +(process.env.CS || 30);
 // NONORM=1 drops the global peak-fit in the compile, so authored curvature
 // keeps its absolute size and a hairpin stays a hairpin regardless of what else
@@ -148,6 +149,43 @@ const track = (function () {
     const q = body.match(new RegExp(key + " = \\{ ([\\d.]+), ([\\d.]+), ([\\d.]+) \\}"));
     return q ? [+q[1], +q[2], +q[3]] : [1, 1, 1];
   };
+  //--- BRANCHES. Same shape as the main route, one indent deeper, and each one
+  //--- carries where it leaves the lap and which side it leaves from.
+  const branches = [];
+  {
+    const bs = body.indexOf("branches = {");
+    if (bs !== -1) {
+      const be = body.indexOf("\n    },", bs);
+      const block = body.slice(bs, be === -1 ? body.length : be);
+      const re2 = /\n      \{\n        id = "(\w+)"/g;
+      const heads = [];
+      let bm; while ((bm = re2.exec(block))) heads.push({ id: bm[1], at: bm.index });
+      heads.forEach((head, k) => {
+        const chunk = block.slice(head.at, k + 1 < heads.length ? heads[k + 1].at : block.length);
+        const pick = (re3, d) => { const q = chunk.match(re3); return q ? +q[1] : d; };
+        const ls2 = chunk.indexOf("layout = {");
+        if (ls2 === -1) return;
+        branches.push({
+          id: head.id,
+          name: (chunk.match(/name = "([^"]+)"/) || [, head.id])[1],
+          side: pick(/side = (-?\d+)/, -1),
+          from: pick(/from = ([\d.]+)/, 0), to: pick(/to = ([\d.]+)/, 0),
+          length: pick(/length = (\d+)/, 250),
+          // Builder:CompileBranches defaults a branch's sweep to 1.6.
+          sweep: pick(/sweep = ([\d.]+)/, 1.6),
+          layout: [...chunk.slice(ls2).matchAll(/\{ len = ([\d.]+),([^}]*)\}/g)].map(x => ({
+            len: +x[1],
+            curve: +(x[2].match(/curve = (-?[\d.]+)/) || [, 0])[1],
+            grade: +(x[2].match(/grade = (-?[\d.]+)/) || [, 0])[1],
+            width: +(x[2].match(/width = ([\d.]+)/) || [, 1])[1],
+            ramp: /ramp = true/.test(x[2]),
+            tunnel: /tunnel = true/.test(x[2]),
+            name: (x[2].match(/name = "([^"]+)"/) || [, ""])[1],
+          })),
+        });
+      });
+    }
+  }
   const ls = body.indexOf("layout = {"), le = body.indexOf("\n    },", ls);
   const layout = [...body.slice(ls, le).matchAll(/\{ len = ([\d.]+),([^}]*)\}/g)].map(x => ({
     len: +x[1],
@@ -169,10 +207,17 @@ const track = (function () {
     sweep: num(/sweep = ([\d.]+)/, 2.6), layout,
     _painted: [...body.matchAll(/\{ from = (\d+), to = (\d+), onRoad = "(\w+)" \}/g)]
       .map(x => ({ from: +x[1], to: +x[2], mat: x[3] })),
+    _branches: branches,
   };
 })();
 // Compile the layout exactly as TrackBuilder does.
-(function(){
+//
+// A ROUTE, not "the track". Builder:CompileBranches puts a branch through this
+// same pipeline because a branch simply IS a small track, and this sheet has to
+// be able to do the same or the fork ribbon -- the one part of the scene with
+// no offline eye on it at all, and the part the last round of reports was
+// about -- stays unpreviewable.
+function compile(track){
   const STEP=2,CG=0.0021,GG=0.022;
   const authored=track.layout.reduce((s,p)=>s+p.len,0), scale=track.length/authored;
   const N=Math.floor(track.length/STEP)+1;
@@ -195,7 +240,9 @@ const track = (function () {
   let w=[];for(let i=0;i<N;i++){let t=0,n=0;for(let k=-15;k<=15;k++){t+=wr[((i+k)%N+N)%N];n++;}w.push(t/n);}
   let cs=[];for(let i=0;i<N;i++){let t=0,n=0;for(let k=-15;k<=15;k++){t+=cv[((i+k)%N+N)%N];n++;}cs.push(t/n);}
   track._w=w;track._c=c;track._h=h;track._cv=cs;track._ramps=ramps;track._N=N;track._STEP=STEP;
-})();
+  return track;
+}
+compile(track);
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const roadCenter = d => { const i=Math.floor((((d%track.length)+track.length)%track.length)/track._STEP)%track._N; return track._c[i]*CURVE_SCALE; };
 const roadHeight = d => { const i=Math.floor((((d%track.length)+track.length)%track.length)/track._STEP)%track._N; return track._h[i]; };
@@ -689,6 +736,147 @@ for (let r = rows.length - 1; r >= 0; r--) {
   }
 }
 
+// ---------- the fork ribbon ----------
+//
+// THE ONE PART OF THE SCENE THAT HAD NO PICTURE.
+//
+// Every other thing on screen is drawn here and can be looked at offline. The
+// shortcut ribbon -- the alternate line that peels off the main road, with its
+// bright rails and its sign -- was not, which is exactly why "our multi track
+// things where there are forks in the road are very disorienting and glitchy"
+// arrived as a bug report from a player instead of as an obviously wrong
+// picture. Mirrors RaceUI:RenderFork step for step.
+const FORK_SEGMENTS = 40;
+{
+  const branch = (track._branches || []).map(b => {
+    const entry = b.from * track.length;
+    let gap = (entry - PLAYER_DIST) % track.length;
+    if (gap < 0) gap += track.length;
+    return { b, entry, gap };
+  }).filter(x => x.gap < FAR_Z).sort((a, b2) => a.gap - b2.gap)[0];
+
+  if (branch) {
+    const B = compile(Object.assign({}, branch.b));
+    // A BRANCH IS A LINE, NOT A LOOP -- Builder:At clamps rather than wrapping,
+    // and a sampler that wrapped here would fetch the branch's EXIT for any
+    // distance just short of its start.
+    const at = d => Math.max(0, Math.min(B.length, d));
+    const bCurve = d => B._cv[Math.min(B._N - 1, Math.floor(at(d) / B._STEP))];
+    const bHeight = d => B._h[Math.min(B._N - 1, Math.floor(at(d) / B._STEP))];
+    const bWidth = d => B._w[Math.min(B._N - 1, Math.floor(at(d) / B._STEP))];
+
+    const entryDz = branch.gap + T.camBack;
+    const entryCentre = bend(entryDz);
+    const entryWidth = roadWidth(branch.entry);
+    // The branch's own curvature, accumulated along the branch exactly as the
+    // main road's is accumulated along itself.
+    const branchBend = (() => {
+      const step = 2, n = Math.ceil(B.length / step) + 4;
+      const off = new Float64Array(n);
+      let x = 0, dx = 0;
+      for (let i = 0; i < n; i++) {
+        off[i] = x;
+        dx += bCurve(i * step) * BEND_GAIN * step;
+        x += dx * step;
+      }
+      return bd => {
+        const t = clamp(bd, 0, (n - 2) * step) / step;
+        const i = Math.floor(t), f = t - i;
+        return off[i] + (off[i + 1] - off[i]) * f;
+      };
+    })();
+
+    const side = branch.b.side || -1;
+    const offset = side * T.roadHalf * entryWidth * 0.92;
+    const span = Math.min(B.length, Math.max(0, FAR_Z - entryDz));
+    const baseY = roadHeight(branch.entry) - bHeight(0);
+    let pX = null, pY = null, pW = null;
+    if (span > 2) {
+      // Far to near, so the ribbon occludes itself the way the road does.
+      const ribs = [];
+      for (let i = 0; i < FORK_SEGMENTS; i++) {
+        const bd = span * (i / (FORK_SEGMENTS - 1));
+        const dz = entryDz + bd;
+        if (dz <= 1.2) continue;
+        // Blended out of the main road over the first few metres so it grows
+        // from the tarmac rather than appearing beside it.
+        const emerge = clamp(bd / 12, 0, 1);
+        const worldX = entryCentre + branchBend(bd) + offset * emerge;
+        const [x, y, ppm] = project(dz, worldX, baseY + bHeight(bd));
+        const hwPx = ppm * T.roadHalf * bWidth(bd);
+        if (pY !== null && y > pY) {
+          ribs.push({ y: pY, h: Math.max(1, y - pY), midX: (x + pX) / 2,
+            midHalf: (hwPx + pW) / 2, dz, bd, ppm });
+        }
+        pX = x; pY = y; pW = hwPx;
+      }
+      for (let k = ribs.length - 1; k >= 0; k--) {
+        const rib = ribs[k];
+        // Textured until it is minified past MIN_TEXEL, exactly as the main
+        // road and RaceUI's ribbon are. Filling flat all the way in was a
+        // mirror-only shortcut and it showed: the near ribbon came out as a
+        // pale slab laid across the road instead of as more tarmac.
+        const flatRibbon = rib.ppm * ROAD_TILE < MIN_TEXEL;
+        const tint = aerialAt(track.road, 0.94 * light * (flatRibbon ? ROAD_MEAN : 1), rib.dz);
+        const rw = Math.max(2, rib.midHalf * 2);
+        if (flatRibbon || !tex.road) {
+          rect(SX(rib.midX - rib.midHalf), SY(rib.y + rib.h), rw, rib.h + 1, ...tint, 1);
+        } else {
+          const uR = T.roadHalf / ROAD_TILE;
+          const v0 = (rib.bd - span / FORK_SEGMENTS) / ROAD_TILE;
+          const v1 = Math.min(rib.bd / ROAD_TILE, v0 + Math.max(0.08, rib.h / MIN_TEXEL));
+          blit(tex.road, SX(rib.midX - rib.midHalf), SY(rib.y + rib.h), rw, rib.h + 1,
+            -uR, uR, v0, v1, tint, 1);
+        }
+        // Bright rails, so the alternate line reads as a road and not as a
+        // shadow on the grass.
+        const rail = clamp(rib.midHalf * 0.055, 2.5, 18);
+        const glow = 0.75 + 0.25 * Math.sin(-rib.bd * 0.2);
+        const rc = aerialAt([0.48 * glow, 1.0 * glow, 0.30 * glow], light, rib.dz);
+        rect(SX(rib.midX - rib.midHalf), SY(rib.y + rib.h), rail, rib.h + 1, ...rc, 1);
+        rect(SX(rib.midX + rib.midHalf), SY(rib.y + rib.h), rail, rib.h + 1, ...rc, 1);
+      }
+    }
+
+    // The sign, planted on the branch's side of the split. Noticed at a fixed
+    // distance, not at the draw distance -- mirrors FORK_NOTICE in RaceUI.
+    const FORK_NOTICE = 200;
+    if (entryDz > 2 && entryDz < FORK_NOTICE) {
+      const [x, y, ppm] = project(entryDz,
+        bend(entryDz) + side * T.roadHalf * entryWidth * 1.05, roadHeight(branch.entry));
+      const size = clamp(ppm * 2.6, 16, 190);
+      const art = tex[side < 0 ? "forkleft" : "forkright"];
+      if (art) {
+        blit(art, SX(x - size * 0.45), SY(y) - size, size * 0.9, size, 0, 1, 0, 1,
+          [0.55, 1.0, 0.62], 1);
+      }
+      const label = (branch.b.name || "SHORTCUT").toUpperCase();
+      const alpha = clamp((FORK_NOTICE - entryDz) / 90, 0, 1);
+      // Clamped on screen, mirroring RaceUI: on a bend the sign is off at the
+      // display edge long before the split arrives, and the label went with it.
+      const labelX = clamp(x, -HW + 130, HW - 130);
+      // The font's real advance -- 6 cells at size/9.7 px each, the same
+      // metric hud-font.js lays out with. Guessing "8 per character" put the
+      // arrow through the last two letters of the name.
+      const adv = 6 * 15 / 9.7, textW = label.length * adv;
+      const textY = SY(y) - size * 1.05 - 16;
+      const textX = SX(labelX) - textW / 2;
+      drawText((px, py, r, g, b, a) => rect(px, py, 1, 1, r, g, b, a),
+        label, textX, textY, 15, [0.62, 1.0, 0.70], alpha);
+      // The arrow beside the name, which is what actually says which way --
+      // RaceUI anchors chevron.tga to the label's outer edge and flips it
+      // through its texcoords. Without it here the sheet showed a name
+      // floating over the treeline with no direction attached.
+      if (tex.chevron) {
+        const aw = 9, ah = 13;
+        const ax = side < 0 ? textX - 6 - aw : textX + textW + 6;
+        blit(tex.chevron, ax, textY + 1, aw, ah,
+          side < 0 ? 1 : 0, side < 0 ? 0 : 1, 0, 1, [0.62, 1.0, 0.70], alpha);
+      }
+    }
+  }
+}
+
 // ---------- roadside props ----------
 //
 // This harness had NO prop renderer at all, which is why it could not show the
@@ -948,7 +1136,6 @@ for (const v of field) {
 // of UI/RaceUI.lua and renders the real thing, text included, at the same scale
 // the addon would pick for a window this size.
 if (tex.vignette) blit(tex.vignette, 0, 0, W, H, 0, 1, 0, 1, [0, 0, 0], 1);
-const { drawText } = require("./hud-font.js");
 const LAYOUT = require("./hud-layout.js");
 
 // Drawn straight from Art/hud-layout.js, which is the same list verify-hud.js
