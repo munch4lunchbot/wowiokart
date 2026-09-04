@@ -747,7 +747,12 @@ for (let r = rows.length - 1; r >= 0; r--) {
 // arrived as a bug report from a player instead of as an obviously wrong
 // picture. Mirrors RaceUI:RenderFork step for step.
 const FORK_SEGMENTS = 40;
-{
+// NOFORK=1 leaves the ribbon off. Art/verify-contrast.js samples the rendered
+// frame either side of the road edge to ask "can you tell the tarmac from the
+// verge on this circuit" -- and where a branch runs alongside, its bright rails
+// sit exactly on that edge, so the tool ends up measuring the shortcut instead
+// of the palette it is there to check.
+if (!process.env.NOFORK) {
   const branch = (track._branches || []).map(b => {
     const entry = b.from * track.length;
     let gap = (entry - PLAYER_DIST) % track.length;
@@ -1166,6 +1171,13 @@ const HUD_SAMPLE = {
   "track.section": sectionHere.toUpperCase(),
   shortcut: track.shortcut ? "SHORTCUT: " + track.shortcut : "",
 };
+// Drawn only when STATE= asks for them. They are in the layout table so that
+// verify-hud checks them for collisions, not because they are ever on screen at
+// the same time as the standing HUD -- the banner comes and goes, the gantry
+// belongs to the countdown, and the ladder to the cooldown lap. Leaving the
+// ladder out of this list painted its plate over the right-hand verge on every
+// frame, which Art/verify-contrast.js promptly measured instead of the road.
+const TRANSIENT = /^(notice|lights|ladder)\./;
 const R = {};
 for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) R[r.name] = r;
 const GOLD = LAYOUT.COLORS.GOLD;
@@ -1195,6 +1207,15 @@ function panel(r, alpha = 1) {
   }
 }
 const put = (qx, qy, r, g, b, a) => blend(qx, qy, r, g, b, a);
+// hud-font's own metrics: six cells of size/9.7 pixels each per character.
+const drawTextWidth = (str, size) => str.length * 6 * size / 9.7;
+/** One line of HUD text, aligned the way a FontString's justify does it. */
+function hudText(str, x, y, size, colour, align) {
+  const w = drawTextWidth(str, size);
+  const sx = align === "center" ? Math.round(x - w / 2)
+    : align === "right" ? Math.round(x - w) : Math.round(x);
+  drawText(put, str, sx, Math.round(y), size, colour, 1);
+}
 const SHOW_CONTROLS = !!process.env.CONTROLS;
 // HUD_PANEL from UI/RaceUI.lua. The alpha travels separately, in `alpha`.
 const PANEL_TINT = [.025, .05, .10];
@@ -1214,6 +1235,7 @@ function plate(x0, y0, bw, bh, tint) {
 
 // Panels and buttons first, then every text row on top of them.
 for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
+  if (TRANSIENT.test(r.name)) continue;
   if (r.kind === "panel") panel(r);
   else if (r.kind === "glow" && tex.glow)
     blit(tex.glow, r.x, r.y, r.w, r.h, 0, 1, 0, 1, [0, 0, 0], 0.55);
@@ -1291,10 +1313,93 @@ for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
     rect(d.x + u(4) + track * (t / LAYOUT.DRIFT_MAX), d.y + u(4), Math.max(1, u(2)), d.h - u(8), .08, .13, .20, 1);
 }
 for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
+  // The banner and the gantry are TRANSIENT: they are in the layout table so
+  // that verify-hud checks them for collisions, not because they are on screen
+  // all the time. STATE= draws them; the standing HUD pass must not.
+  if (TRANSIENT.test(r.name)) continue;
   if (r.kind === "text") drawText(put, r.text, r.x, r.y, r.size, r.color, 1);
   else if (r.kind === "button" && SHOW_CONTROLS)
     drawText(put, r.text, r.x + (r.w - r.text.length * 6 * u(13) / 9.7) / 2,
       r.y + (r.h - u(13) * 7 / 9.7) / 2, u(13), GOLD, 1);
+}
+
+// ---------- presentation states: STATE=countdown|go|finish ---------------------
+//
+// THE FIRST THREE SECONDS OF EVERY RACE HAD NEVER BEEN LOOKED AT.
+//
+// The start gantry, the announce banner, the finish card and the cooldown
+// ladder are the beats that top and tail a race, and every one of them lived
+// only inside a running WoW client. Geometry is read out of UI/RaceUI.lua the
+// same way the HUD's is, so this cannot drift from what ships.
+{
+  const STATE = (process.env.STATE || "").toLowerCase();
+  if (STATE) {
+    const RUI = fs.readFileSync(path.join(__dirname, "..", "UI", "RaceUI.lua"), "utf8");
+    const rnum = (re, d) => { const m = RUI.match(re); return m ? +m[1] : d; };
+
+    if (STATE === "countdown" || STATE === "go") {
+      // Straight off the HUD table, like everything else on this screen.
+      const bar = R["lights.bar"];
+      const lampSize = u(LAYOUT.HUD.lights.h) / 1.7, gapPx = lampSize * 1.5;
+      const barW = bar.w, barH = bar.h;
+      const barTop = bar.y;
+      rect(bar.x, barTop, barW, barH, 0.06, 0.07, 0.10, 0.95);
+      const lit = STATE === "go" ? 3 : 2;
+      for (let i = 1; i <= 3; i++) {
+        const on = STATE === "go" || i <= lit;
+        const c = STATE === "go" ? [0.30, 1.0, 0.38] : [1.0, 0.22, 0.18];
+        const a = STATE === "go" ? 0.95 : (on ? 0.95 : 0.14);
+        const cx = bar.x + barW / 2 + (i - 2) * gapPx, cy = barTop + barH / 2;
+        // makeGlow is an additive radial, so it reads as a lamp rather than a
+        // disc: brightest at the centre and gone by its own edge.
+        for (let dy = -lampSize / 2; dy < lampSize / 2; dy++) {
+          for (let dx = -lampSize / 2; dx < lampSize / 2; dx++) {
+            const r = Math.hypot(dx, dy) / (lampSize / 2);
+            if (r > 1) continue;
+            const fall = Math.pow(1 - r, 1.8);
+            add(Math.round(cx + dx), Math.round(cy + dy), c[0], c[1], c[2], a * fall);
+          }
+        }
+      }
+      const banner = STATE === "go" ? "GO!" : "LINE UP FOR THE COUNTDOWN";
+      const bcol = STATE === "go" ? [0.42, 0.92, 0.45] : [0.62, 0.68, 0.78];
+      // The notice plate sizes itself to its content and hangs from the top of
+      // its box; the text sits in the middle of it.
+      const nb = R["notice.panel"];
+      const bw = Math.min(nb.w, drawTextWidth(banner, u(30)) + u(56));
+      rect(HW - bw / 2, nb.y, bw, nb.h, 0, 0, 0, 0.55);
+      rect(HW - bw / 2, nb.y + nb.h, bw, 2, bcol[0], bcol[1], bcol[2], 0.9);
+      hudText(banner, HW, nb.y + nb.h / 2 - u(30) * 0.5, u(30), bcol, "center");
+    }
+
+    if (STATE === "finish") {
+      hudText("FINISHED 2ND", HW, HH - H * 0.06 - u(40) * 0.5, u(40), [1, 0.82, 0.25], "center");
+      // The cooldown ladder: LADDER in UI/RaceUI.lua, anchored RIGHT -30, +20.
+      const LW = rnum(/local LADDER = \{ w = (\d+)/, 250);
+      const LROW = rnum(/local LADDER = \{ w = \d+, row = (\d+)/, 22);
+      const LTOP = rnum(/local LADDER = \{ w = \d+, row = \d+, top = (\d+)/, 32);
+      const SEATS = 8;
+      const LH = LTOP + LROW * SEATS + 10;
+      const lx = W - 30 - LW, ly = HH - 20 - LH / 2;
+      rect(lx, ly, LW, LH, 0.02, 0.04, 0.08, 0.86);
+      rect(lx, ly, LW, 2, 1, 0.82, 0.25, 1);
+      hudText("FINISHING ORDER", lx + 12, ly + 10, u(12), [1, 0.82, 0.25], "left");
+      const FIELD = [["1ST", "BAINE", "1:44.21"], ["2ND", "YOURSELF", "+0.42"],
+        ["3RD", "THRALL", "+1.18"], ["4TH", "JAINA", "+1.93"],
+        ["5TH", "REXXAR", "+4.06"], ["6TH", "SYLVANAS", "--"],
+        ["7TH", "ARTHAS", "--"], ["8TH", "CHEN", "--"]];
+      FIELD.forEach(([place, name, time], i) => {
+        const ry = ly + LTOP + i * LROW;
+        const mine = name === "YOURSELF";
+        if (mine) rect(lx + 8, ry, LW - 16, LROW, 0.07, 0.16, 0.11, 0.9);
+        rect(lx + 10, ry + 2, 3, LROW - 5, mine ? 0.42 : 0.30, mine ? 0.82 : 0.36,
+          mine ? 0.45 : 0.46, 1);
+        hudText(place, lx + 18, ry + 4, u(12), [0.62, 0.68, 0.78], "left");
+        hudText(name, lx + 50, ry + 4, u(12), mine ? [0.55, 1, 0.6] : [0.88, 0.91, 1], "left");
+        hudText(time, lx + LW - 18, ry + 4, u(12), [0.62, 0.68, 0.78], "right");
+      });
+    }
+  }
 }
 
 // ---------- encode ----------

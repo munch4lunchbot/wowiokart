@@ -148,6 +148,22 @@ local HUD = {
   drift    = { point = "BOTTOM",      x =    0, y =  112, w = 320, h =  18 },
   controls = { point = "BOTTOM",      x =    0, y =   26, w = 872, h =  44 },
   quit     = { point = "TOPRIGHT",    x =  -26, y = -116, w =   76, h = 26 },
+  -- THE BANNER AND THE START GANTRY BELONG IN HERE TOO.
+  --
+  -- They were the only two pieces of the interface placed by hand instead of
+  -- from this table, which meant verify-hud -- which checks every rectangle
+  -- for collisions and for running off the display, at eight resolutions --
+  -- was checking neither of them. And the gantry had a real bug because of
+  -- it: its lamp size and its offset were computed from the FRAME's height in
+  -- real pixels and then applied inside a coordinate space that is scaled to
+  -- the design size, so they were only ever right at 1600x900. At 1440p that
+  -- is a 127px lamp sitting 460 pixels down the screen. Both are design-unit
+  -- boxes now, like everything else, and both are checked.
+  --
+  -- The vertical stack down the middle: item (22-146), the shortcut line
+  -- (~156-171), the banner, then the lights.
+  notice   = { point = "TOP",         x =    0, y = -178, w =  700, h = 52 },
+  lights   = { point = "TOP",         x =    0, y = -244, w =  272, h = 84 },
 }
 local HUD_PANEL = { .025, .05, .10, .88 }
 --- The cooldown-lap finishing ladder. Sized off the racer cap so it fits the
@@ -167,6 +183,22 @@ local DRIFT_TRACK = HUD.drift.w - 8
 local DRIFT_TICKS = {}
 for i = #DRIFT_STAGES - 1, 1, -1 do
   DRIFT_TICKS[#DRIFT_TICKS + 1] = DRIFT_STAGES[i].threshold / DRIFT_MAX
+end
+
+--- Put a region on one of the HUD table's boxes.
+---
+--- `mode` is "box" for something that fills the box (a plate, a frame) and
+--- "centre" for something that sits in the middle of it (a line of text, whose
+--- own size is its content's). Everything on the HUD goes through the table so
+--- that verify-hud, which walks the same table at eight resolutions, is
+--- actually looking at the whole interface.
+local function placeHud(region, box, mode)
+  region:ClearAllPoints()
+  if mode == "centre" then
+    region:SetPoint("CENTER", region:GetParent(), box.point, box.x, box.y - box.h * 0.5)
+  else
+    region:SetPoint(box.point, box.x, box.y)
+  end
 end
 
 local ART_PREFIX = "Interface\\AddOns\\kart\\Art\\"
@@ -1145,7 +1177,11 @@ function RaceUI:Build()
     row.place:SetWidth(30)
     row.name = UI:NewText(row, "", 12, { .88, .91, 1 }, "LEFT")
     row.name:SetPoint("LEFT", 42, 0)
-    row.name:SetWidth(LADDER.w - 130)
+    -- 120 wide for a column that has to hold "Illidan Stormrage", which is
+    -- about 126 at twelve point -- so the longest name on the grid wrapped to a
+    -- second line inside a twenty-two pixel row. The gap column only needs
+    -- about 52 for "1:44.21" and had 78, so the room came from there.
+    row.name:SetWidth(LADDER.w - 112)
     row.time = UI:NewText(row, "", 12, AK.COLORS.muted, "RIGHT")
     row.time:SetPoint("RIGHT", -10, 0)
     row:Hide()
@@ -1170,13 +1206,13 @@ function RaceUI:Build()
   self.spinyWarn:SetAlpha(0)
 
   self.noticePlate = makeTexture(self.hudLayer, "BACKGROUND", { 0, 0, 0, .55 })
-  self.noticePlate:SetPoint("CENTER", self.hudLayer, "CENTER", 0, 258)
+  placeHud(self.noticePlate, HUD.notice)
   self.noticePlate:Hide()
   self.noticeEdge = makeTexture(self.hudLayer, "BORDER", AK.COLORS.gold)
   self.noticeEdge:SetPoint("TOP", self.noticePlate, "BOTTOM", 0, 0)
   self.noticeEdge:Hide()
   self.notice = UI:NewText(self.hudLayer, "", 30, AK.COLORS.gold, "CENTER")
-  self.notice:SetPoint("CENTER", 0, 258)
+  placeHud(self.notice, HUD.notice, "centre")
   self.notice:SetShadowColor(0, 0, 0, 1)
   self.notice:SetShadowOffset(2, -2)
   -- Item icon that pops alongside the banner when something is used.
@@ -2145,11 +2181,17 @@ function RaceUI:UpdatePresentation(race, dt)
     local live = self.lightsLit ~= nil and (not self.lightsUntil or t < self.lightsUntil)
     self.startLights:SetShown(live)
     if live then
-      local lampSize = h * 0.055
+      -- DESIGN UNITS, from the HUD table. These were `h * 0.055` and
+      -- `-h * 0.20` off the FRAME's height in real pixels, applied inside a
+      -- coordinate space scaled to 1600x900 -- so the gantry was only ever the
+      -- right size in the right place at exactly the design resolution. At
+      -- 1440p that arithmetic gives a 127-pixel lamp four hundred and sixty
+      -- pixels down the screen.
+      local lampSize = HUD.lights.h / 1.7
       local gap = lampSize * 1.5
       self.startLights:ClearAllPoints()
-      self.startLights:SetPoint("TOP", self.frame, "TOP", 0, -h * 0.20)
-      self.startLights:SetSize(gap * 3 + lampSize, lampSize * 1.7)
+      placeHud(self.startLights, HUD.lights)
+      self.startLights:SetSize(HUD.lights.w, HUD.lights.h)
       for i, lamp in ipairs(self.startLights.lamps) do
         lamp:SetSize(lampSize, lampSize)
         lamp:ClearAllPoints()

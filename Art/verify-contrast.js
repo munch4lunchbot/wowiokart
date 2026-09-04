@@ -96,7 +96,7 @@ for (const id of tracks) {
     const out = path.join(shots, id + "-" + at + ".png");
     const rowFile = path.join(shots, id + "-" + at + ".json");
     execFileSync("node", [path.join(__dirname, "preview-render.js"), __dirname, out, String(at)],
-      { env: { ...process.env, TRACK: id, ROAD_ROWS: rowFile }, stdio: "ignore" });
+      { env: { ...process.env, TRACK: id, ROAD_ROWS: rowFile, NOFORK: "1" }, stdio: "ignore" });
     const im = readPNG(out);
     // NEAR and FAR are different questions. Near, the road is most of the
     // screen and it is obvious; far, both it and the ground beside it are

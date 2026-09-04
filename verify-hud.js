@@ -62,11 +62,31 @@ for (const [W, H, note] of SCREENS) {
       spill.push(r.name + " out of " + host.name);
   }
 
+  // A COLUMN IS A PANEL FOR ONE ROW OF TEXT.
+  //
+  // The spill test above asks whether a readout stays inside its PANEL, which
+  // a ladder row's name does easily -- the panel is 250 wide. What it has to
+  // stay inside is its own 138-wide column, and "Illidan Stormrage" did not:
+  // at twelve point that is 126 against the 120 the column used to be, so the
+  // longest name on the grid wrapped to a second line inside a 22-pixel row.
+  const columns = {};
+  for (const r of all) if (r.kind === "column") columns[r.name.replace(".col", ".name")] = r;
+  for (const r of all) {
+    const col = columns[r.name];
+    if (!col) continue;
+    if (r.x + r.w > col.x + col.w + 0.5) {
+      spill.push(r.name + " out of its column by "
+        + Math.ceil(r.x + r.w - (col.x + col.w)) + "px");
+    }
+  }
+
   const hits = [];
   for (let i = 0; i < all.length; i++) {
     for (let j = i + 1; j < all.length; j++) {
       const a = all[i], b = all[j];
       if (a.kind === "glow" || b.kind === "glow") continue;
+      // A column is a measuring box, not a drawn thing.
+      if (a.kind === "column" || b.kind === "column") continue;
       if (family(a.name) === family(b.name)) continue;
       if (overlaps(a, b)) hits.push(a.name + " x " + b.name);
     }

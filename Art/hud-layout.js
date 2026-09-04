@@ -23,7 +23,8 @@ const HUD = (() => {
   // A regex that silently stops matching turns every check downstream into a
   // check of nothing, which is worse than no check: it reports PASS. If the
   // table is reformatted, this must fail loudly rather than shrink.
-  const want = ["lap", "item", "clock", "place", "map", "drift", "controls", "quit"];
+  const want = ["lap", "item", "clock", "place", "map", "drift", "controls",
+    "quit", "notice", "lights"];
   const missing = want.filter(k => !out[k]);
   if (missing.length)
     throw new Error("hud-layout: could not parse HUD entries from UI/RaceUI.lua: " + missing.join(", "));
@@ -36,6 +37,21 @@ const ITEM_ICON = num(/local ITEM_ICON = (\d+)/, 74);
 const DRIFT_MAX = num(/local DRIFT_MAX = ([\d.]+)/, 2.5);
 const CTRL_W = num(/local CTRL_W, CTRL_GAP = (\d+), \d+/, 68);
 const CTRL_GAP = num(/local CTRL_W, CTRL_GAP = \d+, (\d+)/, 6);
+// The cooldown-lap finishing ladder. Not in the HUD table because its height is
+// derived from the racer cap, so it is read from its own constants -- but it is
+// on screen at the same time as the map and the place readout, and until it was
+// listed here nothing had ever checked it against them.
+const LADDER = {
+  w: num(/local LADDER = \{ w = (\d+)/, 250),
+  row: num(/local LADDER = \{ w = \d+, row = (\d+)/, 22),
+  top: num(/local LADDER = \{ w = \d+, row = \d+, top = (\d+)/, 32),
+};
+{
+  const CONST = fs.readFileSync(path.join(__dirname, "..", "Constants.lua"), "utf8");
+  const seats = +((CONST.match(/AK\.MAX_RACERS = (\d+)/) || [, 8])[1]);
+  LADDER.h = LADDER.top + LADDER.row * seats + 10;
+  LADDER.seats = seats;
+}
 
 /** Mirrors RaceUI:LayoutHud. */
 function scale(W, H) {
@@ -131,6 +147,47 @@ function rects(W, H, sample) {
   const name = text("track.name", "Netherstorm Turbo Circuit  /  ARCANE",
     lap.x + u(3), lap.y + lap.h + u(7), u(13), DIMGOLD, "LEFT", "TOP");
   text("track.section", "THE COLLAPSED SPAN", name.x, name.y + name.h + u(4), u(17), GOLD, "LEFT", "TOP");
+
+  // The announce banner and the start gantry. Both used to be placed by hand,
+  // outside this table, which is why nothing ever checked them for collisions
+  // or for scaling -- and the gantry was measured in real pixels inside a
+  // coordinate space that is scaled, so it was only right at the design size.
+  const notice = box("notice");
+  put("notice.panel", "panel", notice.x, notice.y, notice.w, notice.h);
+  // Worst case is the longest banner the game can raise, with an item icon
+  // beside it -- that is what has to stay clear of the lap and clock panels.
+  text("notice.text", "TRIPLE GREEN SHELL!", notice.x + notice.w / 2,
+    notice.y + notice.h / 2, u(30), GOLD, "CENTER", "CENTER");
+
+  const lights = box("lights");
+  put("lights.bar", "panel", lights.x, lights.y, lights.w, lights.h);
+  {
+    const lamp = u(HUD.lights.h) / 1.7, gapPx = lamp * 1.5;
+    for (let i = 1; i <= 3; i++) {
+      put("lights.lamp" + i, "glow", lights.x + lights.w / 2 + (i - 2) * gapPx - lamp / 2,
+        lights.y + lights.h / 2 - lamp / 2, lamp, lamp);
+    }
+  }
+
+  // The finishing ladder, drawn during the cooldown lap over the top of the
+  // map and the place readout.
+  {
+    const lw = u(LADDER.w), lh = u(LADDER.h);
+    const lx = W - u(30) - lw, ly = H / 2 - u(20) - lh / 2;
+    put("ladder.panel", "panel", lx, ly, lw, lh);
+    text("ladder.title", "FINISHING ORDER", lx + u(12), ly + u(10), u(12), GOLD, "LEFT", "TOP");
+    for (let i = 0; i < LADDER.seats; i++) {
+      const ry = ly + u(LADDER.top + i * LADDER.row);
+      // Worst case in each column: the longest name the roster can show and a
+      // full lap time rather than a gap.
+      text("ladder.place" + i, "8TH", lx + u(18), ry + u(4), u(12), MUTED, "LEFT", "TOP");
+      // The name column is LADDER.w - 112 wide in the Lua; the longest name on
+      // the grid has to fit inside it, not merely inside the panel.
+      text("ladder.name" + i, "ILLIDAN STORMRAGE", lx + u(50), ry + u(4), u(12), PALE, "LEFT", "TOP");
+      put("ladder.col" + i, "column", lx + u(42), ry, u(LADDER.w - 112), u(LADDER.row));
+      text("ladder.time" + i, "1:44.21", lx + lw - u(18), ry + u(4), u(12), MUTED, "RIGHT", "TOP");
+    }
+  }
 
   const c = HUD.controls;
   const edge = c.w / 2 - CTRL_W / 2, pitch = CTRL_W + CTRL_GAP;
