@@ -17,6 +17,8 @@ local _, AK = ...
 -- hopeless -- most are not sounds at all -- but PlaySoundFile reports whether an
 -- id exists, so a range can be probed and reduced to the handful that are real.
 -- Those are then auditioned one at a time.
+local ART = AK.ART
+
 AK.SoundEditor = {}
 local Editor = AK.SoundEditor
 
@@ -174,16 +176,41 @@ function Editor:Build()
     self.rows[i] = row
   end
 
-  local up = UI:NewButton(frame, "^", 22, 20, function()
-    self.offset = math.max(0, (self.offset or 0) - ROWS)
+  --- An arrow, not the CHARACTER "^".
+  ---
+  --- The trophy room already carries a note about this exact crime -- its
+  --- earned/unearned marks were the characters "*" and "-" -- and these two
+  --- buttons were doing the same thing on a window that is now reachable
+  --- straight from the settings page. chevron.tga points right; SetRotation
+  --- turns the UVs inside the quad, which is a real rotation for a square
+  --- texture in a square button.
+  local function arrow(button, turns)
+    button.label:Hide()
+    local mark = button:CreateTexture(nil, "OVERLAY")
+    mark:SetTexture(ART .. "chevron.tga")
+    mark:SetSize(11, 11)
+    mark:SetPoint("CENTER")
+    mark:SetRotation(turns)
+    mark:SetVertexColor(unpack(AK.COLORS.gold))
+    button.mark = mark
+  end
+  local function step(by)
+    self.offset = math.max(0,
+      math.min(math.max(0, (self.total or 0) - ROWS), (self.offset or 0) + by))
     self:Refresh()
-  end)
+  end
+  local up = UI:NewButton(frame, "", 22, 20, function() step(-ROWS) end)
   up:SetPoint("TOPLEFT", 316, -40)
-  local down = UI:NewButton(frame, "v", 22, 20, function()
-    self.offset = math.min(math.max(0, (self.total or 0) - ROWS), (self.offset or 0) + ROWS)
-    self:Refresh()
-  end)
+  arrow(up, math.pi * 0.5)
+  local down = UI:NewButton(frame, "", 22, 20, function() step(ROWS) end)
   down:SetPoint("TOPLEFT", 316, -40 - ROW_HEIGHT)
+  arrow(down, -math.pi * 0.5)
+  -- THE WHEEL. Thirty-nine cues in a fourteen-row list is three pages, and the
+  -- only way through them was two 22-pixel buttons. Every list in the game
+  -- client scrolls on the wheel; a list that does not reads as broken before
+  -- the player finds the arrows.
+  frame:EnableMouseWheel(true)
+  frame:SetScript("OnMouseWheel", function(_, delta) step(delta > 0 and -3 or 3) end)
 
   -- ---- detail pane ----
   local dx = 350
@@ -228,12 +255,18 @@ function Editor:Build()
   mute.tooltip = "Silence this cue. Press again to bring it back."
 
   -- ---- file id browser ----
+  -- -148, NOT -132. The HEAR IT REPEATED button above is twenty tall at -122,
+  -- so it ends at 142 -- and an eleven-point heading starting at 132 was
+  -- printed straight through it. Everything below moved down with it.
   local browseTitle = UI:NewText(frame, "GAME AUDIO LIBRARY", 11, AK.COLORS.blue, "LEFT")
-  browseTitle:SetPoint("TOPLEFT", dx, -132)
+  browseTitle:SetPoint("TOPLEFT", dx, -148)
 
+  -- The three sit in a 250px strip: box 92, PLAY ID 84, BIND 56, with six
+  -- pixels between each. PLAY ID needs 83 at its font (check.js measures it),
+  -- so the room came off the box, which only ever holds six or seven digits.
   local idBox = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
-  idBox:SetSize(96, 20)
-  idBox:SetPoint("TOPLEFT", dx + 6, -150)
+  idBox:SetSize(92, 20)
+  idBox:SetPoint("TOPLEFT", dx + 6, -166)
   idBox:SetAutoFocus(false)
   idBox:SetNumeric(true)
   idBox:SetText("566000")
@@ -244,13 +277,13 @@ function Editor:Build()
   end)
   self.idBox = idBox
 
-  local tryButton = UI:NewButton(frame, "PLAY ID", 86, 20, function()
+  local tryButton = UI:NewButton(frame, "PLAY ID", 84, 20, function()
     local id = self:CurrentID()
     if id then AK:TrySoundFile(id) end
   end)
-  tryButton:SetPoint("TOPLEFT", dx + 110, -150)
+  tryButton:SetPoint("TOPLEFT", dx + 104, -166)
 
-  local bind = UI:NewButton(frame, "BIND", 60, 20, function()
+  local bind = UI:NewButton(frame, "BIND", 56, 20, function()
     local id = self:CurrentID()
     if id and self.selected then
       AK:SetCueSound(self.selected, id)
@@ -259,7 +292,7 @@ function Editor:Build()
       AK:Print("Pick a cue on the left first.")
     end
   end)
-  bind:SetPoint("TOPLEFT", dx + 192, -150)
+  bind:SetPoint("TOPLEFT", dx + 194, -166)
   bind.tooltip = "Bind the id on the left to the cue selected in the list."
 
   -- Scanning turns "guess a number" into "here are the real ones".
@@ -271,20 +304,20 @@ function Editor:Build()
     AK:Print(("Scanned %d-%d: |cff6bf06b%d|r playable."):format(start, start + 199, #self.found))
     if #self.found > 0 then self:ShowFound(1) else self:Refresh() end
   end)
-  scan:SetPoint("TOPLEFT", dx + 6, -176)
+  scan:SetPoint("TOPLEFT", dx + 6, -192)
   scan.tooltip = "Probes 200 ids from the box above and keeps the ones that exist.\nEach hit is cut off immediately, so this is a short flurry, not 200 full sounds."
 
   self.scanLabel = UI:NewText(frame, "no scan yet", 10, AK.COLORS.muted, "LEFT")
-  self.scanLabel:SetPoint("TOPLEFT", dx + 6, -200)
+  self.scanLabel:SetPoint("TOPLEFT", dx + 6, -216)
 
   local prev = UI:NewButton(frame, "< PREV", 84, 20, function()
     self:ShowFound((self.foundIndex or 0))
   end)
-  prev:SetPoint("TOPLEFT", dx + 6, -216)
+  prev:SetPoint("TOPLEFT", dx + 6, -232)
   local next_ = UI:NewButton(frame, "NEXT >", 84, 20, function()
     self:ShowFound((self.foundIndex or 0) + 2)
   end)
-  next_:SetPoint("TOPLEFT", dx + 94, -216)
+  next_:SetPoint("TOPLEFT", dx + 94, -232)
   prev.tooltip = "Step back through the scan results, playing each."
   next_.tooltip = "Step forward through the scan results, playing each."
 

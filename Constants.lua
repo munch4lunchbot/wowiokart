@@ -2,6 +2,15 @@ local addonName, AK = ...
 
 AK.name = "Azeroth Kart"
 AK.version = "0.1.0"
+--- Where this addon's own art lives.
+---
+--- Four files each carried their own copy of this string, and a fifth that
+--- needed one silently got `nil .. "chevron.tga"` instead -- the scroll arrows
+--- in the sound editor, on a window that is now reachable from the settings
+--- page. One definition, still taken as a file-local at the top of each user so
+--- the hot paths keep a local lookup.
+AK.ART = "Interface\\AddOns\\kart\\Art\\"
+
 AK.COLORS = {
   gold = { 1.00, 0.76, 0.20 },
   blue = { 0.13, 0.56, 0.93 },

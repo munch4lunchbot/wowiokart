@@ -3,7 +3,7 @@ local _, AK = ...
 AK.Results = {}
 local Results = AK.Results
 local UI = AK.UI
-local ART = "Interface\\AddOns\\kart\\Art\\"
+local ART = AK.ART
 
 local ORDINALS = { "1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH" }
 local ROW_HEIGHT, ROW_GAP = 38, 4

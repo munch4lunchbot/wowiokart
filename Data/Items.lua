@@ -1,6 +1,6 @@
 local _, AK = ...
 
-local ART = "Interface\\AddOns\\kart\\Art\\"
+local ART = AK.ART
 
 -- Power-ups are now archetypes you can recognise on sight, and most of them
 -- spawn a real object on the track: you watch the shell leave your kart, travel

@@ -604,12 +604,17 @@ function Workshop:BuildSoundPane(pane)
     .. "NEXT IDEA walks the built-in candidates. x12 is how many times it fired last race "
     .. "-- that is the number that says whether a sample will wear out.",
     11, AK.COLORS.muted, "LEFT")
+  -- 620, NOT 760. The pane is 928 wide and SOUND EDITOR is anchored TOPRIGHT
+  -- at -146, so it starts at 642 -- a 760-wide blurb ran a hundred and twenty
+  -- pixels underneath it. And four wrapped lines at eleven point is about
+  -- five wrapped lines at eleven point is about sixty-six tall, so the list had
+  -- to come down to clear them: it started at 44 and the text ended at 70.
   heading:SetPoint("TOPLEFT", 4, -4)
-  heading:SetWidth(760)
+  heading:SetWidth(620)
   heading:SetJustifyH("LEFT")
 
-  local list = ScrollBox(pane, 920, PANE_H - 52)
-  list:SetPoint("TOPLEFT", 0, -44)
+  local list = ScrollBox(pane, 920, PANE_H - 84)
+  list:SetPoint("TOPLEFT", 0, -76)
   self.soundRows = {}
 
   local cues = AK:CueList()
@@ -890,11 +895,17 @@ function Workshop:BuildModelPane(pane)
   end)
   stepper:SetPoint("TOPLEFT", gx, -434)
 
+  -- CLEAR OF THE STEPPER. Its six buttons are sized from the widest label they
+  -- carry -- "-1000" and "+1000" make each one 57 wide, so the holder is 354 --
+  -- and this label started at 290, printed straight through the +100 and +1000
+  -- buttons. It is derived from the stepper's own width now, so a seventh step
+  -- or a wider one cannot put it back on top of them.
+  local jumpX = 354 + 12
   local goLabel = UI:NewText(pane, "jump to id", 11, AK.COLORS.muted, "LEFT")
-  goLabel:SetPoint("TOPLEFT", gx + 290, -434)
+  goLabel:SetPoint("TOPLEFT", gx + jumpX, -434)
   local goBox = CreateFrame("EditBox", nil, pane, "InputBoxTemplate")
   goBox:SetSize(80, 22)
-  goBox:SetPoint("TOPLEFT", gx + 358, -432)
+  goBox:SetPoint("TOPLEFT", gx + jumpX + 76, -432)
   goBox:SetAutoFocus(false)
   goBox:SetNumeric(true)
   goBox:SetScript("OnEnterPressed", function(box)
@@ -909,7 +920,7 @@ function Workshop:BuildModelPane(pane)
     self.baseId = (racer and racer.model and racer.model.creature) or 1
     self:RefreshModels()
   end)
-  here:SetPoint("TOPLEFT", gx + 450, -433)
+  here:SetPoint("TOPLEFT", gx + jumpX + 168, -433)
 
   local note = UI:NewText(pane,
     "Pick a racer, page or type an id, then CLICK a model to give it to them. "

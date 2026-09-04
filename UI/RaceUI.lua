@@ -201,20 +201,23 @@ local function placeHud(region, box, mode)
   end
 end
 
-local ART_PREFIX = "Interface\\AddOns\\kart\\Art\\"
-local OBJECT_STYLE = {
-  -- Item cubes float and bob; dash panels lie flat on the tarmac.
-  box = { icon = ART_PREFIX .. "itembox.tga", color = { 1.00, 0.82, 0.25 }, label = "", size = 2.2, float = true, spin = true },
-  boost = { icon = ART_PREFIX .. "dashpad.tga", color = { 1.00, 0.72, 0.18 }, label = "", size = 3.8, flat = true },
-  shortcut = { icon = "Interface\\Icons\\Spell_Arcane_PortalStormWind", color = { 0.35, 0.85, 1.00 }, label = "SHORTCUT", size = 3.4 },
-  hazard = { icon = ART_PREFIX .. "banana.tga", color = { 1.00, 0.85, 0.22 }, label = "", size = 2.2 },
-}
-
 -- A widget texture is always an axis-aligned rectangle: SetRotation turns the
 -- UVs, not the quad, so flat colour can never be round or soft-edged. The fix
 -- is real art with an alpha channel, so the addon ships its own generated TGAs
 -- rather than guessing at Blizzard asset names that may not exist.
-local ART = "Interface\\AddOns\\kart\\Art\\"
+--
+-- ONE of these per file. This file had TWO -- `ART` further down and an
+-- `ART_PREFIX` up here holding the identical string, because the second was
+-- added where the first was not yet in scope. Hoisted, so there is one.
+local ART = AK.ART
+
+local OBJECT_STYLE = {
+  -- Item cubes float and bob; dash panels lie flat on the tarmac.
+  box = { icon = ART .. "itembox.tga", color = { 1.00, 0.82, 0.25 }, label = "", size = 2.2, float = true, spin = true },
+  boost = { icon = ART .. "dashpad.tga", color = { 1.00, 0.72, 0.18 }, label = "", size = 3.8, flat = true },
+  shortcut = { icon = "Interface\\Icons\\Spell_Arcane_PortalStormWind", color = { 0.35, 0.85, 1.00 }, label = "SHORTCUT", size = 3.4 },
+  hazard = { icon = ART .. "banana.tga", color = { 1.00, 0.85, 0.22 }, label = "", size = 2.2 },
+}
 
 -- One body texture per kart id, so the six karts are six silhouettes instead of
 -- one slab tinted six ways. Keyed off AK.Karts because that is exactly the set

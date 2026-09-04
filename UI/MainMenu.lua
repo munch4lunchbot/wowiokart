@@ -8,7 +8,7 @@ local UI = AK.UI
 -- look is the reason the whole interface read as a configuration window rather
 -- than as a game. Shape comes from art now; see Art/generate-art-ui.js.
 
-local ART = "Interface\\AddOns\\kart\\Art\\"
+local ART = AK.ART
 
 -- THE PANEL PLATE, nine-sliced.
 --

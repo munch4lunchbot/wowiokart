@@ -71,10 +71,15 @@ end
 --- for the racer grid what it adds is eleven PlayerModels a time. Counting is
 --- the only way to see that from outside.
 local widgetsMade = {}
+--- Every widget ever made, in creation order, so a window's whole tree can be
+--- walked from outside it. Nothing else can answer "is anything in this window
+--- printed through anything else" without a WoW client to look at.
+local everyWidget = {}
 local function newWidget(kind, name, parent)
   widgetsMade[kind] = (widgetsMade[kind] or 0) + 1
   local w = setmetatable({ akKind = kind, akName = name, akParent = parent,
     akShown = false, akPoints = {} }, widget)
+  everyWidget[#everyWidget + 1] = w
   return w
 end
 function widget:GetWidth() return 1365 end
@@ -83,9 +88,17 @@ function widget:GetFrameLevel() return 1 end
 function widget:GetEffectiveScale() return 1 end
 function widget:IsShown() return self.akShown and true or false end
 function widget:IsVisible() return self.akShown and true or false end
-function widget:SetShown(v) self.akShown = v and true or false return self end
-function widget:Show() self.akShown = true return self end
-function widget:Hide() self.akShown = false return self end
+-- akShown starts false for every widget, so "was this ever visible" cannot be
+-- read from it: a control built and never touched looks exactly like one that
+-- was deliberately hidden. akHidden records the DELIBERATE act, which is the
+-- only one a layout check should honour.
+function widget:SetShown(v)
+  self.akShown = v and true or false
+  self.akHidden = not self.akShown
+  return self
+end
+function widget:Show() self.akShown, self.akHidden = true, false return self end
+function widget:Hide() self.akShown, self.akHidden = false, true return self end
 -- RECORDED, not swallowed. Everything else the renderer does to a widget is a
 -- no-op here, which is fine for "does it run"; it is useless for "does the
 -- tunnel actually have walls in it". These four are what decides whether a
@@ -102,8 +115,13 @@ function widget:SetPoint(point, a, b, c, d)
   self.akAnchor = point
   if type(a) == "number" then
     self.akX, self.akY = a, b
+    self.akRelTo, self.akRelPoint = nil, nil
   else
     self.akX, self.akY = c, d
+    -- Recorded so a control anchored to its NEIGHBOUR can still be placed:
+    -- "under the name, whatever height the name turned out to be" is the whole
+    -- reason these layouts are written imperatively in the first place.
+    self.akRelTo, self.akRelPoint = a, b
   end
   return self
 end
@@ -113,17 +131,28 @@ function widget:SetHeight(h) self.akHeight = h return self end
 function widget:SetAlpha(a) self.akAlpha = a return self end
 function widget:GetAlpha() return self.akAlpha or 1 end
 function widget:SetTexCoord(...) self.akTexCoord = { ... } return self end
-function widget:CreateTexture(...) return newWidget("Texture") end
-function widget:CreateFontString(...) return newWidget("FontString") end
+-- PARENTED. These used to drop the parent on the floor, which makes "do two
+-- things on the same frame sit on top of each other" unanswerable -- and that
+-- is the one question a window nobody can screenshot most needs asked.
+function widget:CreateTexture(...) return newWidget("Texture", nil, self) end
+function widget:CreateFontString(...) return newWidget("FontString", nil, self) end
 function widget:CreateAnimationGroup(...) return newWidget("AnimGroup") end
 function widget:CreateAnimation(...) return newWidget("Anim") end
 function widget:GetName() return self.akName end
 function widget:GetObjectType() return self.akKind end
 function widget:GetText() return self.akText or "" end
 function widget:SetText(t) self.akText = t return self end
+--- Recorded so a FontString has a measurable box: it has no SetSize, its width
+--- comes from its string and its height from its font.
+function widget:SetFont(_, size) self.akFontSize = size return self end
+function widget:SetJustifyH(j) self.akJustify = j return self end
 function widget:GetNumPoints() return 0 end
 function widget:GetPoint() return "CENTER", nil, "CENTER", 0, 0 end
-function widget:GetStringWidth() return 40 end
+--- FrizQt's average uppercase advance is about 0.62 of the point size; see the
+--- CELL note in Art/hud-font.js, which is calibrated against the real thing.
+function widget:GetStringWidth()
+  return #tostring(self.akText or "") * (self.akFontSize or 12) * 0.62
+end
 function widget:GetStringHeight() return 12 end
 function widget:GetScale() return 1 end
 function widget:GetAlpha() return self.akAlpha or 1 end
@@ -879,6 +908,176 @@ if loadFailures == 0 then
     assert(#leaked == 0,
       "reopening the menu screens built new widgets: " .. table.concat(leaked, ", "))
     AK.Menu:Hide()
+  end)
+
+  -- NOTHING MAY BE PRINTED THROUGH ANYTHING ELSE.
+  --
+  -- The race HUD has verify-hud, which walks a layout table at eight
+  -- resolutions and reports every collision. The WINDOWS -- the sound editor,
+  -- the workshop -- have no such table: they are built imperatively out of
+  -- SetPoint calls with literal offsets, and nobody has ever seen one outside a
+  -- WoW client. Read by hand, the sound editor had "GAME AUDIO LIBRARY"
+  -- printed through the HEAR IT REPEATED button and BIND overlapping PLAY ID.
+  -- Reading by hand does not scale and does not stay true.
+  --
+  -- The stub records what SetPoint and SetSize were actually given, so the
+  -- real geometry is available here without parsing a line of Lua. Siblings
+  -- only, and only things that are meant to be distinct: a texture is usually
+  -- a background or a highlight and is SUPPOSED to sit under its row.
+  ok("no window prints one control through another", function()
+    AK.SoundEditor:Toggle()
+    AK.SoundEditor:Toggle()
+    AK.Workshop:Toggle()
+    AK.Workshop:Toggle()
+
+    --- Only these two windows. The race HUD has verify-hud and the menu has
+    --- Art/preview-ui.js; both of those deliberately layer things (a glow under
+    --- a readout, a plate under a row) that this blunt test would call a fault.
+    local roots = { [AK.SoundEditor.frame] = "sound editor", [AK.Workshop.frame] = "workshop" }
+    local function rootOf(w)
+      local guard = 0
+      while w and guard < 40 do
+        if roots[w] then return roots[w] end
+        w, guard = w.akParent, guard + 1
+      end
+    end
+
+    local siblings, windowCount, pairCount = {}, 0, 0
+    for root in pairs(roots) do if root then windowCount = windowCount + 1 end end
+    for _, w in ipairs(everyWidget) do
+      if w.akParent and rootOf(w) then
+        siblings[w.akParent] = siblings[w.akParent] or {}
+        table.insert(siblings[w.akParent], w)
+      end
+    end
+
+    --- How big is this thing.
+    local function sizeOf(w)
+      if w.akWidth and w.akHeight then return w.akWidth, w.akHeight end
+      if w.akKind == "FontString" then
+        -- FrizQt: ~0.62 of the point size per uppercase character, ~1.2 line
+        -- height. Both calibrated in Art/hud-font.js against the real font.
+        local size = w.akFontSize or 12
+        local text = tostring(w.akText or "")
+        -- An empty readout draws nothing and cannot be printed through. Several
+        -- are created with a width and filled in by a Refresh; measuring their
+        -- reserved width as if it were ink reported forty-one phantom
+        -- collisions against the buttons beside them.
+        if text == "" then return nil end
+        local run = #text * size * 0.62
+        -- A PARAGRAPH IS NOT A LINE. A blurb given an explicit width wraps, and
+        -- measuring it as one long run made a 250-character note fifteen
+        -- hundred pixels wide -- which collides with everything on the pane and
+        -- is a fault in the ruler, not in the screen.
+        if w.akWidth then
+          local lines = math.max(1, math.ceil(run / math.max(1, w.akWidth)))
+          for _ in text:gmatch("\n") do lines = lines + 1 end
+          return w.akWidth, lines * size * 1.2
+        end
+        return run, size * 1.2
+      end
+    end
+
+    --- Where the named point of a WxH box sits, as an offset from its TOPLEFT.
+    --- WoW's y grows upward and this works in screen coordinates, so every y
+    --- here is measured DOWN from the top.
+    local function anchorOffset(point, width, height)
+      local x = (point:find("LEFT") and 0)
+        or (point:find("RIGHT") and width) or width * 0.5
+      local y = (point:find("TOP") and 0)
+        or (point:find("BOTTOM") and height) or height * 0.5
+      return x, y
+    end
+
+    --- Top-left corner of a widget, in its window's coordinates. Resolved
+    --- recursively: a control anchored to its neighbour is placed once the
+    --- neighbour is, and the chain ends at the window itself.
+    local boxOf
+    local resolving = {}
+    boxOf = function(w)
+      if not w or resolving[w] then return nil end
+      if w.akBox ~= nil then return w.akBox or nil end
+      if not w.akAnchor or not w.akX then w.akBox = false return nil end
+      local width, height = sizeOf(w)
+      if not width or not height or width <= 0 or height <= 0 then
+        w.akBox = false
+        return nil
+      end
+      resolving[w] = true
+      local host = w.akRelTo or w.akParent
+      local hostX, hostY, hostW, hostH = 0, 0, nil, nil
+      if roots[host] then
+        hostW, hostH = sizeOf(host)
+      elseif host then
+        local hb = boxOf(host)
+        if hb then hostX, hostY, hostW, hostH = hb.x, hb.y, hb.w, hb.h end
+      end
+      resolving[w] = nil
+      if not hostW or not hostH then w.akBox = false return nil end
+      -- Anchored to the host's point, offset by (x, y) -- and y is UP.
+      local hx, hy = anchorOffset(w.akRelPoint or w.akAnchor, hostW, hostH)
+      local sx, sy = anchorOffset(w.akAnchor, width, height)
+      local box = {
+        x = hostX + hx + w.akX - sx,
+        y = hostY + hy - w.akY - sy,
+        w = width, h = height,
+      }
+      w.akBox = box
+      return box
+    end
+
+    local hits = {}
+    for _, group in pairs(siblings) do
+      for i = 1, #group do
+        for j = i + 1, #group do
+          local a, b = group[i], group[j]
+          pairCount = pairCount + 1
+          if a.akKind ~= "Texture" and b.akKind ~= "Texture"
+            and not a.akHidden and not b.akHidden then
+            local ra, rb = boxOf(a), boxOf(b)
+            -- CONTAINMENT IS NOT COLLISION. A row's click zone is a frame the
+            -- full width of the row with the label sitting inside it, and a
+            -- panel is a frame with its whole pane inside it. Those are the
+            -- structure, not a fault. A PARTIAL overlap -- a heading clipping
+            -- the corner of the button above it -- is the fault.
+            local inside = ra and rb
+              and ((ra.x <= rb.x and ra.y <= rb.y
+                    and ra.x + ra.w >= rb.x + rb.w and ra.y + ra.h >= rb.y + rb.h)
+                or (rb.x <= ra.x and rb.y <= ra.y
+                    and rb.x + rb.w >= ra.x + ra.w and rb.y + rb.h >= ra.y + ra.h))
+            local overlap = ra and rb
+              and math.min(ra.x + ra.w, rb.x + rb.w) - math.max(ra.x, rb.x) or 0
+            local down = ra and rb
+              and math.min(ra.y + ra.h, rb.y + rb.h) - math.max(ra.y, rb.y) or 0
+            -- Two pixels, because a text box's size is ESTIMATED from its font
+            -- and its string: a hairline is inside that estimate's error, and
+            -- reporting one would train everyone to ignore the check.
+            if ra and rb and not inside and overlap >= 2 and down >= 2 then
+              table.insert(hits, ("%s \"%s\" x %s \"%s\" (%dx%dpx)"):format(
+                a.akKind, tostring(a.akText or "?"), b.akKind, tostring(b.akText or "?"),
+                math.floor(overlap), math.floor(down)))
+            end
+          end
+        end
+      end
+    end
+    table.sort(hits)
+    -- HOW MUCH OF THE WINDOW THIS ACTUALLY SAW. Only TOPLEFT-anchored siblings
+    -- can be compared without resolving each parent's size, and these windows
+    -- are mostly built that way -- but a check that quietly looks at a third of
+    -- a screen and reports PASS is worse than no check, so it says.
+    local measured, total = 0, 0
+    for _, group in pairs(siblings) do
+      for _, w in ipairs(group) do
+        total = total + 1
+        if boxOf(w) then measured = measured + 1 end
+      end
+    end
+    say(("        %d windows, %d of %d controls placed measurably, "
+      .. "%d sibling pairs compared, %d collisions"):format(
+      windowCount, measured, total, pairCount, #hits))
+    for i = 1, math.min(6, #hits) do say("          " .. hits[i]) end
+    assert(#hits == 0, #hits .. " controls are drawn on top of each other")
   end)
 
   ok("the menu, the workshop and the sound editor all build", function()
