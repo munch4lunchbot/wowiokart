@@ -83,7 +83,13 @@ local ROWS = {
 function Debug:Build()
   if self.frame then return end
   local frame = CreateFrame("Frame", "AzerothKartDebug", UIParent)
-  frame:SetSize(430, 40 + #ROWS * 16)
+  -- 560, not 430. The value column starts at 108 and the cornering readout is
+  -- "curve +0.00   push -0.00/s   steer 0 (max 1.40/s)   wheel wins" -- sixty-
+  -- four characters, about 436 pixels at eleven point, which ran a hundred past
+  -- the right edge and was drawn over whatever happened to be behind the
+  -- window. None of these rows wrap; the window has to be wide enough for the
+  -- longest of them.
+  frame:SetSize(560, 40 + #ROWS * 16)
   frame:SetPoint("TOPLEFT", 200, -40)
   frame:SetFrameStrata("TOOLTIP")
   frame:SetMovable(true)

@@ -6,10 +6,28 @@ local _, AK = ...
 AK.Net = { prefix = "AZK1", peers = {}, lobby = nil, inputClock = 0, snapshotClock = 0 }
 local Net = AK.Net
 
+--- Split a packet into its fields, KEEPING the empty ones.
+---
+--- This was gmatch("([^\t]+)"), which drops empties -- so a packet with a
+--- blank field silently shifted every field after it one place left. The JOIN
+--- handler already carries a note about a joiner "whose packet lost its racer
+--- field", which is exactly this: the kart id slid into the racer slot and the
+--- kart slot came back nil. Positional fields cannot be parsed by a splitter
+--- that renumbers them. ApplySnapshot uses the client's own strsplit, which
+--- does keep empties -- one file, two splitters, two behaviours.
 local function split(message)
   local values = {}
   for value in string.gmatch(message, "([^\t]+)") do table.insert(values, value) end
   return values
+end
+
+--- A field, or the fallback when the packet did not carry one. An empty string
+--- is TRUTHY in Lua, so `values[4] or "you"` never fired on a blank field --
+--- only on a missing one, which after the split above no longer happens.
+local function field(values, index, fallback)
+  local value = values[index]
+  if value == nil or value == "" then return fallback end
+  return value
 end
 
 function Net:PlayerName()
@@ -194,11 +212,13 @@ function Net:HandleMessage(message, sender)
   local values = split(message)
   local kind = values[1]
   if kind == "LOBBY" then
-    self.availableLobby = { id = values[2], track = values[3], host = values[4] or sender }
+    self.availableLobby =
+      { id = values[2], track = values[3], host = field(values, 4, sender) }
     if self.availableLobby.host ~= self:PlayerName() then AK:Print("Party race lobby found: " .. AK:GetTrack(values[3]).name .. ". Open /kart to join.") end
   elseif kind == "ROSTER" and self.availableLobby and self.availableLobby.id == values[2] then
     self.availableLobby.roster = self.availableLobby.roster or {}
-    self.availableLobby.roster[values[3]] = { name = values[3], racer = values[4], kart = values[5] }
+    self.availableLobby.roster[values[3]] =
+      { name = values[3], racer = field(values, 4, "you"), kart = field(values, 5, "mechano") }
   elseif kind == "JOIN" and self.lobby and values[2] == self.lobby.id then
     local name = values[3]
     if name and name ~= self:PlayerName() then
@@ -211,7 +231,8 @@ function Net:HandleMessage(message, sender)
       local isNew = not self.lobby.roster[name]
       -- "goblin" was a racer id from the original roster and no longer exists,
       -- so a joiner whose packet lost its racer field silently became Baine.
-      self.lobby.roster[name] = { name = name, racer = values[4] or "you", kart = values[5] or "mechano" }
+      self.lobby.roster[name] = { name = name,
+        racer = field(values, 4, "you"), kart = field(values, 5, "mechano") }
       self:BroadcastRoster()
       if isNew then AK:Print(name .. " joined the pit lane.") end
     end

@@ -201,9 +201,12 @@ function StopSound() end
 function GetTime() return os.clock() end
 function GetLocale() return "enUS" end
 function UnitName() return "Tester" end
+function UnitFullName() return "Tester", "Testrealm" end
 function UnitClass() return "Shaman", "SHAMAN", 7 end
 function UnitGUID() return "Player-1-00000001" end
-function IsInGroup() return false end
+-- The multiplayer round-trip check needs a channel to send on; every other
+-- path treats "no group" and "party" identically.
+function IsInGroup() return true end
 function IsInRaid() return false end
 function GetNumGroupMembers() return 1 end
 function GetRealmName() return "Testrealm" end
@@ -213,9 +216,17 @@ function InCombatLockdown() return false end
 function tinsert(...) return table.insert(...) end
 function tremove(...) return table.remove(...) end
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
+--- WoW's strsplit, faithfully: it PRESERVES empty fields.
+---
+--- The old stub used gmatch("([^sep]*)"), which is the classic Lua trap -- a
+--- pattern that can match the empty string produces a spurious empty capture
+--- between every real one, so "a,b" came back as "a", "", "b", "". A stub that
+--- splits differently from the client cannot find a splitting bug and can
+--- invent one.
 function strsplit(sep, str)
   local out = {}
-  for piece in tostring(str):gmatch("([^" .. sep .. "]*)") do out[#out + 1] = piece end
+  local padded = tostring(str) .. sep
+  for piece in padded:gmatch("([^" .. sep .. "]*)" .. sep) do out[#out + 1] = piece end
   return unpack(out)
 end
 function strjoin(sep, ...) return table.concat({ ... }, sep) end
@@ -933,7 +944,21 @@ if loadFailures == 0 then
     --- Only these two windows. The race HUD has verify-hud and the menu has
     --- Art/preview-ui.js; both of those deliberately layer things (a glow under
     --- a readout, a plate under a row) that this blunt test would call a fault.
-    local roots = { [AK.SoundEditor.frame] = "sound editor", [AK.Workshop.frame] = "workshop" }
+    -- FILLED IN, not empty. Every readout in the debug window is created with
+    -- an empty string and written by Update, so measuring it at build time
+    -- measures nothing at all -- which is how a 430-wide window full of
+    -- sixty-character lines passed.
+    AK.Debug:Build()
+    AK.Debug.frame:Show()
+    AK.Race:Start("quick", { track = "elwynn" })
+    for _ = 1, math.ceil(3 / FRAME) do AK.Race:Update(FRAME) end
+    AK.Debug:Update(AK.Race.current)
+    AK.Race:Stop(true)
+    local roots = {
+      [AK.SoundEditor.frame] = "sound editor",
+      [AK.Workshop.frame] = "workshop",
+      [AK.Debug.frame] = "debug readout",
+    }
     local function rootOf(w)
       local guard = 0
       while w and guard < 40 do
@@ -942,6 +967,8 @@ if loadFailures == 0 then
       end
     end
 
+    local rootFrames = {}
+    for frame, name in pairs(roots) do rootFrames[#rootFrames + 1] = { frame, name } end
     local siblings, windowCount, pairCount = {}, 0, 0
     for root in pairs(roots) do if root then windowCount = windowCount + 1 end end
     for _, w in ipairs(everyWidget) do
@@ -958,7 +985,11 @@ if loadFailures == 0 then
         -- FrizQt: ~0.62 of the point size per uppercase character, ~1.2 line
         -- height. Both calibrated in Art/hud-font.js against the real font.
         local size = w.akFontSize or 12
+        -- WoW's colour escapes draw NOTHING: "|cffff5555" and its "|r" are ten
+        -- and two characters of markup. Counting them as ink made a 42-character
+        -- readout measure as 54 and report an overflow that is not there.
         local text = tostring(w.akText or "")
+          :gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
         -- An empty readout draws nothing and cannot be printed through. Several
         -- are created with a width and filled in by a Refresh; measuring their
         -- reserved width as if it were ink reported forty-one phantom
@@ -1061,6 +1092,34 @@ if loadFailures == 0 then
         end
       end
     end
+    -- AND NOTHING MAY RUN OFF THE EDGE OF ITS OWN WINDOW. verify-hud has this
+    -- test for the race HUD and it is the other half of the question: a readout
+    -- can clear every neighbour and still be written into the air past the
+    -- frame's right edge, where WoW simply draws it over whatever is behind.
+    for _, entry in ipairs(rootFrames) do
+      local frame, name = entry[1], entry[2]
+      local fw, fh = sizeOf(frame)
+      if fw and fh then
+        -- DIRECT CHILDREN ONLY. A sibling comparison is self-consistent -- both
+        -- boxes come out of the same resolver, so any error it makes cancels --
+        -- but measuring against the window's own edge does not, and a control
+        -- three anchors deep inside a scrolling pane is exactly where this
+        -- resolver is least sure of itself. One level down it is certain.
+        for _, w in ipairs(everyWidget) do
+          if w.akParent == frame and not w.akHidden and w.akKind ~= "Texture" then
+            local box = boxOf(w)
+            -- Scroll panes are clipped and their content is MEANT to be taller
+            -- than the view, so only the horizontal edges are asked about.
+            if box and (box.x < -0.5 or box.x + box.w > fw + 0.5) then
+              table.insert(hits, ("%s \"%s\" runs %dpx outside the %s"):format(
+                w.akKind, tostring(w.akText or "?"),
+                math.ceil(math.max(-box.x, box.x + box.w - fw)), name))
+            end
+          end
+        end
+      end
+    end
+
     table.sort(hits)
     -- HOW MUCH OF THE WINDOW THIS ACTUALLY SAW. Only TOPLEFT-anchored siblings
     -- can be compared without resolving each parent's size, and these windows
@@ -1077,7 +1136,89 @@ if loadFailures == 0 then
       .. "%d sibling pairs compared, %d collisions"):format(
       windowCount, measured, total, pairCount, #hits))
     for i = 1, math.min(6, #hits) do say("          " .. hits[i]) end
-    assert(#hits == 0, #hits .. " controls are drawn on top of each other")
+    assert(#hits == 0, #hits .. " controls are misplaced")
+  end)
+
+  -- A PACKET HAS TO SURVIVE THE ROUND TRIP.
+  --
+  -- Multiplayer is the one system here that cannot be exercised by playing:
+  -- it needs two clients. So nothing had ever run a packet through the sender
+  -- and the parser and compared the two ends -- which is how a splitter that
+  -- silently DROPS EMPTY FIELDS lived in the file that parses positional
+  -- packets. One blank field and every field after it shifts one place left:
+  -- the kart id lands in the racer slot and the kart slot comes back nil.
+  ok("a multiplayer packet survives the round trip", function()
+    local sent = {}
+    local realSend = C_ChatInfo.SendAddonMessage
+    C_ChatInfo.SendAddonMessage = function(_, message) sent[#sent + 1] = message return true end
+    local function lastOfKind(kind)
+      for i = #sent, 1, -1 do
+        if sent[i]:sub(1, #kind + 1) == kind .. "\t" then return sent[i] end
+      end
+    end
+
+    -- A joiner whose racer field is BLANK, which is the case that was broken.
+    AK.Net.lobby = { id = "S1", host = "Host", track = "elwynn",
+      roster = { Host = { name = "Host", racer = "baine", kart = "kodo" } } }
+    AK.Net:HandleMessage("JOIN\tS1\tGuest\t\tmechano", "Guest")
+    local guest = AK.Net.lobby.roster.Guest
+    assert(guest, "a JOIN packet with a blank racer field never reached the roster")
+    assert(guest.kart == "mechano",
+      ("the kart came back as %q -- the blank racer field shifted the packet")
+        :format(tostring(guest.kart)))
+    assert(guest.racer ~= "mechano",
+      "the KART id was read as the racer: the splitter is renumbering fields")
+
+    -- And the full field state, host to client, through the real batcher.
+    AK.Race:Start("quick", { track = "durotar" })
+    local race = AK.Race.current
+    race.network = { isHost = true, session = "S1", host = "Host" }
+    race.delta = 1
+    for index, vehicle in ipairs(race.vehicles) do
+      vehicle.networkId = "R" .. index
+      vehicle.distance = 100 * index
+      vehicle.lateral = -0.5 + index * 0.1
+      vehicle.speed = 30 + index
+    end
+    race.byNetworkId = {}
+    wipe(sent)
+    AK.Net.snapshotClock = 99
+    AK.Net:BroadcastSnapshot(race)
+    local state = lastOfKind("STATE")
+    assert(state, "the host sent no snapshot at all")
+    -- WoW drops an addon message over 255 bytes on the floor, silently.
+    for _, message in ipairs(sent) do
+      assert(#message <= 255,
+        ("a snapshot packet is %d bytes -- the client drops it silently"):format(#message))
+    end
+
+    -- Receive it as a client with its own copy of the field.
+    local mirror = { network = { isHost = false, session = "S1" }, track = race.track,
+      byNetworkId = {} }
+    for index in ipairs(race.vehicles) do
+      mirror.byNetworkId["R" .. index] = { distance = 0, lateral = 0, speed = 0 }
+    end
+    for _, message in ipairs(sent) do
+      local values = { strsplit("\t", message) }
+      if values[1] == "STATE" then AK.Net:ApplySnapshot(mirror, values[3]) end
+    end
+    local worst, worstAt = 0, ""
+    for index, vehicle in ipairs(race.vehicles) do
+      local copy = mirror.byNetworkId["R" .. index]
+      local off = math.abs(copy.distance - math.floor(vehicle.distance))
+        + math.abs(copy.lateral - vehicle.lateral) * 100
+        + math.abs(copy.speed - vehicle.speed) * 10
+      if off > worst then worst, worstAt = off, "R" .. index end
+    end
+    local longest = 0
+    for _, message in ipairs(sent) do longest = math.max(longest, #message) end
+    say(("        %d karts in %d packet(s), longest %d of 255 bytes, "
+      .. "worst field drift %.2f"):format(#race.vehicles, #sent, longest, worst))
+    assert(worst < 1.5,
+      ("kart %s came out of the round trip %.2f off"):format(worstAt, worst))
+    AK.Race:Stop(true)
+    AK.Net.lobby = nil
+    C_ChatInfo.SendAddonMessage = realSend
   end)
 
   ok("the menu, the workshop and the sound editor all build", function()

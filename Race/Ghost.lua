@@ -62,6 +62,15 @@ function Ghost:Advance(player, dt)
   if not player then return nil end
   player.elapsed = player.elapsed + dt
   local samples = player.data.samples
+  -- A GHOST THAT HAS FINISHED IS GONE.
+  --
+  -- This could never return nil: the walk below stops with `b` on the last
+  -- sample, the blend clamps at 1, and the ghost then sat at that position for
+  -- the rest of the run -- a parked kart on the racing line at the finish,
+  -- which you drive through on the way past. It is a recording of a lap, and
+  -- when the lap is over there is nothing left to show.
+  local last = samples[#samples]
+  if player.elapsed > last.t then return nil end
   -- Walk forward to the bracketing pair.
   while player.index < #samples - 1 and samples[player.index + 1].t < player.elapsed do
     player.index = player.index + 1
