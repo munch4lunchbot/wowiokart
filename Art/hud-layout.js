@@ -54,8 +54,17 @@ const LIME = [.55, .95, .45], DIMGOLD = [.72, .62, .40], ICE = [.9, .92, 1];
  * shortcut really is that sentence. Checking the layout against typical content
  * is how a HUD ships looking fine and then eats itself on one track.
  */
-function rects(W, H) {
+/**
+ * `sample` replaces individual readouts by name, and NOTHING ELSE. The strings
+ * baked in below are the longest each readout can ever show, which is what the
+ * layout has to survive -- so verify-hud.js passes nothing and keeps them. The
+ * preview sheet is a different job: it is a picture of ONE circuit, and calling
+ * every circuit "Netherstorm Turbo Circuit / ARCANE" made the sheet contradict
+ * the road in the same frame. It passes the track it actually drew.
+ */
+function rects(W, H, sample) {
   const s = scale(W, H), u = n => n * s, HW = W / 2;
+  const said = name => (sample && sample[name] !== undefined) ? sample[name] : null;
   const out = [];
   const put = (name, kind, x, y, w, h, extra) =>
     out.push(Object.assign({ name, kind, x, y, w, h }, extra || {}));
@@ -73,6 +82,8 @@ function rects(W, H) {
   // containment check does not report it as spilling out of a box it was never
   // meant to be in.
   const text = (name, str, x, y, size, color, ax, ay, outside) => {
+    const swapped = said(name);
+    if (swapped !== null) str = swapped;
     const w = textWidth(str, size), h = textHeight(size);
     const px = ax === "RIGHT" ? x - w : ax === "CENTER" ? x - w / 2 : x;
     const py = ay === "BOTTOM" ? y - h : ay === "CENTER" ? y - h / 2 : y;

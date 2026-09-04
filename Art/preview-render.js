@@ -159,6 +159,9 @@ const track = (function () {
     name: (x[2].match(/name = "([^"]+)"/) || [, ""])[1],
   }));
   return {
+    name: (body.match(/name = "([^"]+)"/) || [, "Unnamed Circuit"])[1],
+    theme: (body.match(/theme = "([^"]+)"/) || [, ""])[1],
+    shortcut: (body.match(/shortcut = "([^"]+)"/) || [, ""])[1],
     length: num(/length = (\d+), laps/, 2600), color: triple("color"), road: triple("road"),
     skyTop: triple("skyTop"), skyLow: triple("skyLow"), glow: triple("glow"),
     light: num(/light = ([\d.]+)/, 1), archSpacing: num(/archSpacing = (\d+)/, 0),
@@ -953,8 +956,31 @@ const LAYOUT = require("./hud-layout.js");
 // layout is how a preview ends up disagreeing with both the game and the test.
 const HS = LAYOUT.scale(W, H);
 const u = n => n * HS;
+// THE HUD HAS TO NAME THE CIRCUIT IT IS DRAWN OVER.
+//
+// hud-layout.js carries the LONGEST string each readout can ever show, because
+// that is what the layout has to survive and what verify-hud.js checks. On a
+// picture of one circuit those placeholders are a different problem: every
+// sheet in this repo said "NETHERSTORM TURBO CIRCUIT / ARCANE / THE COLLAPSED
+// SPAN" over whatever road was actually rendered, which makes the sheet argue
+// with itself. Real strings here, worst-case ones in the test.
+const sectionHere = (() => {
+  const authored = track.layout.reduce((sum, p) => sum + p.len, 0);
+  const scale = track.length / authored;
+  let at = 0;
+  for (const piece of track.layout) {
+    at += piece.len * scale;
+    if (PLAYER_DIST % track.length < at) return piece.name || "";
+  }
+  return track.layout[0].name || "";
+})();
+const HUD_SAMPLE = {
+  "track.name": track.theme ? track.name + "  /  " + track.theme : track.name,
+  "track.section": sectionHere.toUpperCase(),
+  shortcut: track.shortcut ? "SHORTCUT: " + track.shortcut : "",
+};
 const R = {};
-for (const r of LAYOUT.rects(W, H)) R[r.name] = r;
+for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) R[r.name] = r;
 const GOLD = LAYOUT.COLORS.GOLD;
 
 function panel(r, alpha = 1) {
@@ -1000,7 +1026,7 @@ function plate(x0, y0, bw, bh, tint) {
 }
 
 // Panels and buttons first, then every text row on top of them.
-for (const r of LAYOUT.rects(W, H)) {
+for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
   if (r.kind === "panel") panel(r);
   else if (r.kind === "glow" && tex.glow)
     blit(tex.glow, r.x, r.y, r.w, r.h, 0, 1, 0, 1, [0, 0, 0], 0.55);
@@ -1077,7 +1103,7 @@ for (const r of LAYOUT.rects(W, H)) {
   for (const t of [0.35, 0.90, 1.80])
     rect(d.x + u(4) + track * (t / LAYOUT.DRIFT_MAX), d.y + u(4), Math.max(1, u(2)), d.h - u(8), .08, .13, .20, 1);
 }
-for (const r of LAYOUT.rects(W, H)) {
+for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
   if (r.kind === "text") drawText(put, r.text, r.x, r.y, r.size, r.color, 1);
   else if (r.kind === "button" && SHOW_CONTROLS)
     drawText(put, r.text, r.x + (r.w - r.text.length * 6 * u(13) / 9.7) / 2,

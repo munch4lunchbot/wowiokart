@@ -704,7 +704,14 @@ const wontCompile = [];
   }
 }
 
-console.log("files: " + toc.length + " listed, " + onDisk.length + " on disk");
+// The harness is a Lua file that is deliberately NOT loaded by the addon, so
+// counting it here made this line read "29 listed, 30 on disk" on a clean tree
+// -- a permanent one-file discrepancy, which is the fastest way to train
+// everyone to stop reading the line that is supposed to catch a real one.
+const harness = onDisk.filter(f => HARNESS.test(f));
+console.log("files: " + toc.length + " listed, "
+  + (onDisk.length - harness.length) + " on disk"
+  + (harness.length ? " (plus " + harness.length + " not loaded by the addon)" : ""));
 if (missing.length) console.log("  MISSING (in toc, not on disk): " + missing.join(", "));
 if (unlisted.length) console.log("  UNLISTED (on disk, not loaded): " + unlisted.join(", "));
 if (!languageServerRan)
