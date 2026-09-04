@@ -62,20 +62,23 @@ const state = { lastPlayed: {}, lastAny: -99, lastLow: -99, lastNormal: -99, las
 const counts = {};
 let played = 0;
 
-function tryPlay(cue, now) {
+function tryPlay(cue, now, demote) {
   const def = CUES[cue];
   if (!def) return false;
+  // Mirrors PlaySfx's `demote`: a rival's cue keeps its cooldown but drops to
+  // the incidental class, so what you do always outranks what is done near you.
+  const pri = demote && def.pri > demote ? demote : def.pri;
   if (def.cd > 0 && now - (state.lastPlayed[cue] ?? -99) < def.cd) return false;
-  if (def.pri < PRI.CRITICAL) {
+  if (pri < PRI.CRITICAL) {
     if (now - state.lastAny < GLOBAL_FLOOR) return false;
-    if (def.pri === PRI.LOW && now - state.lastLow < LOW_SPACING) return false;
-    if (def.pri === PRI.NORMAL && now - state.lastNormal < NORMAL_SPACING) return false;
+    if (pri === PRI.LOW && now - state.lastLow < LOW_SPACING) return false;
+    if (pri === PRI.NORMAL && now - state.lastNormal < NORMAL_SPACING) return false;
   }
   state.lastPlayed[cue] = now;
   state.lastAny = now;
-  if (def.pri === PRI.LOW) state.lastLow = now;
-  else if (def.pri === PRI.NORMAL) state.lastNormal = now;
-  if (def.pri >= PRI.HIGH) state.lastImportant = now;
+  if (pri === PRI.LOW) state.lastLow = now;
+  else if (pri === PRI.NORMAL) state.lastNormal = now;
+  if (pri >= PRI.HIGH) state.lastImportant = now;
   counts[cue] = (counts[cue] || 0) + 1;
   played++;
   return true;
@@ -112,6 +115,19 @@ let t = 0;
 let nextCorner = 3, nextItem = 8, nextBump = 6, driftEnd = -1, tierNext = 0, tier = 0;
 let wasCornering = false;
 
+// --no-crowd-gate measures what shipped before AK:PlaySfxNear existed: every
+// rival's item and every rival-on-rival squash played to the player at full
+// priority, wherever on the circuit it happened.
+const CROWD_GATE = !process.argv.includes("--no-crowd-gate");
+// NEIGHBOUR_METRES is 45 on a ~2400m lap with eight karts. A quarter of the
+// field being inside that at any moment is generous to the gate's cost, not
+// to its benefit.
+const NEAR_FRACTION = 0.25;
+const RIVALS = 7;
+const rivals = [];
+for (let i = 0; i < RIVALS; i++) rivals.push({ nextItem: 4 + i * 1.3, nextBump: 9 + i * 2.1 });
+let rivalHeard = 0;
+
 for (let frame = 0; frame * DT < LAP; frame++) {
   t = frame * DT;
   // Speed: accelerate on straights, scrub through corners.
@@ -147,6 +163,37 @@ for (let frame = 0; frame * DT < LAP; frame++) {
   }
   if (Math.abs(t - LAP / 3) < DT || Math.abs(t - 2 * LAP / 3) < DT) tryPlay("lap", t);
 
+  // THE REST OF THE GRID.
+  //
+  // This lap used to be a solo time trial: it modelled only what the PLAYER
+  // did, which is why the largest single source of noise in a real race sat
+  // unmeasured for four rounds. Seven rivals draw an item every few seconds
+  // and fire it the moment they have one, and Items.lua played that cue for
+  // every vehicle -- so the player heard the whole field's item use at
+  // identical volume, on a library that offers no panning and no distance
+  // falloff. They also flatten each other, and that bump was played too.
+  //
+  // Only a quarter of the field is near you at any moment; the rest are
+  // somewhere round the circuit and not on screen.
+  for (const rival of rivals) {
+    if (t >= rival.nextItem) {
+      rival.nextItem = t + 6 + rnd() * 7;
+      const near = rnd() < NEAR_FRACTION;
+      if (near || !CROWD_GATE) {
+        // ITEM_SOUND maps most items onto these three.
+        const cue = rnd() < 0.45 ? "throw" : (rnd() < 0.6 ? "drop" : "boost");
+        if (tryPlay(cue, t, CROWD_GATE ? PRI.LOW : undefined)) rivalHeard++;
+      }
+    }
+    if (t >= rival.nextBump) {
+      rival.nextBump = t + 11 + rnd() * 9;
+      const near = rnd() < NEAR_FRACTION;
+      if (near || !CROWD_GATE) {
+        if (tryPlay("bump", t, CROWD_GATE ? PRI.LOW : undefined)) rivalHeard++;
+      }
+    }
+  }
+
   engineTick(t, ratio, rnd);
 }
 
@@ -181,6 +228,13 @@ check(perSec >= 0.5, "the race makes a noise at all (" + perSec.toFixed(2) + "/s
 // whatever the rate curve says, and the ceiling has to reflect the palette we
 // actually have rather than the one an engine loop would give us.
 check(perSec <= 2.5, "not a machine gun (" + perSec.toFixed(2) + "/s, want <= 2.5)");
+console.log("        of which " + rivalHeard + " came from the other seven karts ("
+  + (rivalHeard / LAP).toFixed(2) + "/s)"
+  + (CROWD_GATE ? "" : "   [--no-crowd-gate: every rival, wherever they are]"));
+// The field should be present and never the loudest thing in the race. Run
+// with --no-crowd-gate to see what it was: the grid out-shouting the player.
+check(rivalHeard / LAP <= 0.6,
+  "the field is heard, not the whole grid (" + (rivalHeard / LAP).toFixed(2) + "/s from rivals)");
 const ladder = ["driftTier1", "driftTier2", "driftTier3"].every(c => counts[c] > 0);
 check(ladder, "every rung of the drift ladder is audible");
 const worst = rows.filter(([c]) => !c.startsWith("engine"))[0];

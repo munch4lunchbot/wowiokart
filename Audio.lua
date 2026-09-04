@@ -142,7 +142,11 @@ local CUES = {
   -- `menu = true` puts these outside the race's crowding budget entirely. The
   -- hover keeps a small cooldown of its own, because sweeping a mouse down a
   -- list really does machine-gun it; the rest fire whenever they are asked to.
-  uiHover     = { kit = { "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 0.06, menu = true },
+  -- 0.06 permits sixteen a second. A mouse crossing the racer grid enters
+  -- eleven cards in about half a second, which is eight clicks in one sweep --
+  -- the machine gun, moved from the race into the menu. 0.14 still ticks for
+  -- every deliberate hover and refuses to chatter through a sweep.
+  uiHover     = { kit = { "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 0.14, menu = true },
   uiClick     = { kit = { "IG_MAINMENU_OPTION_CHECKBOX_ON" }, pri = PRI.NORMAL, cd = 0, menu = true },
   uiOpen      = { kit = { "IG_CHARACTER_INFO_OPEN" }, pri = PRI.NORMAL, cd = 0, menu = true },
   uiClose     = { kit = { "IG_CHARACTER_INFO_CLOSE" }, pri = PRI.NORMAL, cd = 0, menu = true },
@@ -256,8 +260,8 @@ end
 
 --- Is this cue allowed to make a noise right now? Everything about not being
 --- annoying lives in this function.
-local function permitted(cue, def, now)
-  local pri = def.pri or PRI.NORMAL
+local function permitted(cue, def, now, pri)
+  pri = pri or def.pri or PRI.NORMAL
 
   local cd = def.cd or DEFAULT_CD[pri]
   if cd > 0 and now - (lastPlayed[cue] or -99) < cd then return false end
@@ -281,22 +285,56 @@ local function permitted(cue, def, now)
   return true
 end
 
-function AK:PlaySfx(cue)
+--- `demote` caps the cue's priority for this call only, which is what lets a
+--- rival's item share a cue with your own without sharing its urgency.
+function AK:PlaySfx(cue, demote)
   if not enabled() then return end
   local def = CUES[cue]
   if not def then return end
+  -- Capped, not copied: rebuilding the definition table would allocate on
+  -- every rival item, which in a full field is a lot of garbage for one number.
+  local pri = def.pri or PRI.NORMAL
+  if demote and pri > demote then pri = demote end
 
   local now = GetTime()
-  if not permitted(cue, def, now) then return end
+  if not permitted(cue, def, now, pri) then return end
   if not playCue(cue, def) then return end
 
-  local pri = def.pri or PRI.NORMAL
   playCounts[cue] = (playCounts[cue] or 0) + 1
   lastPlayed[cue], lastAny = now, now
   if pri == PRI.LOW then lastLow = now elseif pri == PRI.NORMAL then lastNormal = now end
   -- Duck the engine for anything that carries meaning, so a boost or a lap is
   -- heard against near-silence instead of competing with the revs.
   if pri >= PRI.HIGH then lastImportant = now end
+end
+
+--- Play a cue for something that happened to SOMEBODY ELSE.
+---
+--- THE LIBRARY GIVES US NO PANNING AND NO VOLUME. PlaySound and PlaySoundFile
+--- take an id and a channel and nothing else, so a shell fired three hundred
+--- metres up the road arrives at exactly the same level as one fired alongside
+--- you: the same sound, carrying the opposite information.
+---
+--- Items.lua played its cue for EVERY vehicle. With seven rivals drawing an
+--- item every few seconds and firing it the moment they have it, that is most
+--- of the noise in a race and none of the meaning -- and it is why the item
+--- layer reads as random clatter rather than as a fight going on around you.
+--- Near the player it IS the fight and worth hearing; past that it is somebody
+--- else's race, on a part of the circuit that is not even on screen.
+---
+--- The cue also drops a priority class when it belongs to a rival, so what you
+--- do always outranks what is being done near you.
+local NEIGHBOUR_METRES = 45
+function AK:PlaySfxNear(cue, race, vehicle)
+  if not cue then return end
+  local player = race and race.player
+  if not player or vehicle == player then return self:PlaySfx(cue) end
+  if not vehicle or player.finished then return end
+  -- A rival on the other line is not beside you however close the numbers get:
+  -- distance along a lap says nothing about a kart that is on a branch.
+  if (vehicle.route or race.track) ~= (player.route or race.track) then return end
+  if AK.Race:VehicleDistance(player, vehicle) > NEIGHBOUR_METRES then return end
+  self:PlaySfx(cue, PRI.LOW)
 end
 
 -- ---------------------------------------------------------------------------

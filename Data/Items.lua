@@ -360,6 +360,14 @@ function AK:FireItem(race, vehicle, id)
       AK.RaceUI:PlayEffect("shock", 0, 0, 1400, item.color)
     end
   end
-  if AK.PlaySfx then AK:PlaySfx(AK.ITEM_SOUND[id] or "itemUse") end
+  -- YOURS AT FULL, THEIRS ONLY IF THEY ARE NEXT TO YOU.
+  --
+  -- This fired for every vehicle. With seven rivals drawing an item every few
+  -- seconds and firing it the moment they have it, the player heard the whole
+  -- field's item use at identical volume -- and the library gives no panning
+  -- and no volume, so a shell thrown three hundred metres up the road was
+  -- indistinguishable from one thrown alongside. That is most of the noise in a
+  -- race and none of the meaning.
+  if AK.PlaySfxNear then AK:PlaySfxNear(AK.ITEM_SOUND[id] or "itemUse", race, vehicle) end
   return true
 end

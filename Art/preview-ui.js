@@ -695,6 +695,13 @@ if (process.env.SCREEN === "settings") {
   label(OX + CW / 2, OY - 40 + CH - 42,
     "W OR UP ACCELERATE     A D STEER     SPACE HOP AND DRIFT     SHIFT ITEM     ESC PAUSE",
     10, MUTED, "center");
+  // The two doors out of the settings page. The sound editor was reachable
+  // only from inside the workshop or by typing /kart sfx.
+  const btnTop = OY - 40 + CH - 4 - 24;
+  slice(tex.btn, OX + CW / 2 - 80 - 75, btnTop, 150, 24, REST, 1);
+  label(OX + CW / 2 - 80, btnTop + 7, "WORKSHOP", 11, GOLD, "center");
+  slice(tex.btn, OX + CW / 2 + 80 - 75, btnTop, 150, 24, REST, 1);
+  label(OX + CW / 2 + 80, btnTop + 7, "SOUND EDITOR", 11, GOLD, "center");
   // The panel's own height less the footer band, not a number typed here: the
   // limit has to move when the panel does.
   const room = CH - 62;

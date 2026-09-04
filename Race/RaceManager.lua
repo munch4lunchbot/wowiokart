@@ -1298,7 +1298,9 @@ function Race:CheckCollisions(race)
           elseif AK.RaceUI.playerX then
             AK.RaceUI:Shake(6)
           end
-          if AK.PlaySfx then AK:PlaySfx("bump") end
+          -- Two rivals flattening each other on the far side of the circuit
+          -- sounded exactly like being flattened yourself.
+          if AK.PlaySfxNear then AK:PlaySfxNear("bump", race, squashed) end
         end
       elseif not first.finished and not second.finished and self:VehicleDistance(first, second) < 7 and math.abs(first.lateral - second.lateral) < .20 then
         -- Weight decides who gets moved. A fixed shove made a heavy kart and a

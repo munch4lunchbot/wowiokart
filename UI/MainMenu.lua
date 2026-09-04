@@ -1026,12 +1026,7 @@ function Menu:BuildSelection(page, kind)
       local model = AK.Model:New(card, 64, 64, -0.6, 1, entry.model)
       model:SetPoint("TOP", 0, -2)
       icon:Hide()
-      -- Model streaming is async; fall back to the flat icon if it never lands.
-      C_Timer.After(1, function()
-        if AK.Model:IsReady(model) then return end
-        model:Hide()
-        icon:Show()
-      end)
+      cards[index].model, cards[index].icon = model, icon
     end
     local name = UI:NewText(card, entry.name, kind == "racer" and 14 or 16,
       AK.COLORS.gold, "CENTER")
@@ -1091,8 +1086,28 @@ function Menu:BuildSelection(page, kind)
     end
   end
 
+  --- A model that has not streamed yet falls back to its flat icon.
+  ---
+  --- This used to be a single C_Timer.After(1) fired at build time, which was
+  --- survivable only because the page was rebuilt on every visit. Now that it
+  --- is kept, one shot at one second would decide a card's appearance FOREVER:
+  --- a creature that took 1.1s to resolve on the first ever visit would show
+  --- its icon for the rest of the session. Asked again on the way in, and once
+  --- more a second later to catch what is still in flight.
+  local function settleModels()
+    for _, slot in ipairs(cards) do
+      if slot.model then
+        local ready = AK.Model:IsReady(slot.model)
+        slot.model:SetShown(ready)
+        slot.icon:SetShown(not ready)
+      end
+    end
+  end
+
   --- Everything that can have changed since the last visit.
   function page:akRefresh()
+    settleModels()
+    C_Timer.After(1, settleModels)
     for _, slot in ipairs(cards) do
       local chosen = AK.db.selection[kind] == slot.entry.id
       -- The unchosen colour is NewButton's own default, not a second copy of
@@ -1402,10 +1417,31 @@ function Menu:BuildSettings(page)
     "W or UP accelerate     A D or LEFT RIGHT steer     SPACE hop and drift     SHIFT use item     S or DOWN brake and reverse     ESC pause",
     12, AK.COLORS.muted, "CENTER")
   help:SetPoint("BOTTOM", 0, 32)
-  local advanced = UI:NewText(page,
-    "Camera, road and handling dials live in the workshop:  /kart tune",
-    11, { .44, .50, .60 }, "CENTER")
-  advanced:SetPoint("BOTTOM", 0, 14)
+  -- BUTTONS, NOT A SLASH COMMAND PRINTED ON A SCREEN.
+  --
+  -- This line said "Camera, road and handling dials live in the workshop: /kart
+  -- tune" and left it there. The sound editor -- the only way to replace the
+  -- interface blips this game ships with, and the answer to the loudest
+  -- standing complaint about it -- was reachable ONLY from inside that
+  -- workshop or by typing /kart sfx. A tool nobody can find is not a tool, and
+  -- a player who has just read two rows about sound is exactly the player
+  -- looking for it.
+  -- The keyboard legend sits at BOTTOM 32 and is about fifteen tall, so the
+  -- buttons have the bottom thirty pixels and no more.
+  local workshop = UI:NewButton(page, "WORKSHOP", 150, 24, function()
+    self:Hide()
+    AK.Workshop:Toggle()
+  end)
+  workshop:SetPoint("BOTTOM", -80, 4)
+  workshop.tooltip = "Camera, road and handling dials."
+  local sounds = UI:NewButton(page, "SOUND EDITOR", 150, 24, function()
+    self:Hide()
+    AK.SoundEditor:Toggle()
+  end)
+  sounds:SetPoint("BOTTOM", 80, 4)
+  sounds.tooltip =
+    "Every cue in the game, auditioned and rebound by ear. The game's whole "
+    .. "audio library is searchable from here."
   -- The layout is derived, not hand-placed, but a group can still be added
   -- that does not fit. Say so in the log rather than printing it over the
   -- keyboard legend and hoping somebody notices.
