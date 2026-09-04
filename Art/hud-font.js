@@ -58,6 +58,31 @@ glyph("!", "00100","00100","00100","00100","00100","00000","00100");
 glyph("?", "01110","10001","00001","00110","00100","00000","00100");
 glyph("%", "11001","11010","00010","00100","01000","01011","10011");
 glyph("+", "00000","00100","00100","11111","00100","00100","00000");
+// Punctuation the interface actually uses. It was missing, and the `?` fallback
+// below quietly drew a question mark in its place -- so "Goldshire's fastest"
+// came out as "GOLDSHIRE?S FASTEST" on the preview sheet and read as a typo in
+// the track data rather than as a hole in this file. A mirror that substitutes
+// something plausible is worse than one that cannot draw at all.
+glyph("'", "00100","00100","00100","00000","00000","00000","00000");
+glyph('"', "01010","01010","01010","00000","00000","00000","00000");
+glyph(";", "00000","01100","01100","00000","01100","01100","01000");
+glyph("(", "00010","00100","01000","01000","01000","00100","00010");
+glyph(")", "01000","00100","00010","00010","00010","00100","01000");
+glyph("[", "01110","01000","01000","01000","01000","01000","01110");
+glyph("]", "01110","00010","00010","00010","00010","00010","01110");
+glyph("<", "00010","00100","01000","10000","01000","00100","00010");
+glyph(">", "01000","00100","00010","00001","00010","00100","01000");
+glyph("=", "00000","00000","11111","00000","11111","00000","00000");
+glyph("_", "00000","00000","00000","00000","00000","00000","11111");
+glyph("|", "00100","00100","00100","00100","00100","00100","00100");
+glyph("*", "00000","10101","01110","11111","01110","10101","00000");
+glyph("&", "01100","10010","10100","01000","10101","10010","01101");
+glyph("#", "01010","01010","11111","01010","11111","01010","01010");
+// EM DASH. Tuning hints use one, and it is wider than a hyphen on purpose.
+glyph("\u2014", "00000","00000","00000","11111","00000","00000","00000");
+// A character with no glyph is drawn as a SOLID BLOCK, never as a `?`: an
+// obvious hole is a bug report, a plausible substitute is a lie.
+glyph("\u0000", "11111","11111","11111","11111","11111","11111","11111");
 
 // Calibrated against the real thing, because a mirror with the wrong metrics
 // invents faults. Drawing the 5x7 cell at one pixel per point size made every
@@ -94,7 +119,7 @@ function drawText(put, str, x, y, size, color, alpha) {
   const px = cell(size), step = 6 * pitch(size);
   let cx = x;
   for (const raw of str.toUpperCase()) {
-    const rows = G[raw] || G["?"];
+    const rows = G[raw] || G["\u0000"];
     const gx = Math.round(cx), gy = Math.round(y);
     for (let r = 0; r < 7; r++) {
       for (let c = 0; c < 5; c++) {

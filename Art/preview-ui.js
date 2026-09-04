@@ -13,7 +13,16 @@ const fs = require("fs"), zlib = require("zlib"), path = require("path");
 
 const ART = process.argv[2] || path.join(__dirname);
 const OUT = process.argv[3] || path.join(__dirname, "..", "ui-preview.png");
-const W = +(process.env.W || 900), H = +(process.env.H || 560);
+// THE STAGE IS THE MENU'S OWN STAGE, read out of UI/MainMenu.lua rather than
+// picked here. It was 900x560 while the addon has always built the menu at
+// 1120x790, so this sheet composited a 960-wide content panel onto a 900-wide
+// canvas and then reported the collision that geometry forced -- a fault of the
+// mirror, not of the menu. A preview on a canvas the screen never has is worse
+// than no preview: it invents faults and hides real ones.
+const MENU_LUA = fs.readFileSync(path.join(__dirname, "..", "UI", "MainMenu.lua"), "utf8");
+const STAGE = MENU_LUA.match(/local MENU_W, MENU_H = (\d+), (\d+)/);
+if (!STAGE) throw new Error("preview-ui: could not find MENU_W/MENU_H in UI/MainMenu.lua");
+const W = +(process.env.W || STAGE[1]), H = +(process.env.H || STAGE[2]);
 
 const fb = new Float32Array(W * H * 3);
 function blend(x, y, r, g, b, a) {
@@ -163,7 +172,7 @@ function planOf(t) {
 // Not a mock. The rows, their notes and every offset come out of the addon, so
 // this cannot show a menu the game does not draw -- which is the whole reason
 // the scene preview is trusted and a hand-built one would not be.
-const MENU_SRC = fs.readFileSync(path.join(__dirname, "..", "UI", "MainMenu.lua"), "utf8");
+const MENU_SRC = MENU_LUA;
 function parseHome() {
   const modes = [...MENU_SRC.slice(MENU_SRC.indexOf("local MODES = {"))
     .slice(0, MENU_SRC.slice(MENU_SRC.indexOf("local MODES = {")).indexOf("\n}\n"))
@@ -416,10 +425,20 @@ if (process.env.SCREEN === "results") {
     fb[i * 3] = 0.020; fb[i * 3 + 1] = 0.028; fb[i * 3 + 2] = 0.052;
   }
   const sx = Math.round((W - DW) / 2), sy = Math.round((H - DH) / 2);
-  label(W / 2, sy + 34, "VICTORY", 34, GOLD, "center");
+  // THE SHEET HAS TO AGREE WITH ITSELF. It said VICTORY and "finished 1st"
+  // over a ladder that put the player fourth, which makes every judgement about
+  // the screen -- which row reads as yours, whether the headline sits right --
+  // an argument with the mock rather than with the design. Fourth is also the
+  // more useful case to look at: it is the one that has to show BOTH the
+  // winner's gold row and the player's green one.
+  const PLACE = 4;
+  label(W / 2, sy + 34,
+    PLACE === 1 ? "VICTORY" : PLACE <= 3 ? "PODIUM FINISH" : "RACE COMPLETE",
+    34, GOLD, "center");
   blitUV(tex.hairline, Math.round(W / 2 - 260), sy + 76, 520, 3, 0, 1, 0, 1, [1, .76, .20], 0.75);
-  label(W / 2, sy + 88, "ELWYNN SPRINT  /  FINISHED 1ST OF 8  /  150CC  3 LAPS  HARD",
-    12, MUTED, "center");
+  label(W / 2, sy + 88,
+    "ELWYNN SPRINT  /  FINISHED " + ["1ST", "2ND", "3RD", "4TH"][PLACE - 1]
+      + " OF 8  /  150CC  3 LAPS  HARD", 12, MUTED, "center");
 
   const bx = Math.round(W / 2 - BLOCK / 2), by = sy + 170;
   panel(bx, by, 300, 400, [0.05, 0.08, 0.14], 0.96);
@@ -535,10 +554,14 @@ if (process.env.SCREEN === "settings") {
             on ? [1, 0.94, 0.72] : [0.52, 0.58, 0.68], "center");
         });
       } else {
+        // ARROWS, not the characters "<" and ">" -- UI:NewStepper draws
+        // chevron.tga flipped through its texcoords, so drawing letters here
+        // was a different shape from the one that ships, and made the sheet
+        // useless for judging the control it is supposed to be showing.
         slice(tex.btn, cx, cy, 22, 22, [0.18, 0.28, 0.42], 1);
-        label(cx + 11, cy + 7, "<", 9, GOLD, "center");
+        blitUV(tex.chevron, cx + 7, cy + 6, 7, 10, 1, 0, 0, 1, GOLD, 1);
         slice(tex.btn, cx + cw - 22, cy, 22, 22, [0.18, 0.28, 0.42], 1);
-        label(cx + cw - 11, cy + 7, ">", 9, GOLD, "center");
+        blitUV(tex.chevron, cx + cw - 15, cy + 6, 7, 10, 0, 1, 0, 1, GOLD, 1);
         slice(tex.btn, cx + (cw - (cw - 52)) / 2, cy, cw - 52, 22, [0.07, 0.11, 0.18], 1);
         label(cx + cw / 2, cy + 7, "100%", 9, [1, 0.94, 0.72], "center");
       }
@@ -550,7 +573,12 @@ if (process.env.SCREEN === "settings") {
   label(OX + CW / 2, OY - 40 + CH - 42,
     "W OR UP ACCELERATE     A D STEER     SPACE HOP AND DRIFT     SHIFT ITEM     ESC PAUSE",
     10, MUTED, "center");
-  if (used > 458) throw new Error("preview-ui: settings overflows by " + Math.ceil(used - 458) + "px");
+  // The panel's own height less the footer band, not a number typed here: the
+  // limit has to move when the panel does.
+  const room = CH - 62;
+  if (used > room) {
+    throw new Error("preview-ui: settings overflows by " + Math.ceil(used - room) + "px");
+  }
 }
 
 // ---- write ------------------------------------------------------------------
