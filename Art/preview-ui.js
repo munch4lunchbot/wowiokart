@@ -478,9 +478,14 @@ if (process.env.SCREEN === "tracks") {
       for (const b of read("Racers.lua").split(/\n  \{ id = "/).slice(1)) {
         const id = b.slice(0, b.indexOf('"'));
         const g = (re, d) => { const m = b.match(re); return m ? m[1] : d; };
+        // TWO SHORT LINES, as Menu:BuildSelection writes them: one wide line is
+        // about 155px at 11pt against a 131px card, and wrapped wherever the
+        // client felt like.
         entries.push({ id, name: g(/name = "([^"]+)"/, id),
-          lines: ["SPD " + g(/speed = (\d+)/, "0") + "  ACC " + g(/acceleration = (\d+)/, "0")
-            + "  HND " + g(/handling = (\d+)/, "0") + "  DRF " + g(/drift = (\d+)/, "0")] });
+          lines: [
+            "SPD " + g(/speed = (\d+)/, "0") + "   ACC " + g(/acceleration = (\d+)/, "0"),
+            "HND " + g(/handling = (\d+)/, "0") + "   DRF " + g(/drift = (\d+)/, "0"),
+          ] });
       }
     } else if (KIND === "karts") {
       for (const b of read("Karts.lua").split(/\n  \{ id = "/).slice(1)) {
@@ -519,11 +524,15 @@ if (process.env.SCREEN === "tracks") {
     const rowsFor = n => Math.ceil(entries.length / n);
     const heightFor = n => Math.floor((availableH - GAP * (rowsFor(n) - 1)) / rowsFor(n));
     // Racers are pinned at four; see the note in Menu:ShowSelection.
-    let columns = KIND === "racers" ? 4 : 3;
+    let columns = KIND === "racers" ? 6 : 3;
     if (KIND !== "racers") while (columns < 5 && heightFor(columns) < MIN_CARD) columns++;
     const cardW = Math.floor((CW - MARGIN * 2 - GAP * (columns - 1)) / columns);
     // Capped and centred, as Menu:ShowSelection does it.
     const cardH = Math.min(heightFor(columns), MAX_CARD);
+    // Derived exactly as Menu:BuildSelection derives it, so the picture shrinks
+    // with the card instead of the words falling off the bottom of it.
+    const RACER_TEXT = +((MENU_LUA.match(/local RACER_TEXT = (\d+)/) || [, 92])[1]);
+    const PORTRAIT = Math.max(32, Math.min(cardW - 14, cardH - RACER_TEXT - 6));
     const gridRows = rowsFor(columns);
     const usedH = gridRows * cardH + GAP * (gridRows - 1);
     const top = TOP + Math.max(0, Math.floor((availableH - usedH) / 2));
@@ -536,9 +545,12 @@ if (process.env.SCREEN === "tracks") {
       slice(tex.btn, x, y, cardW, cardH, chosen ? [0.44, 0.33, 0.09] : REST, 1);
       if (chosen && tex.chevron) blitUV(tex.chevron, x + 9, y + 9, 12, 16, 0, 1, 0, 1, LIT, 1);
       if (KIND === "racers") {
-        // The model frame's footprint, so its collision with the name shows.
-        for (let dy = 0; dy < 64; dy++) for (let dx = 0; dx < 64; dx++)
-          blend(x + cardW / 2 - 32 + dx, y + 2 + dy, 0.30, 0.36, 0.46, 0.30);
+        // The portrait's footprint, so its collision with the name shows. Read
+        // from MainMenu rather than typed: the whole point of growing it from
+        // 64 to a card-filling portrait was that the racer was unrecognisable,
+        // and a mirror still drawing the old stamp would not show that landing.
+        for (let dy = 0; dy < PORTRAIT; dy++) for (let dx = 0; dx < PORTRAIT; dx++)
+          blend(x + cardW / 2 - PORTRAIT / 2 + dx, y + 6 + dy, 0.30, 0.36, 0.46, 0.30);
       } else if (KIND === "cups") {
         // The four circuits, drawn small in a row -- see Menu:ShowSelection.
         const plan = 44, span = e.plans.length * plan;
@@ -562,16 +574,25 @@ if (process.env.SCREEN === "tracks") {
         for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++)
           blend(x + cardW / 2 - size / 2 + dx, y + top + dy, 0.30, 0.36, 0.46, 0.30);
       }
-      const nameTop = KIND === "racers" ? 68
+      const nameTop = KIND === "racers" ? PORTRAIT + 8
         : KIND === "cups" ? 58 : KIND === "karts" ? 84 : 72;
       const nameSize = KIND === "racers" ? 14 : 16;
       let ny = labelWrapped(x + cardW / 2, y + nameTop, e.name, nameSize,
         chosen ? LIT : GOLD, cardW - 14);
       ny += 7;
+      // A racer's stats are pinned to the card's floor, so the whole grid's
+      // numbers line up whether or not the name above them wrapped.
+      const nameEnd = ny;
+      if (KIND === "racers") ny = y + cardH - 9 - e.lines.length * Math.round(11 * 1.45);
+      const statTop = ny;
       for (const line of e.lines) {
         const size = KIND === "racers" ? 11 : 12;
         if (line === "") { ny += Math.round(size * 1.45); continue; }
         ny = labelWrapped(x + cardW / 2, ny, line, size, MUTED, cardW - 18);
+      }
+      if (KIND === "racers" && nameEnd > statTop) {
+        throw new Error(`preview-ui: ${e.id}'s name runs into its stats by `
+          + Math.ceil(nameEnd - statTop) + "px");
       }
       const over = ny - (y + cardH - 4);
       if (!worst || over > worst.over) worst = { id: e.id, over };

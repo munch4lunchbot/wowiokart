@@ -361,6 +361,27 @@ if loadFailures == 0 then
   say("Driving the pure logic for real")
   say("")
 
+  -- EVERY RACE IN THIS SUITE IS SEEDED THE SAME WAY EVERY RUN.
+  --
+  -- AK.RNG:FreshSeed reads GetTime(), which the stub above answers with
+  -- os.clock() -- so every race the harness drove got a different seed, and
+  -- every check that drives one could pass or fail on the same code. That is
+  -- worse than having no check: a real regression is indistinguishable from
+  -- "it did that last week too". A suite whose verdict is not reproducible
+  -- cannot be used to decide anything.
+  --
+  -- A COUNTER, not a constant. One fixed seed would make every race in the run
+  -- identical, which throws away most of what driving several of them is for.
+  -- This gives the same sequence on every run and a different race each time
+  -- inside it, and it covers battles too, which build their race without ever
+  -- being handed an options table.
+  local seedTicks = 0
+  function AK.RNG:FreshSeed()
+    seedTicks = seedTicks + 1
+    -- Golden-ratio stride, so consecutive seeds are not consecutive numbers.
+    return (0x2545F491 + seedTicks * 0x9E3779B9) % 4294967296
+  end
+
   -- Saved variables and defaults, the way Core does on ADDON_LOADED.
   ok("the database initialises", function()
     AzerothKartDB = nil
@@ -1288,6 +1309,140 @@ if loadFailures == 0 then
     C_ChatInfo.SendAddonMessage = realSend
   end)
 
+  -- THE WHOLE HANDSHAKE, HOST AND JOINER, IN ORDER.
+  --
+  -- The packet check above proves one message parses. It does not prove that
+  -- pressing the four buttons on PARTY & RAID RACING in the order a person
+  -- presses them actually gets two people onto a grid -- and that is the only
+  -- thing that matters on the day of a test. This plays both ends: the host
+  -- opens a lobby, the joiner asks who is out there, joins, the roster comes
+  -- back, the host starts, and the joiner's throttle reaches the host.
+  ok("two clients get onto the same grid, and the joiner's throttle arrives", function()
+    local Net = AK.Net
+    local realSend = C_ChatInfo.SendAddonMessage
+    -- Two "clients" are the same Lua state wearing different names, so the
+    -- name function is swapped rather than the addon being loaded twice.
+    local who = "Host-Testrealm"
+    local realName = Net.PlayerName
+    Net.PlayerName = function() return who end
+
+    -- The wire. Everything sent is queued; delivering it means handing it to
+    -- HandleMessage as the OTHER client.
+    local wire = {}
+    C_ChatInfo.SendAddonMessage = function(_, message, _, target)
+      wire[#wire + 1] = { from = who, message = message, target = target }
+      return true
+    end
+    --- Deliver everything on the wire to `to`, skipping what they sent
+    --- themselves and anything whispered to somebody else.
+    local function deliverTo(to)
+      local queue = wire
+      wire = {}
+      local was = who
+      who = to
+      for _, packet in ipairs(queue) do
+        if packet.from ~= to and (not packet.target or packet.target == to) then
+          Net:HandleMessage(packet.message, packet.from)
+        end
+      end
+      who = was
+    end
+    local function asHost(fn) who = "Host-Testrealm" return fn() end
+    local function asGuest(fn) who = "Guest-Testrealm" return fn() end
+
+    -- Two separate clients keep separate lobby state; one Lua state does not,
+    -- so each side's fields are parked while the other is talking.
+    local side = { ["Host-Testrealm"] = {}, ["Guest-Testrealm"] = {} }
+    local function swapIn(name)
+      side[who].lobby, side[who].available = Net.lobby, Net.availableLobby
+      who = name
+      Net.lobby, Net.availableLobby = side[name].lobby, side[name].available
+    end
+
+    Net.lobby, Net.availableLobby = nil, nil
+    AK.db.selection.racer, AK.db.selection.kart = "thrall", "mechano"
+
+    -- 1. The host opens a lobby.
+    asHost(function()
+      assert(Net:OpenLobby(), "OpenLobby failed in a party")
+      assert(Net.lobby and Net.lobby.host == "Host-Testrealm", "no lobby after OpenLobby")
+    end)
+
+    -- 2. The joiner presses REFRESH LOBBIES and hears about it.
+    swapIn("Guest-Testrealm")
+    deliverTo("Guest-Testrealm")
+    assert(Net.availableLobby, "the joiner never heard the lobby announcement")
+    assert(Net.availableLobby.host == "Host-Testrealm",
+      "the announcement named " .. tostring(Net.availableLobby.host))
+
+    -- 3. The joiner joins, and the host takes them onto the roster.
+    Net:JoinLobby()
+    local guestLobby, guestAvailable = Net.lobby, Net.availableLobby
+    swapIn("Host-Testrealm")
+    deliverTo("Host-Testrealm")
+    assert(Net.lobby.roster["Guest-Testrealm"],
+      "the JOIN never reached the host's roster")
+    assert(Net.lobby.roster["Guest-Testrealm"].kart == "mechano",
+      "the joiner's kart did not survive the JOIN")
+
+    -- 4. The roster comes back and the joiner can see themselves on it.
+    side["Guest-Testrealm"].lobby = guestLobby
+    side["Guest-Testrealm"].available = guestAvailable
+    swapIn("Guest-Testrealm")
+    deliverTo("Guest-Testrealm")
+    assert(Net.availableLobby and Net.availableLobby.roster
+      and Net.availableLobby.roster["Guest-Testrealm"],
+      "the joiner never saw themselves on the host's roster -- "
+      .. "the lobby screen can never say they are in")
+
+    -- 5. The host starts. The joiner has to end up in the same session.
+    swapIn("Host-Testrealm")
+    Net:StartLobbyRace()
+    assert(AK.Race.current and AK.Race.current.network
+      and AK.Race.current.network.isHost, "the host is not hosting a race")
+    local session = AK.Race.current.network.session
+    local hostRace = AK.Race.current
+
+    swapIn("Guest-Testrealm")
+    AK.Race.current = nil
+    deliverTo("Guest-Testrealm")
+    assert(AK.Race.current, "START never put the joiner into a race")
+    assert(AK.Race.current.network.session == session,
+      "the joiner is racing a different session from the host")
+    assert(AK.Race.current.network.isHost == false, "the joiner thinks it is the host")
+    local guestRace = AK.Race.current
+
+    -- 6. THE THROTTLE. The host drives every remote player from what arrives
+    --    here, and this used to carry steering only -- so a joiner on the
+    --    host's machine was permanently flat out and could not lift or brake.
+    guestRace.delta = 1
+    Net.inputClock = 99
+    AK.Race.controls.accelerate, AK.Race.controls.brake = false, true
+    AK.Race.controls.left, AK.Race.controls.right = true, false
+    Net:SendInput(guestRace)
+    AK.Race.controls.accelerate, AK.Race.controls.brake = false, false
+    AK.Race.controls.left = false
+
+    swapIn("Host-Testrealm")
+    AK.Race.current = hostRace
+    deliverTo("Host-Testrealm")
+    local input = hostRace.remoteInputs["Guest-Testrealm"]
+    assert(input, "the host received no input from the joiner at all")
+    assert(input.left == true, "the joiner's steering did not arrive")
+    assert(input.throttleAware, "the host cannot tell that the throttle was sent")
+    assert(input.accelerate == false,
+      "the host thinks the joiner is on the throttle when they have lifted off")
+    assert(input.brake == true, "the joiner's brake did not arrive")
+
+    say(("        host + joiner on session %s; steering, throttle and brake all arrive")
+      :format(tostring(session)))
+
+    AK.Race:Stop(true)
+    Net.lobby, Net.availableLobby = nil, nil
+    Net.PlayerName = realName
+    C_ChatInfo.SendAddonMessage = realSend
+  end)
+
   -- EVERY COMMAND THE HELP TEXT ADVERTISES HAS TO BE A COMMAND.
   --
   -- `/kart sfxset driftTier1 12345` matched nothing and opened the GARAGE,
@@ -1656,9 +1811,15 @@ if loadFailures == 0 then
   -- BATTLE button. Both of the things that were wrong with it were invisible
   -- from the code and obvious from one fight -- the winner was ranked last, and
   -- the balloon count the whole mode turns on was on no screen anywhere.
+  -- FOUGHT MORE THAN ONCE. A battle is decided entirely by items landing on
+  -- people, so whether it resolves at all is a question about the AI and the
+  -- item roll, not about one lucky arena -- and "sometimes it never ends" is
+  -- exactly the sort of thing a single run reports as a pass.
   ok("a battle ends with the last kart standing on top", function()
     if QUICK then return end
     local Race = AK.Race
+    local durations = {}
+    for fight = 1, 3 do
     Race:StartBattle()
     local race = Race.current
     assert(race and race.battle, "no battle after StartBattle")
@@ -1713,10 +1874,18 @@ if loadFailures == 0 then
           "a kart knocked out earlier was placed above one that lasted longer")
       end
     end
-    say(("        %s took the arena; last out was %s%s"):format(
-      first.racer.name, last.racer.name,
+    durations[#durations + 1] = race.elapsed
+    say(("        %s (%s) took the arena in %.0fs; last out was %s%s"):format(
+      first.racer.name, race.track.id, race.elapsed, last.racer.name,
       sawPlayerOut and "; the player was knocked out on the way" or ""))
     Race:Stop(true)
+    end
+    -- A fight that takes four minutes is not a fight, it is a stalemate with
+    -- an eventual winner. The mode is meant to be short.
+    for _, seconds in ipairs(durations) do
+      assert(seconds < 210,
+        ("a battle took %.0f seconds to settle"):format(seconds))
+    end
   end)
 
   ok("the clock formats every duration", function()

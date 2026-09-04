@@ -92,7 +92,10 @@ function Results:Build()
   -- together needed more width than a 4:3 client has, and on a wide one the
   -- whole screen sat left with a hole beside it.
   self.podium:SetPoint("TOPLEFT", content, "TOP", -BLOCK * 0.5, -170)
-  self.winner = AK.Model:New(self.podium, 260, 260, -0.45, 1)
+  -- STANDING. The winner of the race was sitting cross-legged on the podium,
+  -- because the seated pose was the only one any model in the addon had.
+  self.winner = AK.Model:New(self.podium, 260, 260, -0.45,
+    AK.Model:PortraitZoom(), nil, AK.MODEL.anim.cheer)
   self.winner:SetPoint("TOP", 0, -14)
   self.winnerName = UI:NewText(self.podium, "", 18, AK.COLORS.gold, "CENTER")
   self.winnerName:SetPoint("BOTTOM", 0, 62)

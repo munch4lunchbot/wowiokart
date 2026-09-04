@@ -169,6 +169,41 @@ local function chooseItem(race, vehicle, ai, skill)
   if not item then return false end
   local length = race.track.length
 
+  -- AN ARENA IS NOT A RACE, AND EVERYTHING BELOW IS RACING LOGIC.
+  --
+  -- Every rule after this asks "does this help me finish ahead of the kart in
+  -- front": a held shell is kept as a shield because that is the correct play
+  -- in a race, a banana waits for an apex, a boost waits for a straight, a bolt
+  -- waits until you are out of the top two. In a battle none of that is the
+  -- game. The only thing that scores is a hit, and a kart saving a shell for a
+  -- better moment is a kart not playing.
+  --
+  -- Measured, once the harness could fight a battle at a fixed seed: a full
+  -- grid on a 320m arena spent FIVE MINUTES without a single balloon coming
+  -- off. The mode could not end. In here, anything in range is a reason.
+  if race.battle then
+    local nearest
+    for _, other in ipairs(race.vehicles) do
+      if other ~= vehicle and not other.eliminated then
+        local gap = AK.Race:VehicleDistance(vehicle, other)
+        if not nearest or gap < nearest then nearest = gap end
+      end
+    end
+    nearest = nearest or 999
+    if item.effect == "boost" then return vehicle.speed < vehicle.maxSpeed * 0.92 end
+    if item.effect == "star" then return nearest < 45 end
+    if item.effect == "bolt" then return true end
+    if item.effect == "drop" then return nearest < 50 end
+    -- A projectile is thrown up the road, so what matters is whether there is
+    -- anybody up the road to throw it at -- not whether they are perfectly
+    -- lined up, which on a wide arena they seldom are.
+    local ahead = AK.Race:GetAheadTarget(vehicle)
+    if not ahead then return false end
+    local gap = AK.Math.SignedLoopDistance(vehicle.distance % length,
+      ahead.distance % length, length)
+    return gap > 0 and gap < 70
+  end
+
   -- Something already deployed behind us: fire it when a target is reachable.
   if vehicle.held then
     local ahead = AK.Race:GetAheadTarget(vehicle)

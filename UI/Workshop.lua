@@ -336,17 +336,29 @@ end
 function Workshop:RebuildRosterList(kind)
   local state = self.roster[kind]
   local list = kind == "racers" and AK.Racers or AK.Karts
-  for _, button in ipairs(state.buttons) do button:Hide() end
-  wipe(state.buttons)
+  -- Reused, not remade. A frame cannot be destroyed, so hiding the old row and
+  -- building a fresh one leaked a button per racer every time ADD RACER was
+  -- pressed -- and pressing it is the one thing that calls this.
+  state.ids = state.ids or {}
   for index, entry in ipairs(list) do
-    local button = UI:NewButton(state.listHolder, entry.tag or entry.name, 148, 22, function()
-      state.index = index
-      if kind == "racers" then AK.db.selection.racer = entry.id
-      else AK.db.selection.kart = entry.id end
-      self:RefreshRoster(kind)
-    end)
-    button:SetPoint("TOPLEFT", 0, -(index - 1) * 25)
-    state.buttons[index] = button
+    local button = state.buttons[index]
+    if not button then
+      button = UI:NewButton(state.listHolder, "", 148, 22, function()
+        state.index = index
+        if kind == "racers" then AK.db.selection.racer = state.ids[index]
+        else AK.db.selection.kart = state.ids[index] end
+        self:RefreshRoster(kind)
+      end)
+      button:SetPoint("TOPLEFT", 0, -(index - 1) * 25)
+      state.buttons[index] = button
+    end
+    state.ids[index] = entry.id
+    button.label:SetText(entry.tag or entry.name)
+    button:Show()
+  end
+  for index = #list + 1, #state.buttons do
+    state.buttons[index]:Hide()
+    state.ids[index] = nil
   end
   state.listHolder:SetHeight(math.max(1, #list * 25))
   self:PaneHeight(kind == "racers" and "RACERS" or "KARTS",
@@ -816,18 +828,32 @@ function Workshop:BuildModelPane(pane)
     11, AK.COLORS.muted, "LEFT")
   header:SetPoint("TOPLEFT", 4, -6)
 
-  -- Racer picker down the left.
+  -- RACER PICKER DOWN THE LEFT, REBUILT ON DEMAND.
+  --
+  -- This used to be a plain loop over AK.Racers at build time, and the pane is
+  -- built exactly once -- so a racer added with ADD RACER never appeared here,
+  -- on the one tab the ROSTER tab tells you to go to next ("give it a model on
+  -- the MODELS tab"). The list is rebuilt whenever the tab refreshes now, and
+  -- the label under it moves with the list's real length instead of the length
+  -- it happened to have on the frame the window was first opened.
   self.racerButtons = {}
-  for index, racer in ipairs(AK.Racers) do
-    local button = UI:NewButton(pane, racer.tag or racer.name, 132, 22, function()
-      AK.db.selection.racer = racer.id
-      self:RefreshModels()
-    end)
-    button:SetPoint("TOPLEFT", 0, -46 - (index - 1) * 25)
-    self.racerButtons[index] = { button = button, id = racer.id }
-  end
+  self.modelListHolder = CreateFrame("Frame", nil, pane)
+  self.modelListHolder:SetPoint("TOPLEFT", 0, -46)
+  self.modelListHolder:SetSize(132, 400)
+  -- HAZARDS ARE MODELS TOO, and had no way to be chosen at all. Five of the
+  -- twelve shipped without one and drew an inventory icon on the road; the rest
+  -- were a guess at a display id, and a guess that resolves to nothing renders
+  -- blank and falls back to the same icon. They pick from the same gallery the
+  -- racers do now, and the choice is saved against the hazard's name so both
+  -- Mine Carts stay the same object.
+  self.hazardButtons = {}
+  self.hazardHead = UI:NewText(pane, "TRACK HAZARDS", 11, AK.COLORS.blue, "LEFT")
+  self.hazardHead:SetPoint("TOPLEFT", self.modelListHolder, "BOTTOMLEFT", 0, -10)
+  self.hazardListHolder = CreateFrame("Frame", nil, pane)
+  self.hazardListHolder:SetPoint("TOPLEFT", self.hazardHead, "BOTTOMLEFT", 0, -6)
+  self.hazardListHolder:SetSize(132, 200)
   self.previewName = UI:NewText(pane, "", 12, AK.COLORS.gold, "LEFT")
-  self.previewName:SetPoint("TOPLEFT", 0, -46 - #AK.Racers * 25 - 8)
+  self.previewName:SetPoint("TOPLEFT", self.hazardListHolder, "BOTTOMLEFT", 0, -8)
 
   -- THE GALLERY. Eight live models at a time, each labelled with its id.
   --
@@ -867,15 +893,33 @@ function Workshop:BuildModelPane(pane)
     cell.label = UI:NewText(cell, "", 11, { .9, .85, .7 }, "CENTER")
     cell.label:SetPoint("BOTTOM", 0, 5)
     cell:SetScript("OnClick", function()
+      if not cell.displayId then return end
+      -- A hazard is selected instead of a racer when one has been clicked in
+      -- the list below them; picking a racer clears it.
+      if self.selectedHazard then
+        AK.Roster:SetHazardModel(self.selectedHazard, cell.displayId)
+        AK:Print(("%s now uses creature %d. Saved."):format(
+          self.selectedHazard, cell.displayId))
+        self:RefreshModels()
+        return
+      end
       local racer = AK.Tuning:SelectedRacer()
       if cell.displayId and racer then
-        racer.model = { creature = cell.displayId }
+        -- THROUGH THE ROSTER, NOT ONTO THE TABLE.
+        --
+        -- This wrote `racer.model` straight onto the in-memory entry, which is
+        -- the one thing in the whole workshop that did not go through
+        -- AK.Roster:Set -- so every other dial survived a reload and the model
+        -- choice, the one you spend real time browsing for, was gone. Set
+        -- stores the creature id under the racer's id and applies it to the
+        -- live entry, which is what Roster:Apply replays on the next login.
+        AK.Roster:Set("racers", racer.id, "model", cell.displayId)
         -- Every live kart caches its spec, so drop those or the change is
         -- invisible until something else happens to invalidate them.
         if AK.RaceUI and AK.RaceUI.karts then
           for _, kart in ipairs(AK.RaceUI.karts) do AK.Model:Invalidate(kart.model) end
         end
-        AK:Print(("%s now uses creature %d."):format(racer.name, cell.displayId))
+        AK:Print(("%s now uses creature %d. Saved."):format(racer.name, cell.displayId))
         self:RefreshModels()
       end
     end)
@@ -916,8 +960,16 @@ function Workshop:BuildModelPane(pane)
   goBox:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
 
   local here = UI:NewButton(pane, "JUMP TO CURRENT", 164, 22, function()
-    local racer = AK.Tuning:SelectedRacer()
-    self.baseId = (racer and racer.model and racer.model.creature) or 1
+    local target
+    if self.selectedHazard then
+      for _, hazard in ipairs(AK.Roster:Hazards()) do
+        if hazard.name == self.selectedHazard then target = hazard.creature end
+      end
+    else
+      local racer = AK.Tuning:SelectedRacer()
+      target = racer and racer.model and racer.model.creature
+    end
+    self.baseId = target or 1
     self:RefreshModels()
   end)
   here:SetPoint("TOPLEFT", gx + jumpX + 168, -433)
@@ -998,11 +1050,85 @@ function Workshop:BuildModelPane(pane)
   end
 end
 
+--- The MODELS tab's racer picker, rebuilt from the live roster.
+---
+--- Buttons are REUSED, not remade: WoW cannot destroy a frame, so a rebuild
+--- that hides the old row and creates a new one leaks one button per racer per
+--- rebuild, and this rebuilds on every visit to the tab.
+function Workshop:RebuildModelList()
+  if not self.modelListHolder then return end
+  for index, racer in ipairs(AK.Racers) do
+    local entry = self.racerButtons[index]
+    if not entry then
+      local button = UI:NewButton(self.modelListHolder, "", 132, 22, function()
+        AK.db.selection.racer = self.racerButtons[index].id
+        self.selectedHazard = nil
+        self:RefreshModels()
+      end)
+      button:SetPoint("TOPLEFT", 0, -(index - 1) * 25)
+      entry = { button = button }
+      self.racerButtons[index] = entry
+    end
+    entry.id = racer.id
+    entry.button.label:SetText(racer.tag or racer.name)
+    entry.button:Show()
+  end
+  for index = #AK.Racers + 1, #self.racerButtons do
+    self.racerButtons[index].button:Hide()
+    self.racerButtons[index].id = nil
+  end
+  self.modelListHolder:SetHeight(math.max(1, #AK.Racers * 25))
+
+  local hazards = AK.Roster:Hazards()
+  for index, hazard in ipairs(hazards) do
+    local button = self.hazardButtons[index]
+    if not button then
+      button = UI:NewButton(self.hazardListHolder, "", 132, 22, function()
+        self.selectedHazard = self.hazardButtons[index].name
+        self:RefreshModels()
+      end)
+      button:SetPoint("TOPLEFT", 0, -(index - 1) * 25)
+      self.hazardButtons[index] = button
+    end
+    button.name = hazard.name
+    -- A hazard with no model is the one you most need to find in this list.
+    button.label:SetText(hazard.creature and hazard.name or (hazard.name .. "  --"))
+    button:Show()
+  end
+  for index = #hazards + 1, #self.hazardButtons do
+    self.hazardButtons[index]:Hide()
+    self.hazardButtons[index].name = nil
+  end
+  self.hazardListHolder:SetHeight(math.max(1, #hazards * 25))
+
+  -- The gallery, its paging row, the note and the seat block reach about -540;
+  -- the picker column beside them is now two lists deep, and a pane that does
+  -- not know it has grown simply clips the bottom of the second one.
+  if self.PaneHeight then
+    local column = -46 - #AK.Racers * 25 - 40 - #hazards * 25 - 40
+    self:PaneHeight("MODELS", math.min(-540, column))
+  end
+end
+
 function Workshop:RefreshModels()
   if not self.cells then return end
+  self:RebuildModelList()
   local racer = AK.Tuning:SelectedRacer()
-  self.baseId = self.baseId or (racer and racer.model and racer.model.creature) or 1
-  if racer then
+  -- WHAT A CLICK IN THE GALLERY WILL CHANGE. One line, because getting this
+  -- wrong means handing a racer's model to a lava vent.
+  local hazardName, hazardCreature = self.selectedHazard, nil
+  if hazardName then
+    for _, hazard in ipairs(AK.Roster:Hazards()) do
+      if hazard.name == hazardName then hazardCreature = hazard.creature end
+    end
+  end
+  local currentId = hazardName and hazardCreature
+    or (racer and racer.model and racer.model.creature)
+  self.baseId = self.baseId or currentId or 1
+  if hazardName then
+    self.previewName:SetText(("|cffff9b3dHAZARD|r %s\ncreature %s"):format(
+      hazardName, tostring(hazardCreature or "none yet")))
+  elseif racer then
     self.previewName:SetText(("%s\ncreature %s"):format(racer.name,
       tostring(racer.model and racer.model.creature or "-")))
   end
@@ -1019,7 +1145,7 @@ function Workshop:RefreshModels()
     cell.model:SetPosition(0, 0, -0.35)
     cell.model:SetFacing(0.4)
     cell.label:SetText(tostring(id))
-    local mine = racer and racer.model and racer.model.creature == id
+    local mine = currentId == id
     cell.label:SetTextColor(unpack(mine and AK.COLORS.gold or { .9, .85, .7 }))
     -- Remembered on the cell so OnLeave can put the right colour back rather
     -- than always resetting to unpicked.
@@ -1027,9 +1153,18 @@ function Workshop:RefreshModels()
     cell:SetPlateColor(mine and { 0.40, 0.30, 0.09, 1 } or { 0.05, 0.07, 0.11, 1 })
   end
   for _, entry in ipairs(self.racerButtons or {}) do
-    local selected = entry.id == AK.db.selection.racer
-    entry.button:SetRestStyle(selected and { .13, .22, .25, 1 } or { .06, .09, .14, .95 },
-      selected and AK.COLORS.gold or { .18, .24, .34 })
+    if entry.id then
+      local selected = entry.id == AK.db.selection.racer
+      entry.button:SetRestStyle(selected and { .13, .22, .25, 1 } or { .06, .09, .14, .95 },
+        selected and AK.COLORS.gold or { .18, .24, .34 })
+    end
+  end
+  for _, button in ipairs(self.hazardButtons or {}) do
+    if button.name then
+      local selected = button.name == self.selectedHazard
+      button:SetRestStyle(selected and { .28, .17, .07, 1 } or { .06, .09, .14, .95 },
+        selected and AK.COLORS.gold or { .18, .24, .34 })
+    end
   end
   for key, value in pairs(self.seatRows or {}) do
     value:SetText(("%.2f"):format(racer and racer[key] or 0))

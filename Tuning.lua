@@ -16,6 +16,13 @@ Tuning.defs = {
     hint = "How far back the rider's own camera sits. LOWER makes the rider bigger in the seat.\nThis, not Size, is what fixes a rider who looks small in their kart. Raise it if they are cropped." },
   { key = "modelZ", label = "Height in seat", default = 0.0, step = 0.04, min = -1.5, max = 1.5,
     hint = "Negative sinks him into the kart, positive lifts him out." },
+  -- THE PORTRAIT IS NOT THE SEAT. Rider zoom is framed to fit a whole kart in
+  -- the shot; a character-select card wants a person filling the frame, and
+  -- borrowing the kart's framing is why every racer on that screen was a
+  -- centimetre tall in the middle of an empty card.
+  { key = "portraitZoom", label = "Portrait zoom out", default = 1.15, rev = 12, step = 0.05,
+    min = 0.3, max = 4.0,
+    hint = "How far back the camera sits on a CHOOSE YOUR RACER card and on the setup panel.\nLOWER fills more of the card; raise it if anyone is cropped." },
   -- This multiplies the KART's size, so it is a ratio, not an absolute. A saved
   -- 1.65 therefore made every rider twice as big as the kart they sit in -- no
   -- amount of front-chassis can contain that, and it was the third cause of

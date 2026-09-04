@@ -749,8 +749,12 @@ function Menu:BuildHome()
   self.previewIcon = preview:CreateTexture(nil, "ARTWORK")
   self.previewIcon:SetSize(86, 86)
   self.previewIcon:SetPoint("TOP", 0, -22)
-  -- Seated Baine, three-quarter view, in the slot the flat icon used to hold.
-  self.previewModel = AK.Model:New(preview, 150, 150, -0.5, 1)
+  -- The racer you have chosen, standing, three-quarter view, in the slot the
+  -- flat icon used to hold. Standing for the same reason the cards are: this is
+  -- a portrait of a person, not of someone sitting in a kart, and the seated
+  -- pose at portrait distance is an unreadable hunch.
+  self.previewModel = AK.Model:New(preview, 150, 150, -0.5,
+    AK.Model:PortraitZoom(), nil, AK.MODEL.anim.stand)
   self.previewModel:SetPoint("TOP", 0, -6)
   self.previewTitle = UI:NewText(preview, "", 19, AK.COLORS.gold, "CENTER")
   self.previewTitle:SetPoint("TOP", 0, -158)
@@ -855,23 +859,52 @@ function Menu:BuildMultiplayer(page)
   -- at build time and the four actions each rebuilt the whole page to update
   -- it -- which is why REFRESH LOBBIES had to wait a third of a second and then
   -- reconstruct everything. The page is kept now, so this is a refresh.
+  --- WHO IS ON THE GRID, BY NAME.
+  ---
+  --- "3 racers ready" is the wrong readout for the one screen where the whole
+  --- question is whether your friends got in. Names, sorted so the list does
+  --- not reshuffle itself every time somebody joins, with the local player
+  --- marked -- and capped, because a full raid lobby would otherwise run the
+  --- list off the bottom of the panel.
+  local function rosterLines(roster)
+    local names = {}
+    for name in pairs(roster or {}) do names[#names + 1] = name end
+    table.sort(names)
+    local me, lines = AK.Net:PlayerName(), {}
+    for index, name in ipairs(names) do
+      if index > 6 then
+        lines[#lines + 1] = ("...and %d more"):format(#names - 6)
+        break
+      end
+      -- Realm suffixes make every line the same length and unreadable.
+      local short = name:match("^([^-]+)") or name
+      lines[#lines + 1] = name == me
+        and ("|cff%s%s (you)|r"):format(AK:ColorHex(AK.COLORS.gold), short)
+        or ("  " .. short)
+    end
+    if #lines == 0 then lines[1] = "  nobody yet" end
+    return table.concat(lines, "\n"), #names
+  end
+
   function page:akRefresh()
     local own = AK.Net.lobby
     local found = AK.Net.availableLobby
     if own then
-      local count = 0
-      for _ in pairs(own.roster) do count = count + 1 end
-      lobbyText:SetText(("Hosting |cff%s%s|r\n%d racer%s ready\nTrack: %s"):format(
-        AK:ColorHex(AK.COLORS.lime), own.id, count, count == 1 and "" or "s",
-        AK:GetTrack(own.track).name))
+      local list, count = rosterLines(own.roster)
+      lobbyText:SetText(("|cff%sHOSTING|r  --  %s\n%d of %d on the grid\n\n%s"):format(
+        AK:ColorHex(AK.COLORS.lime), AK:GetTrack(own.track).name,
+        count, AK.MAX_RACERS, list))
     elseif found then
-      local count = 0
-      for _ in pairs(found.roster or {}) do count = count + 1 end
-      lobbyText:SetText(("Lobby found\nHost: %s\nTrack: %s\n%d racer%s announced"):format(
-        found.host, AK:GetTrack(found.track).name, count, count == 1 and "" or "s"))
+      local list, count = rosterLines(found.roster)
+      local joined = found.roster and found.roster[AK.Net:PlayerName()]
+      lobbyText:SetText(("%s\nHost: %s  --  %s\n%d of %d on the grid\n\n%s"):format(
+        joined and ("|cff" .. AK:ColorHex(AK.COLORS.lime) .. "YOU ARE IN|r")
+          or ("|cff" .. AK:ColorHex(AK.COLORS.gold) .. "LOBBY FOUND|r"),
+        found.host:match("^([^-]+)") or found.host,
+        AK:GetTrack(found.track).name, count, AK.MAX_RACERS, list))
     else
       lobbyText:SetText(
-        "No lobby announced yet.\nHave a friend open one, then revisit this screen.")
+        "No lobby announced yet.\nOpen one yourself, or press REFRESH LOBBIES\nonce a friend has opened theirs.")
     end
   end
   local note = UI:NewText(panel, "Multiplayer fills empty grid spots with AI racers. Results and unlocks are saved locally for every participant.", 13, AK.COLORS.muted, "CENTER")
@@ -885,6 +918,10 @@ function Menu:UpdateSummary()
   local track = AK:GetTrack(AK.db.selection.track)
   self.previewIcon:SetTexture(racer.icon)
   AK.Model:SetSpec(self.previewModel, racer.model)
+  -- Re-read every visit: the portrait dial is live in the workshop, and the
+  -- racer's own scale decides whether a gnome or a tauren fills the slot.
+  self.previewModel.akZoom = AK.Model:PortraitZoom()
+  self.previewModel.akSeatScale = racer.seatScale or 1
   AK.Model:Reframe(self.previewModel)
   self.previewModel:Show()
   self.previewIcon:Hide()
@@ -981,16 +1018,26 @@ function Menu:BuildSelection(page, kind)
   -- height cannot change, so adding an eighth track re-flows instead of
   -- spilling.
   local MARGIN, TOP, GAP, BOTTOM, MIN_CARD, MAX_CARD = 42, 82, 18, 22, 150, 210
+  -- What a racer card's text needs under the portrait: a name that may wrap to
+  -- two lines at 14pt, the gap, two short stat lines at 11pt, and a margin.
+  -- The portrait gets everything else, so adding a twelfth racer shrinks the
+  -- picture rather than pushing the words off the bottom of the card.
+  local RACER_TEXT = 92
   local availableW, availableH = 960 - MARGIN * 2, 520 - TOP - BOTTOM
-  -- RACERS DO NOT GROW COLUMNS. Eleven of them pushed the grid to five, which
-  -- is a 160x126 card -- and the racer card stacks a 78px model, a name, a
-  -- race, two stat lines, a blank and a quip into it. Rendered (SCREEN=racers
-  -- in Art/preview-ui.js) that overflowed by ONE HUNDRED AND TWENTY-TWO PIXELS
-  -- on a card a hundred and twenty-six tall: every card's text ran straight
-  -- through the row beneath it and the bottom row ran off the panel. Four
-  -- columns is what every racer's name fits on in one line, so it is fixed
-  -- there and the CARD was cut down to fit instead.
-  local columns = kind == "racer" and 4 or 3
+  -- RACERS GO WIDE, BECAUSE A CHARACTER SELECT IS A WALL OF FACES.
+  --
+  -- Eleven racers at four columns is three rows, and three rows of a 416px
+  -- space is a card ONE HUNDRED AND TWENTY-SIX pixels tall. Everything else on
+  -- this screen fitted -- but the thing a racer card is actually for did not:
+  -- the portrait got 64 of those pixels and the racer inside it was a
+  -- centimetre tall, so the screen whose entire job is "who do you want to be"
+  -- could not tell a tauren from a gnome.
+  --
+  -- Six columns is two rows, and two rows is a 131x199 card -- the tall tile
+  -- every kart game's character select has used since the N64. The name wraps
+  -- to two lines at that width, which is fine on a tall card and was the only
+  -- reason four was ever chosen.
+  local columns = kind == "racer" and 6 or 3
   local function rowsFor(n) return math.ceil(#entries / n) end
   local function heightFor(n)
     local rows = rowsFor(n)
@@ -1014,6 +1061,8 @@ function Menu:BuildSelection(page, kind)
   -- Whatever height that leaves over goes above and below the grid, so a short
   -- grid sits in the middle of the panel instead of hanging from its top edge.
   local rows = rowsFor(columns)
+  local RACER_PORTRAIT = math.max(32,
+    math.min(cardWidth - 14, cardHeight - RACER_TEXT - 6))
   local used = rows * cardHeight + GAP * (rows - 1)
   local top = TOP + math.max(0, math.floor((availableH - used) / 2))
 
@@ -1059,10 +1108,27 @@ function Menu:BuildSelection(page, kind)
       end
     end
     if kind == "racer" then
-      -- 64, not 78: the name sits at 68 and a 78px model ran underneath it.
-      local model = AK.Model:New(card, 64, 64, -0.6, 1, entry.model)
-      model:SetPoint("TOP", 0, -2)
+      -- A CHARACTER-SELECT CARD IS A PICTURE OF THE CHARACTER.
+      --
+      -- This was a 64px seated model at the top of a 205x210 card: a hunched
+      -- figure a couple of centimetres tall with a hundred and ten pixels of
+      -- bare plate under it, on the screen whose entire job is "who do you want
+      -- to be". You could not tell a tauren from a gnome. The portrait now
+      -- takes the whole upper card and the racer STANDS in it -- the seated
+      -- pose belongs in a kart, and reads as a shape rather than a person from
+      -- a fixed portrait camera.
+      local model = AK.Model:New(card, RACER_PORTRAIT, RACER_PORTRAIT, -0.45,
+        AK.Model:PortraitZoom(), entry.model, AK.MODEL.anim.stand)
+      model:SetPoint("TOP", 0, -6)
+      -- The racer's own scale still applies, so a gnome and a tauren fill the
+      -- same card -- but not their SEAT height, which is a nudge for sitting in
+      -- a kart and has nothing to say about standing in a portrait.
+      model.akSeatScale = entry.seatScale or 1
+      AK.Model:Reframe(model)
       icon:Hide()
+      icon:SetSize(72, 72)
+      icon:ClearAllPoints()
+      icon:SetPoint("TOP", 0, -RACER_PORTRAIT * 0.5 + 36)
       cards[index].model, cards[index].icon = model, icon
     end
     local name = UI:NewText(card, entry.name, kind == "racer" and 14 or 16,
@@ -1072,7 +1138,7 @@ function Menu:BuildSelection(page, kind)
     -- icon, so the name starts a little lower on those; the racer cards carry
     -- a model and are the shortest, so theirs starts higher still.
     local nameTop = (kind == "track" and 68)
-      or (kind == "racer" and 68)
+      or (kind == "racer" and (RACER_PORTRAIT + 8))
       or (kind == "cup" and 58)
       or (kind == "kart" and 84) or 72
     name:SetPoint("TOPLEFT", 7, -nameTop)
@@ -1094,8 +1160,18 @@ function Menu:BuildSelection(page, kind)
     -- 11pt on a racer card: at 12 the four-stat line is 190px wide against a
     -- 187px card and wraps to a second line the card has no room for.
     local detail = UI:NewText(card, "", kind == "racer" and 11 or 12, AK.COLORS.muted, "CENTER")
-    detail:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 2, -7)
-    detail:SetPoint("TOPRIGHT", name, "BOTTOMRIGHT", -2, -7)
+    if kind == "racer" then
+      -- PINNED TO THE FLOOR, not flowed from the name. Six of the eleven names
+      -- fit on one line at this width and five wrap to two, so a stat block
+      -- hanging off the name's bottom edge sat at two different heights across
+      -- the grid -- a ragged row of numbers that reads as a layout accident.
+      -- Every card's stats are on the same line now, whatever the name did.
+      detail:SetPoint("BOTTOMLEFT", 2, 9)
+      detail:SetPoint("BOTTOMRIGHT", -2, 9)
+    else
+      detail:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 2, -7)
+      detail:SetPoint("TOPRIGHT", name, "BOTTOMRIGHT", -2, -7)
+    end
     if kind == "racer" then
       -- ONE LINE. The race, two stat lines, a blank and the quip is five lines
       -- of text under a model on a 126px card, and it did not fit by a factor
@@ -1103,7 +1179,11 @@ function Menu:BuildSelection(page, kind)
       -- have actually chosen is standing and there is room to read it; the
       -- rest of the stats are on the bars there too. What a card in a grid of
       -- eleven has to answer is "who is this and what are they good at".
-      detail:SetText(("SPD %d  ACC %d  HND %d  DRF %d"):format(
+      -- TWO SHORT LINES, not one wide one. "SPD 6  ACC 5  HND 6  DRF 6" is
+      -- about 155px at 11pt and the card is 131 wide, so it wrapped wherever
+      -- the client felt like -- usually leaving a single orphaned "DRF 6" on
+      -- the second line. Broken deliberately down the middle instead.
+      detail:SetText(("SPD %d   ACC %d\nHND %d   DRF %d"):format(
         entry.speed, entry.acceleration, entry.handling, entry.drift))
     elseif kind == "kart" then
       detail:SetText(("%s\nSPD %d  ACC %d  HND %d\nWEIGHT %d  DRIFT %d"):format(entry.description, entry.speed, entry.acceleration, entry.handling, entry.weight, entry.drift))

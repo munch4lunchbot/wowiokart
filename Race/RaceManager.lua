@@ -988,10 +988,28 @@ function Race:UpdatePositions(race)
   -- the pace being run, and because seconds are the unit the player actually
   -- experiences. Item weighting, slipstream and the photo finish all want this
   -- same number, so it is computed once here rather than three times badly.
-  for index, vehicle in ipairs(ordered) do
+  --
+  -- MEASURED DOWN THE ROAD, NOT DOWN THE STANDINGS. In a race those are the
+  -- same list and this costs nothing. In an arena they are not: the standings
+  -- are who has balloons left, so "the vehicle above me in the table" is
+  -- whoever is winning, not whoever is in front of my bumper -- and every
+  -- consumer of these gaps, item weighting included, was being handed the
+  -- distance between two karts that had nothing to do with each other.
+  local byRoad = ordered
+  if race.battle then
+    byRoad = {}
+    for index, vehicle in ipairs(ordered) do byRoad[index] = vehicle end
+    table.sort(byRoad, function(a, b)
+      local aAt = a.lapProgress or a.distance
+      local bAt = b.lapProgress or b.distance
+      if aAt ~= bAt then return aAt > bAt end
+      return tostring(a.networkId) < tostring(b.networkId)
+    end)
+  end
+  for index, vehicle in ipairs(byRoad) do
     local pace = math.max(8, vehicle.speed or 0)
     local at = vehicle.lapProgress or vehicle.distance
-    local ahead, behind = ordered[index - 1], ordered[index + 1]
+    local ahead, behind = byRoad[index - 1], byRoad[index + 1]
     vehicle.gapAhead = ahead
       and math.abs((ahead.lapProgress or ahead.distance) - at) / pace or nil
     vehicle.gapBehind = behind

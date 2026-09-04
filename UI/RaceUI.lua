@@ -96,6 +96,10 @@ local MIN_TEXEL = 18
 local BOOST_FOV = 0.075
 local SPECTATOR_SPACING = 42
 local SPECTATOR_SLOTS = 6
+--- What the crowd is doing. Resolved lazily -- Constants and Data\Models load
+--- before this file, but reading them at the top of it is still an ordering
+--- dependency nobody should have to remember when moving a file in the .toc.
+local CROWD_POSES
 local PARTICLES = 110
 local TREES = 44
 
@@ -878,12 +882,26 @@ function RaceUI:Build()
   self.finish.label:SetShadowColor(0, 0, 0, 1)
   self.finish.label:SetShadowOffset(1, -1)
 
-  -- Roadside crowd. They are all Baine too, because of course they are.
+  -- ROADSIDE CROWD.
+  --
+  -- Every one of them used to be Baine, sitting down -- the same seated model
+  -- the karts use, the same creature, six of them, all the way round every
+  -- circuit of every track. The joke was over some time before the third lap.
+  --
+  -- The crowd is drawn from the racer roster instead. Two reasons, and the
+  -- second is the load-bearing one: it is thematic (the drivers who are not in
+  -- this race came to watch), and every id in it is a creature the game already
+  -- renders somewhere, so the crowd cannot be a row of blanks the way a guessed
+  -- list of npc ids would be. Each SEAT keeps one creature for the whole race
+  -- -- a model reload costs a stutter, and the rolling window would otherwise
+  -- hand every seat a new one every forty-two metres -- while the POSE varies
+  -- by position, which is free, so the same face is not doing the same thing at
+  -- every post down the road.
   self.spectators = {}
   for i = 1, SPECTATOR_SLOTS do
     local seat = CreateFrame("Frame", nil, frame)
     seat:SetSize(60, 60)
-    seat.model = AK.Model:New(seat, 60, 60, 0, 1)
+    seat.model = AK.Model:New(seat, 60, 60, 0, 1, nil, AK.MODEL.anim.cheer)
     seat.model:SetAllPoints()
     self.spectators[i] = seat
   end
@@ -1950,7 +1968,39 @@ function RaceUI:Show(race)
   self.notice:SetText("")
   self.countdown:SetText("")
   self:BuildMinimapRoute(race.track)
+  self:SeatTheCrowd(race)
   self.frame:Show()
+end
+
+--- Hand each spectator seat a face, once per race.
+---
+--- Racers who are NOT on this grid first -- the roster is eleven and a grid is
+--- eight, so on most races there are people to spare and the ones watching are
+--- the ones who are not driving. When the grid is full enough that there are
+--- not, it wraps back into the whole roster rather than leaving empty seats.
+function RaceUI:SeatTheCrowd(race)
+  if not self.spectators then return end
+  local racing = {}
+  for _, vehicle in ipairs(race.vehicles or {}) do
+    if vehicle.racer then racing[vehicle.racer.id] = true end
+  end
+  local pool = {}
+  for _, racer in ipairs(AK.Racers) do
+    if not racing[racer.id] and racer.model then pool[#pool + 1] = racer end
+  end
+  if #pool < SPECTATOR_SLOTS then
+    for _, racer in ipairs(AK.Racers) do
+      if racer.model then pool[#pool + 1] = racer end
+    end
+  end
+  if #pool == 0 then return end
+  for slot, seat in ipairs(self.spectators) do
+    local racer = pool[(slot - 1) % #pool + 1]
+    AK.Model:SetSpec(seat.model, racer.model)
+    -- Their own scale, so a gnome in the crowd is a gnome and not a tauren.
+    seat.model.akSeatScale = racer.seatScale or 1
+    seat.model.akSeatZ = 0
+  end
 end
 
 function RaceUI:Hide()
@@ -3040,6 +3090,10 @@ end
 --- rolling window ahead of the camera so six models cover the whole track.
 function RaceUI:RenderSpectators(race, camX, camZ)
   local tuning = self.T
+  CROWD_POSES = CROWD_POSES or {
+    AK.MODEL.anim.cheer, AK.MODEL.anim.wave,
+    AK.MODEL.anim.dance, AK.MODEL.anim.talk,
+  }
   -- Skip entirely in attract mode: model budget is reserved for the menu.
   if AK.db.settings.reducedEffects or self.suppressModels then
     for _, seat in ipairs(self.spectators) do setShown(seat, false) end
@@ -3069,6 +3123,14 @@ function RaceUI:RenderSpectators(race, camX, camZ)
       seat.model.akZoom = tuning.specZoom / math.max(0.01, tuning.modelZoom)
       AK.Model:Reframe(seat.model)
       seat.model:SetFacing(side > 0 and -1.35 or 1.35)
+      -- One of four things, decided by WHERE this post is rather than by which
+      -- seat frame happens to be drawing it, so a given spot on the road always
+      -- has the same person doing the same thing however you approach it.
+      local pose = CROWD_POSES[index % #CROWD_POSES + 1]
+      if seat.model.akPose ~= pose then
+        seat.model.akPose, seat.model.akAnim = pose, pose
+        seat.model:SetAnimation(pose)
+      end
       -- Shown regardless of load state, for the same reason the karts are: a
       -- hidden PlayerModel never streams in, so gating on IsReady kept the
       -- crowd permanently invisible.

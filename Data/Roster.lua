@@ -37,6 +37,7 @@ local function store()
   local saved = AK.db.roster
   for domain in pairs(DOMAINS) do saved[domain] = saved[domain] or {} end
   saved.custom = saved.custom or {}
+  saved.hazards = saved.hazards or {}
   return saved
 end
 
@@ -86,6 +87,14 @@ function Roster:Apply()
         custom = true,
       }
       table.insert(AK.Racers, racer)
+    end
+  end
+
+  for name, creatureID in pairs(saved.hazards or {}) do
+    for _, track in ipairs(AK.Tracks or {}) do
+      for _, plan in ipairs(track.hazardPlan or {}) do
+        if plan.name == name then plan.model = { creature = creatureID } end
+      end
     end
   end
 
@@ -143,6 +152,59 @@ function Roster:InvalidateModels()
       kart.model.akSeatZ, kart.model.akSeatScale, kart.model.akAnim = nil, nil, nil
       AK.Model:Invalidate(kart.model)
     end
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- HAZARD APPEARANCES.
+--
+-- A hazard's model is a creature display id written into the track file, and
+-- five of the twelve hazards never had one -- a mine cart, a lava vent, a
+-- falling rock -- so they drew a raw ability icon on the road instead: a
+-- square, bordered piece of inventory UI sitting in the world. The ones that DO
+-- have an id are only as good as the guess behind it, and an id that resolves
+-- to nothing renders blank and falls back to the same icon.
+--
+-- Guessing display ids from outside a client is exactly the thing this project
+-- has learned not to do, so instead the ids are editable, by eye, in the same
+-- gallery that picks racer models -- and they persist, keyed by the hazard's
+-- NAME so the two Mine Carts on two different circuits stay the same object.
+-- ---------------------------------------------------------------------------
+
+--- Every distinct hazard in the game, by name, with whatever model it has.
+function Roster:Hazards()
+  local seen, out = {}, {}
+  for _, track in ipairs(AK.Tracks or {}) do
+    for _, plan in ipairs(track.hazardPlan or {}) do
+      local name = plan.name
+      if name and not seen[name] then
+        seen[name] = true
+        out[#out + 1] = { name = name, plan = plan,
+          creature = plan.model and plan.model.creature }
+      end
+    end
+  end
+  table.sort(out, function(a, b) return a.name < b.name end)
+  return out
+end
+
+function Roster:SetHazardModel(name, creatureID)
+  local saved = store()
+  saved.hazards = saved.hazards or {}
+  saved.hazards[name] = creatureID
+  -- Applied to every plan of that name across every circuit, and to any race
+  -- already running, so the change is visible without leaving the track.
+  for _, track in ipairs(AK.Tracks or {}) do
+    for _, plan in ipairs(track.hazardPlan or {}) do
+      if plan.name == name then plan.model = { creature = creatureID } end
+    end
+  end
+  local race = AK.Race and AK.Race.current
+  for _, hazard in ipairs(race and race.hazards or {}) do
+    if hazard.name == name then hazard.model = { creature = creatureID } end
+  end
+  if AK.RaceUI and AK.RaceUI.hazardFrames then
+    for _, frame in ipairs(AK.RaceUI.hazardFrames) do AK.Model:Invalidate(frame.model) end
   end
 end
 

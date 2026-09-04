@@ -29,6 +29,20 @@ local function field(values, index, fallback)
   return value
 end
 
+--- THE LOBBY SCREEN IS LIVE, OR IT IS USELESS.
+---
+--- Every readout on PARTY & RAID RACING was refreshed only when the local
+--- player pressed something. So the host opened a lobby, a friend joined, and
+--- the host's screen went on saying "1 racer ready" until they walked out of it
+--- and back in -- and the joiner, whose whole question is "did that work", got
+--- nothing at all. Every handler that moves lobby state calls this.
+function Net:LobbyChanged()
+  local menu = AK.Menu
+  if not (menu and menu.frame and menu.frame:IsShown()) then return end
+  local page = menu.pages and menu.pages.multiplayer
+  if page and page.akRefresh and page:IsShown() then page:akRefresh() end
+end
+
 function Net:PlayerName()
   local name, realm = UnitFullName("player")
   return realm and realm ~= "" and name .. "-" .. realm or name
@@ -74,6 +88,7 @@ function Net:OpenLobby()
   }
   self:Send({ "LOBBY", id, self.lobby.track, localName })
   self:BroadcastRoster()
+  self:LobbyChanged()
   AK:Print("Multiplayer lobby open. Friends can join from /kart > Multiplayer.")
   return true
 end
@@ -88,7 +103,14 @@ function Net:JoinLobby()
     return
   end
   local invite = self.availableLobby
-  self:Send({ "JOIN", invite.id, self:PlayerName(), AK.db.selection.racer, AK.db.selection.kart }, "WHISPER", invite.host)
+  if self:Send({ "JOIN", invite.id, self:PlayerName(), AK.db.selection.racer, AK.db.selection.kart }, "WHISPER", invite.host) then
+    -- SAY SOMETHING. Joining printed nothing, showed nothing and changed
+    -- nothing on screen: the host got "X joined the pit lane" and the person
+    -- who actually pressed the button had no way to tell whether it had
+    -- worked. The confirmation proper arrives when the host's roster comes
+    -- back with this name in it, which the ROSTER handler reports.
+    AK:Print("Asking " .. tostring(invite.host) .. " for a place on the grid...")
+  end
 end
 
 function Net:StartLobbyRace()
@@ -101,13 +123,27 @@ function Net:StartLobbyRace()
   AK.Race:Start("multiplayer", { session = self.lobby.id, host = self:PlayerName(), roster = self.lobby.roster, isHost = true, track = self.lobby.track })
 end
 
+--- THE THROTTLE GOES ON THE WIRE.
+---
+--- This carried left, right, drift and the item press, and nothing else -- so
+--- the host, which is authoritative, drove every remote player with a control
+--- table that had no `accelerate` and no `brake` in it. Physics treats a
+--- missing throttle as "held", so a joiner on the host's machine was
+--- permanently flat out: they could steer and they could drift, and lifting off
+--- or braking did nothing at all. Their own client predicts WITH the throttle
+--- (`throttleAware`), so the moment they lifted, the picture in front of them
+--- and the state the host was actually simulating pulled apart, and the next
+--- snapshot snapped them forward again.
 function Net:SendInput(race)
   if not race.network or race.network.isHost then return end
   self.inputClock = self.inputClock + race.delta
   if self.inputClock < .09 then return end
   self.inputClock = 0
   local c = race.controls
-  self:Send({ "INPUT", race.network.session, self:PlayerName(), c.left and "1" or "0", c.right and "1" or "0", c.drift and "1" or "0", c.itemPulse and "1" or "0" }, "WHISPER", race.network.host)
+  self:Send({ "INPUT", race.network.session, self:PlayerName(),
+    c.left and "1" or "0", c.right and "1" or "0", c.drift and "1" or "0",
+    c.itemPulse and "1" or "0",
+    c.accelerate and "1" or "0", c.brake and "1" or "0" }, "WHISPER", race.network.host)
 end
 
 -- WoW drops an addon message over 255 bytes on the floor, silently. The
@@ -214,10 +250,19 @@ function Net:HandleMessage(message, sender)
     self.availableLobby =
       { id = values[2], track = values[3], host = field(values, 4, sender) }
     if self.availableLobby.host ~= self:PlayerName() then AK:Print("Party race lobby found: " .. AK:GetTrack(values[3]).name .. ". Open /kart to join.") end
+    self:LobbyChanged()
   elseif kind == "ROSTER" and self.availableLobby and self.availableLobby.id == values[2] then
     self.availableLobby.roster = self.availableLobby.roster or {}
+    local mine = values[3] == self:PlayerName()
+    local first = mine and not self.availableLobby.roster[values[3]]
     self.availableLobby.roster[values[3]] =
       { name = values[3], racer = field(values, 4, "you"), kart = field(values, 5, "mechano") }
+    -- The host's roster coming back with your own name on it is the only
+    -- confirmation there is that you are actually in the race.
+    if first then
+      AK:Print("|cff6bf06bYou are on the grid.|r Waiting for the host to start.")
+    end
+    self:LobbyChanged()
   elseif kind == "JOIN" and self.lobby and values[2] == self.lobby.id then
     local name = values[3]
     if name and name ~= self:PlayerName() then
@@ -234,6 +279,7 @@ function Net:HandleMessage(message, sender)
         racer = field(values, 4, "you"), kart = field(values, 5, "mechano") }
       self:BroadcastRoster()
       if isNew then AK:Print(name .. " joined the pit lane.") end
+      self:LobbyChanged()
     end
   elseif kind == "FIND" and self.lobby then
     self:Send({ "LOBBY", self.lobby.id, self.lobby.track, self.lobby.host })
@@ -246,7 +292,19 @@ function Net:HandleMessage(message, sender)
     AK.Race:Start("multiplayer", { session = values[2], host = sender, roster = roster, isHost = false, track = values[3] })
   elseif kind == "INPUT" and AK.Race.current and AK.Race.current.network and AK.Race.current.network.isHost and values[2] == AK.Race.current.network.session then
     local race = AK.Race.current
-    race.remoteInputs[values[3]] = { left = values[4] == "1", right = values[5] == "1", drift = values[6] == "1", itemPulse = values[7] == "1" }
+    -- A packet from a build that predates the throttle fields has nothing in
+    -- slot 8, and the honest answer for it is the old behaviour -- held down --
+    -- rather than a kart that will not move. `throttleAware` is what tells
+    -- Physics to obey the flag at all, so it is only set when the flag is
+    -- really there.
+    local throttled = values[8] ~= nil and values[8] ~= ""
+    race.remoteInputs[values[3]] = {
+      left = values[4] == "1", right = values[5] == "1",
+      drift = values[6] == "1", itemPulse = values[7] == "1",
+      accelerate = (not throttled) or values[8] == "1",
+      brake = values[9] == "1",
+      throttleAware = throttled,
+    }
   elseif kind == "STATE" and AK.Race.current and AK.Race.current.network and values[2] == AK.Race.current.network.session then
     self:ApplySnapshot(AK.Race.current, values[3])
   elseif kind == "FINISH" and AK.Race.current and AK.Race.current.network and values[2] == AK.Race.current.network.session then

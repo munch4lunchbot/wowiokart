@@ -7,8 +7,16 @@ local _, AK = ...
 --   { unit = "player" }      whoever is actually playing
 AK.MODEL = {
   baineID = 36648, -- Baine Bloodhoof
-  -- AnimationData ids: 96 SitGroundDown, 97 SitGround (loop), 98 SitGroundUp.
-  anim = { sitDown = 96, sit = 97, sitUp = 98 },
+  -- AnimationData ids. 96/97/98 are the sit-down, sit-loop and stand-up of the
+  -- ground sit; 0 is the plain idle stand, and the 6x block is the emote set.
+  -- A kart driver sits. A portrait on a character-select card STANDS -- a
+  -- seated figure seen from the fixed portrait camera is a hunched shape you
+  -- cannot identify, which is most of why the racer grid did not tell you who
+  -- anybody was. And a crowd cheers.
+  anim = {
+    sitDown = 96, sit = 97, sitUp = 98,
+    stand = 0, talk = 60, bow = 66, wave = 67, cheer = 68, dance = 69,
+  },
 }
 AK.MODEL.default = { creature = AK.MODEL.baineID }
 
@@ -56,12 +64,15 @@ local function loadSpec(model, spec)
   end
 end
 
---- Point a model frame at a racer's chosen appearance and sit it down.
+--- Point a model frame at a racer's chosen appearance and pose it.
 -- @param facing radians; 0 faces the camera, math.pi shows its back
 -- @param zoom extra multiplier on top of the tuned camera distance
-function Model:Dress(model, facing, zoom, spec)
+-- @param anim an AK.MODEL.anim value; defaults to the seated kart pose
+function Model:Dress(model, facing, zoom, spec, anim)
   model.akFacing = facing or 0
   model.akZoom = zoom or 1
+  -- Remembered as the frame's POSE, so SetSeat and every later reload keep it.
+  if anim then model.akPose, model.akAnim = anim, anim end
   loadSpec(model, spec)
   applyPose(model)
   model:SetScript("OnModelLoaded", function(frame)
@@ -77,7 +88,11 @@ end
 function Model:SetSeat(model, racer)
   local seatZ = racer and racer.seatZ or 0
   local seatScale = racer and racer.seatScale or 1
-  local anim = racer and racer.anim or AK.MODEL.anim.sit
+  -- `akPose` is a pose the FRAME was built with -- a standing portrait, a
+  -- cheering spectator -- and it outranks the seat. Without it this handed
+  -- every model the sit loop the moment a racer was assigned to it, so a card
+  -- that asked to stand sat back down as soon as it knew who it was showing.
+  local anim = model.akPose or (racer and racer.anim) or AK.MODEL.anim.sit
   if model.akSeatZ == seatZ and model.akSeatScale == seatScale and model.akAnim == anim then return end
   model.akSeatZ, model.akSeatScale, model.akAnim = seatZ, seatScale, anim
   model.akAppliedZoom, model.akAppliedZ = nil, nil
@@ -103,11 +118,25 @@ function Model:SetSpec(model, spec)
   applyPose(model)
 end
 
---- Create a seated racer inside `parent`.
-function Model:New(parent, width, height, facing, zoom, spec)
+--- A PORTRAIT'S ZOOM, independent of the kart's.
+---
+--- Every model in the addon was framed off `modelZoom`, which is tuned so a
+--- rider and the kart around them both fit in the shot. A card that shows only
+--- a person inherited that and drew them a fraction of the frame tall. This
+--- converts the portrait dial into the multiplier `akZoom` expects, so both
+--- stay live in the workshop and neither drags the other around.
+function Model:PortraitZoom()
+  local tuning = AK.db and AK.db.tuning
+  local rider = (tuning and tuning.modelZoom) or 2.4
+  local portrait = (tuning and tuning.portraitZoom) or 1.15
+  return portrait / math.max(0.01, rider)
+end
+
+--- Create a posed racer inside `parent`. Seated unless `anim` says otherwise.
+function Model:New(parent, width, height, facing, zoom, spec, anim)
   local model = CreateFrame("PlayerModel", nil, parent)
   model:SetSize(width, height)
-  self:Dress(model, facing, zoom, spec)
+  self:Dress(model, facing, zoom, spec, anim)
   return model
 end
 
@@ -127,7 +156,7 @@ function Model:Reframe(model)
   end
 end
 
---- Preview any creature id in a draggable window, seated, so new racers can be
+--- Preview any creature id in a draggable window, standing, so new racers can be
 --- scouted in-game and pasted into Data\Racers.lua without a reload cycle.
 function AK:PreviewNPC(creatureID)
   local preview = self.npcPreview
@@ -142,7 +171,7 @@ function AK:PreviewNPC(creatureID)
     preview:SetScript("OnDragStart", preview.StartMoving)
     preview:SetScript("OnDragStop", preview.StopMovingOrSizing)
     self.UI:SkinWindow(preview, { 0.045, 0.075, 0.125, 0.96 })
-    preview.model = Model:New(preview, 260, 260, -0.5, 1)
+    preview.model = Model:New(preview, 260, 260, -0.5, 1, nil, AK.MODEL.anim.stand)
     preview.model:SetPoint("TOP", 0, -34)
     preview.label = self.UI:NewText(preview, "", 13, self.COLORS.gold, "CENTER")
     preview.label:SetPoint("TOP", 0, -10)
