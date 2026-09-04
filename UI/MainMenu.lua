@@ -980,7 +980,7 @@ function Menu:BuildSelection(page, kind)
   -- menu. Growing WIDER rather than taller keeps the grid inside a panel whose
   -- height cannot change, so adding an eighth track re-flows instead of
   -- spilling.
-  local MARGIN, TOP, GAP, BOTTOM, MIN_CARD = 42, 82, 18, 22, 150
+  local MARGIN, TOP, GAP, BOTTOM, MIN_CARD, MAX_CARD = 42, 82, 18, 22, 150, 210
   local availableW, availableH = 960 - MARGIN * 2, 520 - TOP - BOTTOM
   -- RACERS DO NOT GROW COLUMNS. Eleven of them pushed the grid to five, which
   -- is a 160x126 card -- and the racer card stacks a 78px model, a name, a
@@ -1000,7 +1000,22 @@ function Menu:BuildSelection(page, kind)
     while columns < 5 and heightFor(columns) < MIN_CARD do columns = columns + 1 end
   end
   local cardWidth = math.floor((availableW - GAP * (columns - 1)) / columns)
-  local cardHeight = heightFor(columns)
+  -- A CARD IS AS TALL AS ITS CONTENTS, NOT AS TALL AS THE PANEL.
+  --
+  -- heightFor divides the whole available height between the rows, which is
+  -- right when there are three or four of them and absurd when there is one:
+  -- the three cup cards came out 270 by FOUR HUNDRED AND SIXTEEN, with their
+  -- text in the top forty per cent and two hundred and thirty pixels of empty
+  -- plate below it -- and the button plate's caps, stretched over that, read as
+  -- dark bands across the top and bottom of every card. The tallest thing any
+  -- of these cards carries is a cup's four circuit names under an icon and a
+  -- title, which comes to about a hundred and eighty.
+  local cardHeight = math.min(heightFor(columns), MAX_CARD)
+  -- Whatever height that leaves over goes above and below the grid, so a short
+  -- grid sits in the middle of the panel instead of hanging from its top edge.
+  local rows = rowsFor(columns)
+  local used = rows * cardHeight + GAP * (rows - 1)
+  local top = TOP + math.max(0, math.floor((availableH - used) / 2))
 
   local cards = {}
   for index, entry in ipairs(entries) do
@@ -1010,16 +1025,38 @@ function Menu:BuildSelection(page, kind)
     end)
     cards[index] = { card = card, entry = entry }
     local col, row = (index - 1) % columns, math.floor((index - 1) / columns)
-    card:SetPoint("TOPLEFT", MARGIN + col * (cardWidth + GAP), -TOP - row * (cardHeight + GAP))
+    card:SetPoint("TOPLEFT", MARGIN + col * (cardWidth + GAP), -top - row * (cardHeight + GAP))
+    -- A KART CARD IS A PICTURE OF A KART. Every card in this grid was given a
+    -- 50px icon regardless of how much room it had: on a 205x199 kart card that
+    -- is a stamp in the middle of an empty top third, with the text crammed
+    -- under it and seventy pixels of bare plate below. The racer cards keep the
+    -- small one -- there it is only the fallback for a model that has not
+    -- streamed, and it has to sit in the model's own 64px slot.
+    local iconSize = kind == "kart" and 68 or 50
     local icon = card:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(50, 50)
-    icon:SetPoint("TOP", 0, -15)
+    icon:SetSize(iconSize, iconSize)
+    icon:SetPoint("TOP", 0, kind == "kart" and -10 or -15)
     icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_Map_01")
     if kind == "track" then
       -- The circuit itself, not a map icon shared with nine other circuits.
       icon:Hide()
       local shape = UI:NewTrackShape(card, entry, 56)
       shape:SetPoint("TOP", 0, -6)
+    end
+    if kind == "cup" then
+      -- THE FOUR CIRCUITS, DRAWN. A cup has no icon of its own, so all three
+      -- fell back to the same generic map -- three identical pictures above
+      -- three different lists, which is worse than no picture at all. The names
+      -- are already underneath; what a shape adds is the shape of the cup: how
+      -- many hairpins, how many long sweeps, whether it is a fast set or a
+      -- technical one, at a glance.
+      icon:Hide()
+      local plan = 44
+      local span = #entry.tracks * plan
+      for slot, trackId in ipairs(entry.tracks) do
+        local shape = UI:NewTrackShape(card, AK:GetTrack(trackId), plan)
+        shape:SetPoint("TOP", -span * 0.5 + plan * (slot - 0.5), -8)
+      end
     end
     if kind == "racer" then
       -- 64, not 78: the name sits at 68 and a 78px model ran underneath it.
@@ -1034,7 +1071,10 @@ function Menu:BuildSelection(page, kind)
     -- The track cards carry a 64px plan view where the others carry a 50px
     -- icon, so the name starts a little lower on those; the racer cards carry
     -- a model and are the shortest, so theirs starts higher still.
-    local nameTop = kind == "track" and 68 or (kind == "racer" and 68 or 72)
+    local nameTop = (kind == "track" and 68)
+      or (kind == "racer" and 68)
+      or (kind == "cup" and 58)
+      or (kind == "kart" and 84) or 72
     name:SetPoint("TOPLEFT", 7, -nameTop)
     name:SetPoint("TOPRIGHT", -7, -nameTop)
     -- A gold card IS the selection. Printing the word "SELECTED" under it as

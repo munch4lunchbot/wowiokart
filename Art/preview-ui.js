@@ -129,6 +129,28 @@ function label(x, y, s, size, colour, align) {
 // the mirror. Compile normalises the layout's TOTAL turn to exactly 2*pi, so
 // whatever a circuit is authored as, its map path closes into a loop. Any
 // mirror that does not do that is drawing a different game.
+//--- Every circuit, parsed out of Data/Tracks.lua. Shared, because the cup
+//--- cards draw the shapes of the four circuits they contain and were otherwise
+//--- going to grow a second copy of this.
+let TRACK_CACHE = null;
+function readTracks() {
+  if (TRACK_CACHE) return TRACK_CACHE;
+  const src = fs.readFileSync(path.join(__dirname, "..", "Data", "Tracks.lua"), "utf8");
+  const out = [];
+  for (const block of src.split(/\n  \{\n    id = "/).slice(1)) {
+    const id = block.slice(0, block.indexOf('"'));
+    const name = (block.match(/name = "([^"]+)"/) || [])[1] || id;
+    const sub = (block.match(/subtitle = "([^"]+)"/) || [])[1] || "";
+    const len = +((block.match(/length = (\d+)/) || [])[1] || 2400);
+    const sweep = +((block.match(/sweep = ([\d.]+)/) || [])[1] || 3);
+    const layout = [...block.slice(block.indexOf("layout = {")).matchAll(
+      /len = ([\d.]+), curve = (-?[\d.]+)/g)].map((m) => [+m[1], +m[2]]);
+    if (layout.length) out.push({ id, name, sub, len, sweep, layout });
+  }
+  TRACK_CACHE = out;
+  return out;
+}
+
 const STEP = 2;
 function planOf(t) {
   const authored = t.layout.reduce((a, p) => a + p[0], 0);
@@ -375,18 +397,7 @@ if (process.env.SCREEN === "tracks") {
   panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);
   label(OX + CW / 2, OY - 12, "CHOOSE YOUR TRACK", 20, GOLD, "center");
 
-  const TRACKS = fs.readFileSync(path.join(__dirname, "..", "Data", "Tracks.lua"), "utf8");
-  const tracks = [];
-  for (const block of TRACKS.split(/\n  \{\n    id = "/).slice(1)) {
-    const id = block.slice(0, block.indexOf('"'));
-    const name = (block.match(/name = "([^"]+)"/) || [])[1] || id;
-    const sub = (block.match(/subtitle = "([^"]+)"/) || [])[1] || "";
-    const len = +((block.match(/length = (\d+)/) || [])[1] || 2400);
-    const sweep = +((block.match(/sweep = ([\d.]+)/) || [])[1] || 3);
-    const layout = [...block.slice(block.indexOf("layout = {")).matchAll(
-      /len = ([\d.]+), curve = (-?[\d.]+)/g)].map((m) => [+m[1], +m[2]]);
-    if (layout.length) tracks.push({ id, name, sub, len, sweep, layout });
-  }
+  const tracks = readTracks();
 
   // Menu:ShowSelection grows the column count until the cards are tall enough,
   // rather than fixing it -- so a preview that hardcodes three columns reports
@@ -475,7 +486,9 @@ if (process.env.SCREEN === "tracks") {
         const id = b.slice(0, b.indexOf('"'));
         const g = (re, d) => { const m = b.match(re); return m ? m[1] : d; };
         const ids = [...(g(/tracks = \{([^}]*)\}/, "")).matchAll(/"(\w+)"/g)].map(m => m[1]);
+        const all = readTracks();
         entries.push({ id, name: g(/name = "([^"]+)"/, id),
+          plans: ids.map(tid => planOf(all.find(t => t.id === tid) || all[0])),
           lines: [ids.length + " races", ...ids.map(trackName)] });
       }
     }
@@ -484,7 +497,7 @@ if (process.env.SCREEN === "tracks") {
     // Mirrors Menu:ShowSelection exactly -- including that it GROWS the column
     // count until the cards clear MIN_CARD, and gives racers a head start of
     // four columns because their cards carry a model rather than an icon.
-    const MARGIN = 42, TOP = 82, BOTTOM = 22, GAP = 18, MIN_CARD = 150;
+    const MARGIN = 42, TOP = 82, BOTTOM = 22, GAP = 18, MIN_CARD = 150, MAX_CARD = 210;
     const availableH = CH - TOP - BOTTOM;
     const rowsFor = n => Math.ceil(entries.length / n);
     const heightFor = n => Math.floor((availableH - GAP * (rowsFor(n) - 1)) / rowsFor(n));
@@ -492,12 +505,16 @@ if (process.env.SCREEN === "tracks") {
     let columns = KIND === "racers" ? 4 : 3;
     if (KIND !== "racers") while (columns < 5 && heightFor(columns) < MIN_CARD) columns++;
     const cardW = Math.floor((CW - MARGIN * 2 - GAP * (columns - 1)) / columns);
-    const cardH = heightFor(columns);
+    // Capped and centred, as Menu:ShowSelection does it.
+    const cardH = Math.min(heightFor(columns), MAX_CARD);
+    const gridRows = rowsFor(columns);
+    const usedH = gridRows * cardH + GAP * (gridRows - 1);
+    const top = TOP + Math.max(0, Math.floor((availableH - usedH) / 2));
 
     let worst = null;
     entries.forEach((e, i) => {
       const col = i % columns, row = Math.floor(i / columns);
-      const x = OX + MARGIN + col * (cardW + GAP), y = OY - 40 + TOP + row * (cardH + GAP);
+      const x = OX + MARGIN + col * (cardW + GAP), y = OY - 40 + top + row * (cardH + GAP);
       const chosen = i === 0;
       slice(tex.btn, x, y, cardW, cardH, chosen ? [0.44, 0.33, 0.09] : REST, 1);
       if (chosen && tex.chevron) blitUV(tex.chevron, x + 9, y + 9, 12, 16, 0, 1, 0, 1, LIT, 1);
@@ -505,11 +522,31 @@ if (process.env.SCREEN === "tracks") {
         // The model frame's footprint, so its collision with the name shows.
         for (let dy = 0; dy < 64; dy++) for (let dx = 0; dx < 64; dx++)
           blend(x + cardW / 2 - 32 + dx, y + 2 + dy, 0.30, 0.36, 0.46, 0.30);
+      } else if (KIND === "cups") {
+        // The four circuits, drawn small in a row -- see Menu:ShowSelection.
+        const plan = 44, span = e.plans.length * plan;
+        e.plans.forEach((path, slot) => {
+          const cx = x + cardW / 2 - span / 2 + plan * (slot + 0.5);
+          const cy = y + 8 + plan / 2, radius = plan * 0.42;
+          for (let n = 0; n < 56; n++) {
+            const [px, py] = path[Math.floor(n / 56 * path.length)];
+            const sx = Math.round(cx + px * radius * 2);
+            const sy = Math.round(cy - py * radius * 2);
+            const first = n === 0;
+            const col = first ? [1, 0.82, 0.25] : [0.42, 0.56, 0.72];
+            const size = first ? 4 : 2;
+            for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++)
+              blend(sx + dx - (size >> 1), sy + dy - (size >> 1), col[0], col[1], col[2], 0.95);
+          }
+        });
       } else {
-        for (let dy = 0; dy < 50; dy++) for (let dx = 0; dx < 50; dx++)
-          blend(x + cardW / 2 - 25 + dx, y + 15 + dy, 0.30, 0.36, 0.46, 0.30);
+        // The kart icon is 68 where the others are 50; see Menu:ShowSelection.
+        const size = KIND === "karts" ? 68 : 50, top = KIND === "karts" ? 10 : 15;
+        for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++)
+          blend(x + cardW / 2 - size / 2 + dx, y + top + dy, 0.30, 0.36, 0.46, 0.30);
       }
-      const nameTop = KIND === "racers" ? 68 : 72;
+      const nameTop = KIND === "racers" ? 68
+        : KIND === "cups" ? 58 : KIND === "karts" ? 84 : 72;
       const nameSize = KIND === "racers" ? 14 : 16;
       let ny = labelWrapped(x + cardW / 2, y + nameTop, e.name, nameSize,
         chosen ? LIT : GOLD, cardW - 14);
