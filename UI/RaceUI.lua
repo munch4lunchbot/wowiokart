@@ -138,6 +138,29 @@ local DRIFT_STAGES = {
 -- those get the corners, the centre and the size. The clock and the map are
 -- reference material you consult between corners, so they get the far corners.
 -- Everything used to live in one 620x73 strip of eight readouts across the top.
+-- THE PAUSE PANEL, in one place.
+--
+-- The panel used to be a fixed 320x302 with every control at a hand-measured
+-- offset, and two of those controls come and go: RESTART is meaningless in a
+-- race other people are in, and the developer row is off unless the player has
+-- asked for it. Hiding a button left a 46px hole in the middle of the stack and
+-- a 78px void under it -- a menu with gaps in it reads as broken, not as
+-- configurable. The stack is measured at show time now and the panel is exactly
+-- as tall as what is on it.
+--- Where the big number in the lap panel starts. On a circuit the word beside
+--- it is "LAP" and it starts at 52; in an arena the word is "BALLOONS", which
+--- is four times as wide, so the number moves out of its way.
+local LAP_NUMBER_X, BALLOON_NUMBER_X = 52, 100
+local PAUSE_W = 320
+local PAUSE_WHERE_Y = 54       -- top of the circuit's name
+local PAUSE_COUNT_Y = 71       -- top of the lap (and heat) count under it
+local PAUSE_FIRST_Y = 96       -- top of the first big button
+local PAUSE_BTN_W, PAUSE_BTN_H = 240, 40
+local PAUSE_BTN_GAP = 6
+local PAUSE_TOOL_W, PAUSE_TOOL_H = 76, 28
+local PAUSE_TOOL_GAP = 16      -- extra air above the developer row
+local PAUSE_BOTTOM = 22
+
 local HUD_DESIGN_W, HUD_DESIGN_H = 1600, 900
 local HUD = {
   lap      = { point = "TOPLEFT",     x =   26, y =  -22, w = 196, h =  74 },
@@ -931,11 +954,19 @@ function RaceUI:Build()
   local lapPanel = UI:NewPanel(hud, HUD.lap.w, HUD.lap.h, HUD_PANEL)
   lapPanel:SetPoint(HUD.lap.point, HUD.lap.x, HUD.lap.y)
   self.headerPanel = lapPanel
-  UI:NewText(lapPanel, "LAP", 12, AK.COLORS.gold, "LEFT"):SetPoint("TOPLEFT", 14, -9)
+  -- The word is LAP on a circuit and BALLOONS in an arena. Battle mode had no
+  -- readout of its own at all: this panel said "LAP 1 / 999" -- the sentinel
+  -- lap count that stops a battle ever ending by distance, printed on the HUD
+  -- -- while the one number the whole mode turns on, how many balloons you have
+  -- left, was announced in a banner for two seconds and then gone forever.
+  self.lapWord = UI:NewText(lapPanel, "LAP", 12, AK.COLORS.gold, "LEFT")
+  self.lapWord:SetPoint("TOPLEFT", 14, -9)
   self.lap = UI:NewText(lapPanel, "1 / 3", 27, { .95, .96, 1 }, "LEFT")
-  self.lap:SetPoint("TOPLEFT", 52, -4)
+  self.lap:SetPoint("TOPLEFT", LAP_NUMBER_X, -4)
   -- One pip per lap, filling as you complete them: the count in the abstract is
   -- a number to read, the pips are a progress bar you take in without reading.
+  -- In a battle they are the balloons themselves, and they empty rather than
+  -- fill, which is the same glance answering a different question.
   self.lapPips = {}
   for i = 1, 5 do
     local pip = makeTexture(lapPanel, "OVERLAY", { .25, .32, .42, 1 })
@@ -1476,29 +1507,56 @@ function RaceUI:Build()
   self.pause = pause
   local dim = makeTexture(pause, "BACKGROUND", { 0, 0, 0, .6 })
   dim:SetAllPoints()
-  local pausePanel = UI:NewPanel(pause, 320, 302, { .045, .075, .125, .98 })
+  local pausePanel = UI:NewPanel(pause, PAUSE_W, 302, { .045, .075, .125, .98 })
   pausePanel:SetPoint("CENTER", 0, -30)
+  self.pausePanel = pausePanel
   local pauseTitle = UI:NewText(pausePanel, "PAUSED", 28, AK.COLORS.gold, "CENTER")
   pauseTitle:SetPoint("TOP", 0, -22)
-  -- Which race you paused, so the panel is not a floating word.
-  self.pauseWhere = UI:NewText(pausePanel, "", 12, AK.COLORS.muted, "CENTER")
-  self.pauseWhere:SetPoint("TOP", 0, -54)
-  local resume = UI:NewButton(pausePanel, "RESUME", 240, 40, function() AK.Race:TogglePause() end)
-  resume:SetPoint("TOP", 0, -78)
+  -- WHICH RACE YOU PAUSED, so the panel is not a floating word -- on two lines,
+  -- because it did not fit on one. "NETHERSTORM TURBO CIRCUIT -- LAP 2 OF 3" is
+  -- already within a few pixels of the panel's inside width at 12pt, and a
+  -- Grand Prix adds "RACE 1 OF 4" to it. The name gets the first line and the
+  -- counting gets the second, quieter, which is the right shape for it anyway.
+  self.pauseWhere = UI:NewText(pausePanel, "", 12, { .84, .90, 1 }, "CENTER")
+  self.pauseWhere:SetPoint("TOP", 0, -PAUSE_WHERE_Y)
+  self.pauseWhere:SetWidth(PAUSE_W - 24)
+  self.pauseCount = UI:NewText(pausePanel, "", 11, AK.COLORS.muted, "CENTER")
+  self.pauseCount:SetPoint("TOP", 0, -PAUSE_COUNT_Y)
+  self.pauseCount:SetWidth(PAUSE_W - 24)
+  self.pauseResume = UI:NewButton(pausePanel, "RESUME", PAUSE_BTN_W, PAUSE_BTN_H,
+    function() AK.Race:TogglePause() end)
   -- RESTART. Every kart game has this and ours did not: a bad start or a shell
   -- on the last corner meant quitting to the menu and rebuilding the entire
   -- selection to try again.
-  self.pauseRestart = UI:NewButton(pausePanel, "RESTART RACE", 240, 40,
+  self.pauseRestart = UI:NewButton(pausePanel, "RESTART RACE", PAUSE_BTN_W, PAUSE_BTN_H,
     function() AK.Race:Restart() end)
-  self.pauseRestart:SetPoint("TOP", 0, -124)
   self.pauseRestart.tooltip = "Run this circuit again from the lights, with the same grid."
-  local abandon = UI:NewButton(pausePanel, "QUIT TO MENU", 240, 40, function() AK.Race:Stop(true) end)
-  abandon:SetPoint("TOP", 0, -170)
-  abandon:SetRestStyle({ .28, .09, .09, .95 }, AK.COLORS.danger)
-  -- The race tools, rehomed off the racing screen. They can only be judged
-  -- while the race frame is up -- the frame swallows keyboard input, so there
-  -- is no chat line to type a slash command into -- but that is an argument for
-  -- them being reachable, not for them sitting on the track for the whole race.
+  -- LEAVING. A single race is one click away from the menu, because losing it
+  -- costs a lap time. A Grand Prix is four races and a points table, and one
+  -- misplaced click used to bin the lot with no warning at all -- so the cup
+  -- arms first and quits second, and says on its face what it is about to
+  -- throw away.
+  self.pauseQuit = UI:NewButton(pausePanel, "QUIT TO MENU", PAUSE_BTN_W, PAUSE_BTN_H, function(button)
+    if button.armed then return AK.Race:Stop(true) end
+    if button.needsArming then
+      button.armed = true
+      button.label:SetText("REALLY ABANDON THE CUP?")
+      button:SetRestStyle({ .58, .12, .10, .98 }, AK.COLORS.danger)
+      return
+    end
+    AK.Race:Stop(true)
+  end)
+  self.pauseQuit:SetRestStyle({ .28, .09, .09, .95 }, AK.COLORS.danger)
+  -- The big three, in the order they are stacked. Built here rather than
+  -- assembled at layout time so the stack is one list with no holes in it.
+  self.pauseStack = { self.pauseResume, self.pauseRestart, self.pauseQuit }
+  -- The race tools. They were on the racing screen -- three developer buttons
+  -- stacked down the right edge for the whole race -- then here, as a row of
+  -- peers beneath QUIT TO MENU. Neither is right: a pause menu that offers a
+  -- telemetry dump next to RESUME is not a game's pause menu. They are behind
+  -- the developer-tools setting now, off by default, and the shipped panel is
+  -- the three choices a kart game's pause menu has ever had.
+  self.pauseTools = {}
   local tools = {
     { "TUNE", function() AK.Workshop:Toggle() end,
       "Camera, feel, audio and difficulty, live, while the race runs." },
@@ -1508,11 +1566,12 @@ function RaceUI:Build()
       "Live AI telemetry: drifts, braking, mistakes and catch-up assistance, per opponent." },
   }
   for i, entry in ipairs(tools) do
-    local tool = UI:NewButton(pausePanel, entry[1], 76, 28, entry[2])
-    tool:SetPoint("TOP", (i - 2) * 80, -224)
+    local tool = UI:NewButton(pausePanel, entry[1], PAUSE_TOOL_W, PAUSE_TOOL_H, entry[2])
+    tool.dx = (i - 2) * (PAUSE_TOOL_W + 4)
+    tool:SetPoint("TOP", tool.dx, 0)
     tool.tooltip = entry[3]
+    self.pauseTools[i] = tool
   end
-
   self:LayoutHud()
   -- The race frame is pinned to UIParent, so this fires whenever the client is
   -- resized or the master UI scale changes -- the two things that used to leave
@@ -1574,6 +1633,16 @@ local SKYLINE = {
   icecrown      = { mtn = { h = .20, tint = { .30, .34, .48 }, a = .95 },
                     hill = { h = .07, tint = { .22, .26, .38 } },
                     treeArt = "spire.tga", treeTint = { .20, .23, .32 } },
+  -- THE TWO BATTLE ARENAS, which had no entry here either -- they are in their
+  -- own data file and the checks that found the three missing circuits above
+  -- only ever read Data/Tracks.lua. A dwarven fighting pit and a flooded cave
+  -- were both ringed by the default wall of forest green.
+  anvilmar      = { mtn = { h = .21, tint = { .40, .28, .20 }, a = 1.0 },
+                    hill = { h = .09, tint = { .32, .22, .15 } },
+                    treeArt = "spire.tga", treeTint = { .52, .40, .28 } },
+  grotto        = { mtn = { h = .17, tint = { .12, .20, .26 }, a = 1.0 },
+                    hill = { h = .08, tint = { .08, .15, .20 } },
+                    treeArt = "spire.tga", treeTint = { .20, .30, .36 } },
 }
 
 --- Re-anchor everything pinned to the horizon. Called whenever the tuned
@@ -1598,6 +1667,60 @@ function RaceUI:LayoutHud()
   local dial = (self.T and self.T.hudScale or 100) / 100
   self.hudFit = AK.Math.Clamp(fit, 0.60, 1.70) * AK.Math.Clamp(dial, 0.5, 2.0)
   self.hud:SetScale(self.hudFit)
+end
+
+--- Lay the pause panel out for the race that is actually paused.
+---
+--- Called every time the panel is shown, because what belongs on it depends on
+--- the race: a Grand Prix warns before it throws four races away, a battle has
+--- no lap count to report, and the developer row is only there if the player
+--- asked for developer tools. The panel is then sized to its contents, so
+--- nothing that is hidden leaves a hole behind it.
+function RaceUI:LayoutPause(race)
+  if not self.pausePanel then return end
+  local cup = race and race.grandPrix
+  local canRestart = race and race.mode ~= "multiplayer" and race.mode ~= "attract"
+  local dev = AK.db and AK.db.settings and AK.db.settings.debug
+
+  -- The quit button says what leaving costs, and is disarmed on every fresh
+  -- pause: an arming click left over from the last time you looked at this
+  -- panel must not turn the NEXT first click into a quit.
+  local quit = self.pauseQuit
+  quit.needsArming = cup and true or false
+  quit.armed = false
+  quit.label:SetText(cup and "ABANDON CUP" or "QUIT TO MENU")
+  quit:SetRestStyle({ .28, .09, .09, .95 }, AK.COLORS.danger)
+  quit.tooltip = cup
+    and "Leave the Grand Prix. The cup's points are lost and the remaining heats are not run."
+    or nil
+
+  -- Every control is told whether it is on, rather than asked -- a frame in WoW
+  -- is visible until something hides it, so "is this shown" answers yes for a
+  -- button nobody has ever placed, and the stack would lay itself out around
+  -- whatever the last race left behind.
+  local y = PAUSE_FIRST_Y
+  for _, button in ipairs(self.pauseStack) do
+    local on = button ~= self.pauseRestart or canRestart
+    button:SetShown(on)
+    if on then
+      button:ClearAllPoints()
+      button:SetPoint("TOP", 0, -y)
+      y = y + PAUSE_BTN_H + PAUSE_BTN_GAP
+    end
+  end
+  y = y - PAUSE_BTN_GAP
+
+  for _, tool in ipairs(self.pauseTools) do tool:SetShown(dev and true or false) end
+  if dev then
+    y = y + PAUSE_TOOL_GAP
+    for _, tool in ipairs(self.pauseTools) do
+      tool:ClearAllPoints()
+      tool:SetPoint("TOP", tool.dx, -y)
+    end
+    y = y + PAUSE_TOOL_H
+  end
+
+  self.pausePanel:SetSize(PAUSE_W, y + PAUSE_BOTTOM)
 end
 
 function RaceUI:LayoutHorizon(horizon)
@@ -1819,6 +1942,11 @@ function RaceUI:Show(race)
   -- today, but a HUD line should not be a landmine for the next track that
   -- forgets to.
   self.shortcut:SetText(race.track.shortcut and ("SHORTCUT: " .. race.track.shortcut) or "")
+  -- "BALLOONS" is four times the width of "LAP", so the number beside it starts
+  -- further along. Done once per race rather than per frame: the mode cannot
+  -- change underneath a running race.
+  self.lap:ClearAllPoints()
+  self.lap:SetPoint("TOPLEFT", race.battle and BALLOON_NUMBER_X or LAP_NUMBER_X, -4)
   self.notice:SetText("")
   self.countdown:SetText("")
   self:BuildMinimapRoute(race.track)
@@ -3043,6 +3171,17 @@ local PROP_KINDS = {
   icecrown = {
     { art = "spire.tga", w = 0.32, h = 1.00, tint = { 0.30, 0.32, 0.40 }, min = 5.0, max = 13.0 },
     { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.72, 0.76, 0.82 }, min = 1.6, max = 4.0 },
+  },
+  -- A dwarven fighting pit: cut columns and broken masonry, and not one tree.
+  anvilmar = {
+    { art = "spire.tga", w = 0.40, h = 1.00, tint = { 0.58, 0.46, 0.34 }, min = 4.5, max = 11.0 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.50, 0.40, 0.30 }, min = 1.4, max = 3.6 },
+  },
+  -- A flooded cave: stalagmites, wet rock, and the pale stuff growing on it.
+  grotto = {
+    { art = "spire.tga", w = 0.38, h = 1.00, tint = { 0.28, 0.40, 0.46 }, min = 3.5, max = 9.0 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.22, 0.32, 0.36 }, min = 1.4, max = 3.4 },
+    { art = "sporecap.tga", w = 1.00, h = 1.00, tint = { 0.34, 0.56, 0.62 }, min = 1.8, max = 4.2 },
   },
   default = {
     { art = "tree.tga",  w = 0.55, h = 1.00, tint = { 0.26, 0.48, 0.28 }, min = 4.5, max = 11.0 },
@@ -5035,26 +5174,62 @@ function RaceUI:Render(race)
   end
   self.boostTint:SetAlpha(player.boostTime > 0 and (AK.db.settings.reducedEffects and 0 or .08) or 0)
 
-  local position = race.positions[player] or 1
-  -- Pulse the ordinal whenever it changes, so a gained place registers even if
-  -- you were watching the road instead of the HUD.
-  if self.shownPosition and position ~= self.shownPosition then
-    self.positionPulse = 1
-  end
-  self.shownPosition = position
-  self.positionPulse = math.max(0, (self.positionPulse or 0) - dt * 2.6)
-  self.position:SetText(ORDINALS[position] or (position .. "TH"))
-  local pulseTint = self.positionPulse
-  local base = position == 1 and AK.COLORS.gold or (position <= 3 and AK.COLORS.lime or { .9, .94, 1 })
-  self.position:SetTextColor(
-    base[1] + (1 - base[1]) * pulseTint,
-    base[2] + (1 - base[2]) * pulseTint,
-    base[3] + (1 - base[3]) * pulseTint)
-  self.positionOf:SetText("/ " .. #race.vehicles)
-  self.lap:SetText(math.min(player.lap, race.laps) .. " / " .. race.laps)
-  for i, pip in ipairs(self.lapPips) do
-    pip:SetShown(i <= race.laps)
-    pip:SetVertexColor(unpack(i < player.lap and AK.COLORS.gold or { .25, .32, .42, 1 }))
+  -- AN ARENA IS SCORED DIFFERENTLY FROM A CIRCUIT.
+  --
+  -- Both readouts in this block were racing readouts printed over a battle:
+  -- a place ordinal derived from how far around the loop each kart happened to
+  -- be, which is not a standing in a fight, and "LAP 1 / 999". The mode's two
+  -- real numbers -- your balloons, and how many rivals are still in -- were
+  -- nowhere on the screen.
+  if race.battle then
+    local alive, mine = 0, player.balloons or 0
+    for _, vehicle in ipairs(race.vehicles) do
+      if not vehicle.eliminated then alive = alive + 1 end
+    end
+    if self.shownAlive and alive ~= self.shownAlive then self.positionPulse = 1 end
+    self.shownAlive, self.shownPosition = alive, nil
+    self.positionPulse = math.max(0, (self.positionPulse or 0) - dt * 2.6)
+    local out = player.eliminated
+    self.position:SetText(out and "OUT" or tostring(alive))
+    self.positionOf:SetText(out and "" or "STILL IN")
+    local base = out and AK.COLORS.danger
+      or (alive <= 2 and AK.COLORS.gold or { .9, .94, 1 })
+    local pulseTint = self.positionPulse
+    self.position:SetTextColor(
+      base[1] + (1 - base[1]) * pulseTint,
+      base[2] + (1 - base[2]) * pulseTint,
+      base[3] + (1 - base[3]) * pulseTint)
+    self.lapWord:SetText("BALLOONS")
+    self.lap:SetText(tostring(mine))
+    self.lap:SetTextColor(unpack(mine <= 1 and AK.COLORS.danger or { .95, .96, 1 }))
+    for i, pip in ipairs(self.lapPips) do
+      pip:SetShown(i <= AK.BATTLE_BALLOONS)
+      pip:SetVertexColor(unpack(i <= mine and AK.COLORS.danger or { .25, .32, .42, 1 }))
+    end
+  else
+    local position = race.positions[player] or 1
+    -- Pulse the ordinal whenever it changes, so a gained place registers even if
+    -- you were watching the road instead of the HUD.
+    if self.shownPosition and position ~= self.shownPosition then
+      self.positionPulse = 1
+    end
+    self.shownPosition, self.shownAlive = position, nil
+    self.positionPulse = math.max(0, (self.positionPulse or 0) - dt * 2.6)
+    self.position:SetText(ORDINALS[position] or (position .. "TH"))
+    local pulseTint = self.positionPulse
+    local base = position == 1 and AK.COLORS.gold or (position <= 3 and AK.COLORS.lime or { .9, .94, 1 })
+    self.position:SetTextColor(
+      base[1] + (1 - base[1]) * pulseTint,
+      base[2] + (1 - base[2]) * pulseTint,
+      base[3] + (1 - base[3]) * pulseTint)
+    self.positionOf:SetText("/ " .. #race.vehicles)
+    self.lapWord:SetText("LAP")
+    self.lap:SetText(math.min(player.lap, race.laps) .. " / " .. race.laps)
+    self.lap:SetTextColor(.95, .96, 1)
+    for i, pip in ipairs(self.lapPips) do
+      pip:SetShown(i <= race.laps)
+      pip:SetVertexColor(unpack(i < player.lap and AK.COLORS.gold or { .25, .32, .42, 1 }))
+    end
   end
   self.timer:SetText(self:FormatTime(race.elapsed))
   self.speed:SetShown(AK.db.settings.showSpeed)
@@ -5197,18 +5372,46 @@ function RaceUI:Render(race)
       local dot = self.mapDots[index]
       dot:ClearAllPoints()
       dot:SetPoint("CENTER", self.minimap, "CENTER", mapX, mapY)
-      dot:SetVertexColor(unpack(vehicle == player and AK.COLORS.gold or vehicle.kart.color))
+      local colour = vehicle == player and AK.COLORS.gold or vehicle.kart.color
+      -- A kart that is out of a battle is still on the road -- it drives on,
+      -- it just cannot win or be hit any more. Drawn dark grey rather than in
+      -- its own colour, so the map answers "who is still in this" at a glance,
+      -- which is the whole question in an arena.
+      if vehicle.eliminated then
+        dot:SetVertexColor(.30, .32, .36)
+      else
+        dot:SetVertexColor(unpack(colour))
+      end
       dot:SetSize(vehicle == player and 9 or 6, vehicle == player and 9 or 6)
       dot:Show()
     end
   end
 
-  self.pause:SetShown(race.state == AK.RACE_STATES.PAUSED)
-  if race.state == AK.RACE_STATES.PAUSED and self.pauseWhere then
-    self.pauseWhere:SetText(("%s  --  LAP %d OF %d"):format(
-      (race.track.name or ""):upper(), math.min(player.lap or 1, race.laps), race.laps))
-    -- There is nothing to restart in a race other people are also in.
-    self.pauseRestart:SetShown(race.mode ~= "multiplayer")
+  -- The panel is laid out on the EDGE, not every frame: it re-anchors three
+  -- buttons and resizes the plate, and doing that sixty times a second while
+  -- the player reads it is work for no picture. It also means the quit button's
+  -- arming survives -- a relayout disarms it, which is right on a fresh pause
+  -- and wrong one frame after the player clicked it.
+  local paused = race.state == AK.RACE_STATES.PAUSED
+  if paused ~= self.pauseShown then
+    self.pauseShown = paused
+    self.pause:SetShown(paused)
+    if paused then self:LayoutPause(race) end
+  end
+  if paused and self.pauseWhere then
+    -- A battle has no laps to count, and a Grand Prix is one heat of four.
+    self.pauseWhere:SetText((race.track and race.track.name or "BATTLE ARENA"):upper())
+    if race.battle then
+      self.pauseCount:SetText("BATTLE")
+    else
+      local lap = ("LAP %d OF %d"):format(math.min(player.lap or 1, race.laps), race.laps)
+      if race.grandPrix then
+        self.pauseCount:SetText(("RACE %d OF %d  --  %s"):format(
+          race.grandPrix.index, #race.grandPrix.cup.tracks, lap))
+      else
+        self.pauseCount:SetText(lap)
+      end
+    end
   end
   if race.state == AK.RACE_STATES.COUNTDOWN then
     local counting = race.countdown > 0.15

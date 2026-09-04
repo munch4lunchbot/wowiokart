@@ -117,7 +117,6 @@ function Race:BuildRace(mode, options)
     state = AK.RACE_STATES.COUNTDOWN,
     countdown = 3.0,
     elapsed = 0,
-    realElapsed = 0,
     delta = 0,
     vehicles = {},
     byOwner = {},
@@ -354,18 +353,33 @@ function Race:StartBattle()
   self:StopAttract()
   if self.current then self:Stop(false) end
   self:ResetControls()
+  -- The same two things Race:Start does and this did not. A battle counts down
+  -- on the grid exactly like a race does, and started in silence; and the sound
+  -- editor's firing rates are meant to describe ONE fixture, so they have to be
+  -- zeroed by every entry point into the world, not just the circuit one.
+  if AK.ResetSfxStats then AK:ResetSfxStats() end
   -- A fresh arena each fight, so back-to-back battles do not open on the same
   -- stage every time. Not fed through a seeded stream: this decides which
   -- fixture gets played at all, not an outcome inside one, so it does not need
   -- to be reproducible the way an item roll or an AI's line does.
-  local arena = AK.Arenas[math.random(#AK.Arenas)]
+  --
+  -- Never the one just played, though. With two stages in the pool a fair coin
+  -- repeats half the time, so "a fresh arena each fight" was a coin flip
+  -- describing itself -- and pressing BATTLE AGAIN, which is exactly when the
+  -- player is asking for something else, opened the same cave as often as not.
+  local pool = {}
+  for _, arena in ipairs(AK.Arenas) do
+    if arena.id ~= self.lastArena or #AK.Arenas == 1 then pool[#pool + 1] = arena end
+  end
+  local arena = pool[math.random(#pool)]
+  self.lastArena = arena.id
   local race = self:BuildRace("battle", { arena = arena.id })
   race.laps = 999                       -- never completes by distance
   race.battle = true
   -- Spread the field around the loop so nobody starts in anyone's lap.
   local spacing = race.track.length / math.max(1, #race.vehicles)
   for index, vehicle in ipairs(race.vehicles) do
-    vehicle.balloons = 3
+    vehicle.balloons = AK.BATTLE_BALLOONS
     vehicle.distance = (index - 1) * spacing
     vehicle.lateral = ((index % 3) - 1) * 0.4
   end
@@ -373,14 +387,15 @@ function Race:StartBattle()
   AK.Menu:Hide()
   AK.Results:Hide()
   AK.RaceUI:Show(race)
-  AK.RaceUI:Announce("BATTLE! THREE BALLOONS EACH", AK.COLORS.gold)
+  AK.RaceUI:Announce(("BATTLE!  %d BALLOONS EACH"):format(AK.BATTLE_BALLOONS), AK.COLORS.gold)
   self.updateFrame:Show()
+  if AK.PlaySfx then AK:PlaySfx("countdown") end
 end
 
 --- A balloon pops. Returns true when that racer is out.
 function Race:PopBalloon(race, vehicle, attacker)
   if not race.battle or vehicle.eliminated then return false end
-  vehicle.balloons = math.max(0, (vehicle.balloons or 3) - 1)
+  vehicle.balloons = math.max(0, (vehicle.balloons or AK.BATTLE_BALLOONS) - 1)
   if vehicle == race.player then
     AK.RaceUI:Announce(("BALLOON POPPED  %d LEFT"):format(vehicle.balloons), AK.COLORS.danger)
     AK.RaceUI:Flash(AK.COLORS.danger, .28)
@@ -408,11 +423,16 @@ function Race:CheckBattleEnd(race)
     if not vehicle.eliminated then alive = alive + 1; last = vehicle end
   end
   if alive <= 1 then
-    if last then last.finishTime = race.elapsed end
+    -- The winner never crossed anything, so nothing had ever marked them home.
+    -- The results screen builds its table from finishers.
+    if last then
+      last.finishTime = race.elapsed
+      last.finished = true
+    end
     -- Last one standing, and never touched: the battle equivalent of a clean
     -- sheet. Balloons are only ever decremented by PopBalloon, so three left
     -- means nothing ever landed on you.
-    if last and last == race.player and (last.balloons or 0) >= 3 then
+    if last and last == race.player and (last.balloons or 0) >= AK.BATTLE_BALLOONS then
       AK:UnlockAchievement("flawless_battle")
     end
     self:FinishRace(race)
@@ -495,20 +515,42 @@ function Race:UseItem()
   if race.network and not race.network.isHost then AK.RaceUI:Announce("ITEM SENT TO HOST", AK.COLORS.muted) end
 end
 
+--- WHICH STATES CAN BE PAUSED.
+---
+--- The countdown is on this list, and did not used to be. ESC during the three
+--- seconds on the grid did nothing at all: the race frame grabs the keyboard,
+--- so the client's own escape did not fire either, and the player sat in a
+--- fullscreen window with no way out and no response to the one key the HUD
+--- tells them to press. A dead key is worse than a wrong one -- it reads as a
+--- frozen game.
+local PAUSABLE = {
+  [AK.RACE_STATES.COUNTDOWN] = true,
+  [AK.RACE_STATES.RACING] = true,
+  [AK.RACE_STATES.COOLDOWN] = true,
+}
+
 function Race:TogglePause()
   local race = self.current
-  if not race or race.mode == "multiplayer" then return end
+  if not race or race.mode == "multiplayer" or race.mode == "attract" then return end
   if race.state == AK.RACE_STATES.PAUSED then
     -- Resume to whatever was running, not blindly to RACING: pausing during
     -- the cooldown lap and unpausing used to hand the player back a kart that
     -- had already finished, and the field never came home.
     race.state = race.resumeState or AK.RACE_STATES.RACING
     race.resumeState = nil
-    AK.RaceUI:Announce("GO!", AK.COLORS.lime)
-  elseif race.state == AK.RACE_STATES.RACING or race.state == AK.RACE_STATES.COOLDOWN then
+    -- NO ANNOUNCEMENT EITHER WAY.
+    --
+    -- Pausing used to shout "PAUSED" across the banner -- underneath a
+    -- full-screen dim with the word PAUSED written on it in 28pt gold -- and
+    -- resuming shouted "GO!", which is the countdown's word and nobody else's:
+    -- coming back from the pause menu on lap three read as though the race had
+    -- restarted, and coming back during the cooldown lap read as nonsense. The
+    -- banner is for things that happen in the race. A menu is not one of them.
+    if AK.PlaySfx then AK:PlaySfx("uiClose") end
+  elseif PAUSABLE[race.state] then
     race.resumeState = race.state
     race.state = AK.RACE_STATES.PAUSED
-    AK.RaceUI:Announce("PAUSED", AK.COLORS.gold)
+    if AK.PlaySfx then AK:PlaySfx("uiOpen") end
   end
 end
 
@@ -893,7 +935,29 @@ end
 function Race:UpdatePositions(race)
   local ordered = {}
   for _, vehicle in ipairs(race.vehicles) do table.insert(ordered, vehicle) end
-  table.sort(ordered, function(a, b)
+  -- A BATTLE IS RANKED BACKWARDS FROM A RACE, and was being ranked forwards.
+  --
+  -- Being eliminated sets `finished` and stamps a `finishTime`, exactly as
+  -- crossing a line does -- so the racing comparator read the FIRST kart
+  -- knocked out as the first one home and put it 1st, and the last one
+  -- standing, who has no finish time at all until the fight ends, last. The
+  -- results screen showed the winner of every battle in eighth place.
+  --
+  -- Surviving beats being out, more balloons beats fewer, and among those
+  -- already out, lasting longer beats going early.
+  local battleOrder = race.battle and function(a, b)
+    local aOut, bOut = a.eliminated and 1 or 0, b.eliminated and 1 or 0
+    if aOut ~= bOut then return aOut < bOut end
+    if aOut == 0 then
+      local aB, bB = a.balloons or 0, b.balloons or 0
+      if aB ~= bB then return aB > bB end
+    else
+      local aT, bT = a.finishTime or 0, b.finishTime or 0
+      if aT ~= bT then return aT > bT end
+    end
+    return tostring(a.networkId) < tostring(b.networkId)
+  end
+  table.sort(ordered, battleOrder or function(a, b)
     local aDone, bDone = a.finished and 1 or 0, b.finished and 1 or 0
     if aDone ~= bDone then return aDone > bDone end
     if aDone == 1 then
@@ -1545,6 +1609,15 @@ end
 
 --- Called every tick once the player is home, from inside UpdateRacing.
 function Race:AfterPlayerFinish(race)
+  -- NOT IN AN ARENA. The cooldown is the machinery for "the player crossed the
+  -- line, now bring the rest of the field home" -- it dims the world, winds the
+  -- clock forward several times over and slides in a panel headed FINISHING
+  -- ORDER. Being knocked out of a battle set the same `finished` flag, so all
+  -- of that fired in the middle of a fight that was still going on, and the
+  -- last two karts settled it under a fast-forward behind a scrim. A battle is
+  -- short and worth watching: the player's kart coasts, the HUD says OUT, and
+  -- CheckBattleEnd ends it when the last balloon goes.
+  if race.battle then return end
   if race.state == AK.RACE_STATES.RACING then
     self:BeginCooldown(race)
   elseif race.state == AK.RACE_STATES.COOLDOWN and self:FieldIsHome(race) then
@@ -1725,18 +1798,24 @@ function Race:RecordProgress(race, position)
   if position <= 3 then progress.podiums = progress.podiums + 1 end
   if race.player.launchBoost then AK:UnlockAchievement("perfect_launch") end
   if race.player.usedStar then AK:UnlockAchievement("star_run") end
-  local best = progress.bestTimes[race.track.id]
-  if not best or race.elapsed < best then progress.bestTimes[race.track.id] = race.elapsed end
-  -- The best LAP, per circuit, kept for good. `records.bestLap` has been in the
-  -- saved-variable defaults since the addon shipped and nothing ever wrote a
-  -- single value into it, so the track cards had no record to show and the
-  -- table was pure dead weight.
-  AK.db.records = AK.db.records or { bestLap = {}, ghosts = {} }
-  AK.db.records.bestLap = AK.db.records.bestLap or {}
-  local lap = race.player.bestLap
-  local bestLap = AK.db.records.bestLap[race.track.id]
-  if lap and (not bestLap or lap < bestLap) then
-    AK.db.records.bestLap[race.track.id] = lap
+  -- TIMES ARE A CIRCUIT'S BUSINESS. A battle's elapsed clock is how long the
+  -- fight lasted, and a fight that ended quickly is not a fast lap -- but it
+  -- was being filed as a personal best against the arena's id all the same, and
+  -- "faster is better" made a one-sided massacre the record to beat.
+  if not race.battle then
+    local best = progress.bestTimes[race.track.id]
+    if not best or race.elapsed < best then progress.bestTimes[race.track.id] = race.elapsed end
+    -- The best LAP, per circuit, kept for good. `records.bestLap` has been in
+    -- the saved-variable defaults since the addon shipped and nothing ever
+    -- wrote a single value into it, so the track cards had no record to show
+    -- and the table was pure dead weight.
+    AK.db.records = AK.db.records or { bestLap = {}, ghosts = {} }
+    AK.db.records.bestLap = AK.db.records.bestLap or {}
+    local lap = race.player.bestLap
+    local bestLap = AK.db.records.bestLap[race.track.id]
+    if lap and (not bestLap or lap < bestLap) then
+      AK.db.records.bestLap[race.track.id] = lap
+    end
   end
 end
 
@@ -1759,7 +1838,6 @@ function Race:Step(race, dt)
     projectile.prevDistance, projectile.prevLateral = projectile.distance, projectile.lateral
   end
   race.delta = dt
-  race.realElapsed = race.realElapsed + dt
   if race.state == AK.RACE_STATES.COUNTDOWN then
     local before = math.ceil(race.countdown)
     race.countdown = race.countdown - dt

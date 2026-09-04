@@ -97,6 +97,32 @@ function widget:SetShown(v)
   self.akHidden = not self.akShown
   return self
 end
+--- RECORDED SO A CHECK CAN PRESS A BUTTON.
+---
+--- Everything a menu does happens inside an OnClick handler. Without these the
+--- harness could build a screen and measure it but never use it, so "does the
+--- cup ask before it throws four races away" was not a question it could put.
+--- Nothing here FIRES a handler; a check reaches for the one it means.
+function widget:SetScript(name, fn)
+  self.akScripts = self.akScripts or {}
+  self.akScripts[name] = fn
+  return self
+end
+function widget:HookScript(name, fn)
+  self.akHooks = self.akHooks or {}
+  self.akHooks[name] = self.akHooks[name] or {}
+  table.insert(self.akHooks[name], fn)
+  return self
+end
+function widget:GetScript(name)
+  return self.akScripts and self.akScripts[name]
+end
+--- Press it, the way a mouse would.
+function widget:akClick(...)
+  local fn = self:GetScript("OnClick")
+  assert(fn, "that control has no OnClick handler")
+  return fn(self, ...)
+end
 function widget:Show() self.akShown, self.akHidden = true, false return self end
 function widget:Hide() self.akShown, self.akHidden = false, true return self end
 -- RECORDED, not swallowed. Everything else the renderer does to a widget is a
@@ -962,7 +988,17 @@ if loadFailures == 0 then
     AK.Race:Start("quick", { track = "elwynn" })
     for _ = 1, math.ceil(3 / FRAME) do AK.Race:Update(FRAME) end
     AK.Debug:Update(AK.Race.current)
+    -- PAUSE IT. The pause panel arranges itself when it is shown, so measuring
+    -- it without pausing measured three developer buttons still piled at the
+    -- construction offset under the title -- a collision the player can never
+    -- see, reported instead of the ones they can. Developer tools are on for
+    -- this so the fullest version of the panel is the one under the eye.
+    local wasDev = AK.db.settings.debug
+    AK.db.settings.debug = true
+    AK.Race:TogglePause()
+    AK.Race:Update(FRAME)
     AK.Race:Stop(true)
+    AK.db.settings.debug = wasDev
     -- The AI report and the creature previewer are windows too, and neither had
     -- ever been looked at either.
     AK.AI:Report()
@@ -1501,6 +1537,186 @@ if loadFailures == 0 then
     say("")
     assert(total > 0, "a frame apparently cost nothing, so the counter is broken")
     AK.Race:Stop(true)
+  end)
+
+  -- THE PAUSE MENU IS THE ONE SCREEN EVERY PLAYER OPENS MID-RACE.
+  --
+  -- It has two controls that come and go -- RESTART, which is meaningless in a
+  -- race other people are in, and the developer row -- and it used to be a
+  -- fixed-height box with everything at a hand-measured offset, so hiding
+  -- either left a hole in the stack and a void underneath it. It also lets go
+  -- of a Grand Prix, which is four races and a points table, and did so on one
+  -- unconfirmed click.
+  ok("the pause menu has no holes in it, and a cup asks before it goes", function()
+    local RaceUI, Race = AK.RaceUI, AK.Race
+    local GAP, BOTTOM = 6, 22
+
+    --- Pause a race and read the panel back as a list of visible rows.
+    local function pauseAnd(options, dev)
+      AK.db.settings.debug = dev and true or false
+      Race:Start(options.mode or "quick", options)
+      -- ESC ON THE GRID. This did nothing at all until now: the race frame
+      -- grabs the keyboard, so the client's own escape never fired either, and
+      -- the player sat in a fullscreen window with the HUD telling them to
+      -- press a key that was not connected to anything.
+      Race:OnKey("ESCAPE", true)
+      assert(Race.current.state == AK.RACE_STATES.PAUSED,
+        "ESC during the countdown did not pause")
+      Race:OnKey("ESCAPE", true)
+      assert(Race.current.state == AK.RACE_STATES.COUNTDOWN,
+        "resuming from the grid did not hand back the countdown")
+      for _ = 1, math.ceil(3.4 / FRAME) do Race:Update(FRAME) end
+      assert(Race.current.state == AK.RACE_STATES.RACING, "the lights never went green")
+      Race:TogglePause()
+      Race:Update(FRAME)
+      assert(RaceUI.pause.akHidden ~= true, "the pause panel did not come up")
+      return RaceUI
+    end
+
+    --- Every visible control on the panel, top edge first.
+    local function rows()
+      local out = {}
+      for _, button in ipairs(RaceUI.pauseStack) do
+        if not button.akHidden then
+          out[#out + 1] = { name = button.label.akText, top = -button.akY, h = button.akHeight }
+        end
+      end
+      return out
+    end
+
+    local function noHoles(what)
+      local list = rows()
+      assert(#list >= 2, what .. ": the pause menu has " .. #list .. " controls on it")
+      for i = 2, #list do
+        local expected = list[i - 1].top + list[i - 1].h + GAP
+        assert(math.abs(list[i].top - expected) < 0.5,
+          ("%s: %s sits %.0fpx down, leaving a %.0fpx hole under %s"):format(
+            what, tostring(list[i].name), list[i].top, list[i].top - expected,
+            tostring(list[i - 1].name)))
+      end
+      return list[#list].top + list[#list].h
+    end
+
+    -- A single race, shipped settings: three buttons, no tool row, and the
+    -- panel ends just under the last of them.
+    pauseAnd({ track = "elwynn" }, false)
+    local bottom = noHoles("a quick race")
+    for _, tool in ipairs(RaceUI.pauseTools) do
+      assert(tool.akHidden, "a developer button is on the shipped pause menu")
+    end
+    local height = RaceUI.pausePanel.akHeight
+    assert(math.abs(height - (bottom + BOTTOM)) < 0.5,
+      ("the panel is %.0f tall for %.0f of controls -- a %.0fpx void"):format(
+        height, bottom, height - bottom - BOTTOM))
+    assert(RaceUI.pauseQuit.label.akText == "QUIT TO MENU",
+      "a single race asks before letting go of itself")
+    Race:Stop(true)
+
+    -- Developer tools on: the row appears and the panel grows to hold it.
+    pauseAnd({ track = "elwynn" }, true)
+    local devBottom = noHoles("with developer tools on")
+    for _, tool in ipairs(RaceUI.pauseTools) do
+      assert(not tool.akHidden, "the developer row did not come back")
+      assert(-tool.akY > devBottom,
+        "a developer button is printed through the buttons above it")
+      assert(-tool.akY + tool.akHeight + 1 < RaceUI.pausePanel.akHeight,
+        "the developer row hangs off the bottom of the panel")
+    end
+    Race:Stop(true)
+
+    -- A GRAND PRIX ARMS BEFORE IT QUITS.
+    local cup = AK.Cups and AK.Cups[1]
+    assert(cup, "there are no cups")
+    local gp = { cup = cup, index = 1, points = {}, names = {} }
+    pauseAnd({ mode = "grand_prix", track = cup.tracks[1], grandPrix = gp }, false)
+    local quit = RaceUI.pauseQuit
+    assert(quit.label.akText == "ABANDON CUP",
+      "the cup's quit button says '" .. tostring(quit.label.akText) .. "'")
+    quit:akClick()
+    assert(Race.current and Race.current.grandPrix,
+      "one click threw the whole Grand Prix away")
+    assert(quit.label.akText ~= "ABANDON CUP", "the armed button says nothing new")
+    quit:akClick()
+    -- Leaving shows the menu, and the menu starts the attract demo behind
+    -- itself -- so "gone" is "no longer the Grand Prix", not "no race at all".
+    assert(not (Race.current and Race.current.grandPrix),
+      "the second click did not leave the cup")
+
+    -- ...and the arming does not survive into the next pause.
+    pauseAnd({ mode = "grand_prix", track = cup.tracks[1], grandPrix = gp }, false)
+    assert(not RaceUI.pauseQuit.armed, "the cup came back already armed to quit")
+    Race:Stop(true)
+    AK.db.settings.debug = false
+  end)
+
+  -- A BATTLE, FOUGHT TO THE LAST BALLOON.
+  --
+  -- The mode had never been driven by anything but a person: the arena pool,
+  -- the balloon rules and the standings were all reached only through the
+  -- BATTLE button. Both of the things that were wrong with it were invisible
+  -- from the code and obvious from one fight -- the winner was ranked last, and
+  -- the balloon count the whole mode turns on was on no screen anywhere.
+  ok("a battle ends with the last kart standing on top", function()
+    if QUICK then return end
+    local Race = AK.Race
+    Race:StartBattle()
+    local race = Race.current
+    assert(race and race.battle, "no battle after StartBattle")
+    assert(race.track and race.track.id, "a battle was built with no arena")
+    for _, vehicle in ipairs(race.vehicles) do
+      vehicle.ai = vehicle.ai or AK.AI:CreatePersonality(9)
+      assert(vehicle.balloons == AK.BATTLE_BALLOONS,
+        "a kart lined up with " .. tostring(vehicle.balloons) .. " balloons")
+    end
+
+    -- The HUD says the two things the mode is about, from the first frame.
+    Race:Update(FRAME)
+    assert(AK.RaceUI.lapWord.akText == "BALLOONS",
+      "the arena HUD still says '" .. tostring(AK.RaceUI.lapWord.akText) .. "'")
+    assert(AK.RaceUI.lap.akText == tostring(AK.BATTLE_BALLOONS),
+      "the balloon count reads '" .. tostring(AK.RaceUI.lap.akText) .. "'")
+    assert(AK.RaceUI.positionOf.akText == "STILL IN",
+      "the arena HUD prints a lap-race field size")
+
+    -- Fight it. Nobody may be forced out by hand: the balloons have to come off
+    -- through the mode's own rules or the ranking proves nothing.
+    local guard, sawPlayerOut = 0, false
+    while race.state ~= AK.RACE_STATES.FINISHED and guard < math.ceil(300 / FRAME) do
+      Race:Update(FRAME)
+      guard = guard + 1
+      if race.player.eliminated then sawPlayerOut = true end
+      -- A BATTLE NEVER GOES INTO A COOLDOWN LAP. Being knocked out sets the
+      -- same `finished` flag that crossing a line does, which used to start the
+      -- bring-the-field-home fast-forward -- dimmed world, FINISHING ORDER
+      -- panel and all -- on top of a fight that was still being had.
+      assert(race.state ~= AK.RACE_STATES.COOLDOWN,
+        "the arena went into a cooldown lap")
+    end
+    assert(race.state == AK.RACE_STATES.FINISHED,
+      "five minutes of battle and nobody was knocked out")
+
+    local standing = 0
+    for _, vehicle in ipairs(race.vehicles) do
+      if not vehicle.eliminated then standing = standing + 1 end
+    end
+    assert(standing <= 1, standing .. " karts were still in when the battle ended")
+
+    -- FIRST PLACE IS THE SURVIVOR, and last place went out first.
+    local first, last = race.ordered[1], race.ordered[#race.ordered]
+    assert(not first.eliminated or first.balloons > 0,
+      "the battle was won by a kart that had already been knocked out")
+    assert(last.eliminated, "the kart in last place is still holding balloons")
+    for i = 2, #race.ordered do
+      local ahead, behind = race.ordered[i - 1], race.ordered[i]
+      if ahead.eliminated and behind.eliminated then
+        assert((ahead.finishTime or 0) >= (behind.finishTime or 0),
+          "a kart knocked out earlier was placed above one that lasted longer")
+      end
+    end
+    say(("        %s took the arena; last out was %s%s"):format(
+      first.racer.name, last.racer.name,
+      sawPlayerOut and "; the player was knocked out on the way" or ""))
+    Race:Stop(true)
   end)
 
   ok("the clock formats every duration", function()

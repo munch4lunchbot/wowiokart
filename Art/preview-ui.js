@@ -818,13 +818,33 @@ if (process.env.SCREEN === "settings") {
   label(OX + CW / 2, OY - 40 + CH - 42,
     "W OR UP ACCELERATE     A D STEER     SPACE HOP AND DRIFT     SHIFT ITEM     ESC PAUSE",
     10, MUTED, "center");
-  // The two doors out of the settings page. The sound editor was reachable
-  // only from inside the workshop or by typing /kart sfx.
+  // THE FOOTER, centred as a row from the buttons' own widths -- which is how
+  // MainMenu lays it out, and the reason the last version of this mirror went
+  // stale the moment a third control appeared. DEV=1 draws the page with
+  // developer tools switched on; without it, what ships.
+  const DEV = !!process.env.DEV;
   const btnTop = OY - 40 + CH - 4 - 24;
-  slice(tex.btn, OX + CW / 2 - 80 - 75, btnTop, 150, 24, REST, 1);
-  label(OX + CW / 2 - 80, btnTop + 7, "WORKSHOP", 11, GOLD, "center");
-  slice(tex.btn, OX + CW / 2 + 80 - 75, btnTop, 150, 24, REST, 1);
-  label(OX + CW / 2 + 80, btnTop + 7, "SOUND EDITOR", 11, GOLD, "center");
+  const FOOTER_GAP = +((MENU_LUA.match(/local FOOTER_GAP = (\d+)/) || [, 16])[1]);
+  const footer = [
+    [DEV ? "DEVELOPER TOOLS: ON" : "DEVELOPER TOOLS: OFF", 220,
+      DEV ? [.16, .36, .24] : REST, DEV ? LIME : GOLD],
+    ["SOUND EDITOR", 150, REST, GOLD],
+  ];
+  if (DEV) footer.push(["WORKSHOP", 150, REST, GOLD]);
+  let total = -FOOTER_GAP;
+  for (const [, w] of footer) total += w + FOOTER_GAP;
+  let fx = OX + CW / 2 - total / 2;
+  for (const [text, w, plate, ink] of footer) {
+    if (textWidth(text, 11) > w - 12) {
+      throw new Error(`preview-ui: "${text}" does not fit a ${w}px footer button`);
+    }
+    slice(tex.btn, fx, btnTop, w, 24, plate, 1);
+    label(fx + w / 2, btnTop + 7, text, 11, ink, "center");
+    fx += w + FOOTER_GAP;
+  }
+  if (fx - FOOTER_GAP > OX + CW - 34) {
+    throw new Error("preview-ui: the settings footer runs off the panel");
+  }
   // The panel's own height less the footer band, not a number typed here: the
   // limit has to move when the panel does.
   const room = CH - 62;

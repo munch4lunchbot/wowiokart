@@ -47,6 +47,11 @@ local _, AK = ...
 -- swept into every one of those reports and judged against thresholds tuned
 -- for a 2500m circuit -- render-visibility at 140m-260m out means nothing on
 -- a 320m loop nobody laps.
+-- NO SHARED `style`. Both arenas carried `style = "arena"`, and scenery is
+-- looked up by `track.style or track.id` -- so the one thing that field did was
+-- collapse two deliberately different places, a lit dwarven fighting pit and a
+-- flooded cave, onto a single lookup key that no scenery table had an entry
+-- for. Both wore the default green conifers, and wore them identically.
 AK.Arenas = {
   {
     -- Not named for the actual Crossroads -- that is a Barrens waypost, and
@@ -54,7 +59,7 @@ AK.Arenas = {
     -- mismatch this file's own tracks are careful never to make. Anvilmar is
     -- the old dwarven settlement this circuit's own straights are named for.
     id = "anvilmar", name = "Anvilmar Coliseum", subtitle = "Four turns, nowhere to hide", theme = "IRONFORGE",
-    arena = true, style = "arena",
+    arena = true,
     sweep = 2.0, length = 380, laps = 999,
     color = { 0.30, 0.24, 0.16 }, road = { 0.52, 0.46, 0.38 },
     skyTop = { 0.10, 0.07, 0.05 }, skyLow = { 0.42, 0.28, 0.14 }, glow = { 1.00, 0.72, 0.32 },
@@ -72,7 +77,7 @@ AK.Arenas = {
   },
   {
     id = "grotto", name = "Sunken Grotto Scrap", subtitle = "Tight, dark, and mutual", theme = "DEEPHOLM",
-    arena = true, style = "arena",
+    arena = true,
     sweep = 2.6, length = 320, laps = 999,
     color = { 0.14, 0.20, 0.24 }, road = { 0.34, 0.42, 0.46 },
     skyTop = { 0.03, 0.05, 0.09 }, skyLow = { 0.10, 0.22, 0.30 }, glow = { 0.42, 0.78, 0.95 },

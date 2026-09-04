@@ -550,11 +550,21 @@ const borrowedScenery = [];
       ? [...src.slice(skyStart, src.indexOf("\n}\n", skyStart)).matchAll(/^  (\w+)\s+= \{/gm)]
         .map((m) => m[1])
       : []);
-    for (const m of tracks.matchAll(/\n  \{\n    id = "(\w+)"/g)) {
-      if (!keys.has(m[1]))
-        borrowedScenery.push(m[1] + "  has no PROP_KINDS entry, so it wears the default forest");
-      if (skyStart >= 0 && !skyKeys.has(m[1]))
-        borrowedScenery.push(m[1] + "  has no SKYLINE entry, so its horizon is the default forest");
+    // THE ARENAS COUNT TOO. This read Data/Tracks.lua and nothing else, and the
+    // battle stages live in their own file on purpose -- so the one pair of
+    // places the check could not see was the pair that had no entry in either
+    // scenery table. A dwarven fighting pit and a flooded cave both drove
+    // through the default pine forest, and nothing said so.
+    const arenaFile = path.join(ADDON, "Data", "Arenas.lua");
+    const bodies = [tracks];
+    if (fs.existsSync(arenaFile)) bodies.push(fs.readFileSync(arenaFile, "utf8"));
+    for (const body of bodies) {
+      for (const m of body.matchAll(/\n    id = "(\w+)", name = /g)) {
+        if (!keys.has(m[1]))
+          borrowedScenery.push(m[1] + "  has no PROP_KINDS entry, so it wears the default forest");
+        if (skyStart >= 0 && !skyKeys.has(m[1]))
+          borrowedScenery.push(m[1] + "  has no SKYLINE entry, so its horizon is the default forest");
+      }
     }
   }
 }

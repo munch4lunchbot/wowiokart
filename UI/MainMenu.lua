@@ -1332,7 +1332,7 @@ local SETTING_DEFAULTS = {
   engineClass = "150cc", difficulty = "Normal", aiCount = 7, mirror = false,
   sfx = true, engineNote = false,
   reducedEffects = false, showSpeed = true, showMinimap = true, uiScale = 1,
-  roadDetail = "Balanced", showControls = false,
+  roadDetail = "Balanced", showControls = false, debug = false,
 }
 --- The two rows on this screen that write to the render tuning instead.
 local TUNING_DEFAULTS = { camBack = 6.0, hudScale = 100 }
@@ -1346,6 +1346,8 @@ local TUNING_DEFAULTS = { camBack = 6.0, hudScale = 100 }
 -- by four pixels. The screen printed a warning about it to the chat frame,
 -- where nobody was ever going to see it; Art/preview-ui.js fails outright now.
 local ROW_H, GROUP_GAP, COLUMN_W = 44, 14, 434
+--- Air between the buttons along the bottom of the settings page.
+local FOOTER_GAP = 16
 
 --- Draws one group of settings into `parent`, top-left at (x, y). Returns the
 --- height it used, so the next group can be stacked under it without anybody
@@ -1408,6 +1410,9 @@ function Menu:SettingChanged(key)
   if key == "uiScale" and AK.RaceUI and AK.RaceUI.frame then
     AK.RaceUI.frame:SetScale(AK.db.settings.uiScale or 1)
   end
+  -- The developer switch changes this very page while it is open.
+  local settings = self.pages and self.pages.settings
+  if key == "debug" and settings and settings.akLayoutFooter then settings:akLayoutFooter() end
   if AK.PlaySfx then AK:PlaySfx("uiClick") end
 end
 
@@ -1440,6 +1445,7 @@ function Menu:BuildSettings(page)
     for key, value in pairs(SETTING_DEFAULTS) do AK.db.settings[key] = value end
     for key, value in pairs(TUNING_DEFAULTS) do AK.db.tuning[key] = value end
     for _, control in ipairs(controls) do control:Refresh() end
+    if page.akLayoutFooter then page:akLayoutFooter() end
     self:SettingChanged("uiScale")
   end)
   restore:SetPoint("TOPRIGHT", -25, -20)
@@ -1468,17 +1474,63 @@ function Menu:BuildSettings(page)
   -- looking for it.
   -- The keyboard legend sits at BOTTOM 32 and is about fifteen tall, so the
   -- buttons have the bottom thirty pixels and no more.
+  -- The workshop is a DEVELOPER panel -- it edits the roster and adds racers --
+  -- so it travels with the developer switch. The sound editor does not: picking
+  -- which noise the game makes when you hit a boost pad is a player's business,
+  -- and it is the answer to the loudest standing complaint about this game.
+  -- When the workshop is away the sound editor takes the middle rather than
+  -- sitting off to one side of a gap.
   local workshop = UI:NewButton(page, "WORKSHOP", 150, 24, function()
     self:Hide()
     AK.Workshop:Toggle()
   end)
-  workshop:SetPoint("BOTTOM", -80, 4)
+  -- Anchored here as well as in the layout below, so a footer control is never
+  -- an unplaced widget stacked in the corner of the page.
+  workshop:SetPoint("BOTTOM", 196, 4)
   workshop.tooltip = "Camera, road and handling dials."
   local sounds = UI:NewButton(page, "SOUND EDITOR", 150, 24, function()
     self:Hide()
     AK.SoundEditor:Toggle()
   end)
-  sounds:SetPoint("BOTTOM", 80, 4)
+  -- THE DEVELOPER SWITCH LIVES IN THE FOOTER, not in a column.
+  --
+  -- It was a row in a settings group first, and the group's heading pushed the
+  -- left column seventy pixels past the keyboard legend -- the two columns are
+  -- laid out to fill the panel exactly, and there is no eighth row's worth of
+  -- room in either of them. It also does not belong beside "Mirror mode": every
+  -- other row on this page changes how the game plays or looks, and this one
+  -- changes which tools are on screen. The bottom of a settings page is where
+  -- the advanced door has always been.
+  local dev = UI:NewButton(page, "DEVELOPER TOOLS: OFF", 220, 24, function()
+    AK.db.settings.debug = not AK.db.settings.debug
+    self:SettingChanged("debug")
+  end)
+  dev:SetPoint("BOTTOM", -196, 4)
+  dev.tooltip = "Adds the live tuning panel, the presentation-beat player and "
+    .. "AI telemetry to the pause menu. Off is the shipped game."
+
+  function page:akLayoutFooter()
+    local on = AK.db.settings.debug and true or false
+    dev.label:SetText(on and "DEVELOPER TOOLS: ON" or "DEVELOPER TOOLS: OFF")
+    dev:SetRestStyle(on and { .16, .36, .24 } or UI.BUTTON_REST,
+      on and AK.COLORS.lime or AK.COLORS.gold)
+    workshop:SetShown(on)
+    -- Centred as a row, measured from the buttons' own widths. Hand-picked
+    -- offsets were how the last version worked and they were wrong the moment
+    -- one of the three came or went, or a label got a word longer.
+    local row = { dev, sounds }
+    if on then row[3] = workshop end
+    local total = -FOOTER_GAP
+    for _, button in ipairs(row) do total = total + button:GetWidth() + FOOTER_GAP end
+    local x = -total * 0.5
+    for _, button in ipairs(row) do
+      local w = button:GetWidth()
+      button:ClearAllPoints()
+      button:SetPoint("BOTTOM", x + w * 0.5, 4)
+      x = x + w + FOOTER_GAP
+    end
+  end
+  sounds:SetPoint("BOTTOM", 0, 4)
   sounds.tooltip =
     "Every cue in the game, auditioned and rebound by ear. The game's whole "
     .. "audio library is searchable from here."
@@ -1499,7 +1551,9 @@ function Menu:BuildSettings(page)
   --- re-reads its value on the way in rather than on the way out.
   function page:akRefresh()
     for _, control in ipairs(controls) do control:Refresh() end
+    self:akLayoutFooter()
   end
+  page:akLayoutFooter()
 end
 
 function Menu:Show()

@@ -293,16 +293,29 @@ function Results:Show(race)
   self:Build()
   self.grandPrixComplete = false
   local position = race.positions[race.player] or #race.vehicles
-  self.title:SetText(position == 1 and "VICTORY" or (position <= 3 and "PODIUM FINISH" or "RACE COMPLETE"))
-  self.title:SetTextColor(unpack(position == 1 and AK.COLORS.gold or (position <= 3 and AK.COLORS.lime or { .86, .90, 1 })))
+  -- AN ARENA IS NOT A CIRCUIT, and this screen was written as though every
+  -- fixture were a race. A battle came home headed "RACE COMPLETE" over the
+  -- line "150cc  999 LAPS" -- 999 being the sentinel lap count that stops a
+  -- battle ever ending by distance, printed to the player as a fact about the
+  -- fight they had just had.
+  local battle = race.battle
+  if battle then
+    self.title:SetText(position == 1 and "LAST ONE STANDING" or "KNOCKED OUT")
+    self.title:SetTextColor(unpack(position == 1 and AK.COLORS.gold or AK.COLORS.danger))
+  else
+    self.title:SetText(position == 1 and "VICTORY" or (position <= 3 and "PODIUM FINISH" or "RACE COMPLETE"))
+    self.title:SetTextColor(unpack(position == 1 and AK.COLORS.gold or (position <= 3 and AK.COLORS.lime or { .86, .90, 1 })))
+  end
   -- Name the conditions the race was actually run under. A results screen that
   -- does not say it was 150cc mirror with hard rivals is throwing away the
   -- context that makes the time mean anything.
   local conditions = { AK.db.settings.engineClass or "150cc",
-    (race.laps or 3) .. " LAPS", (AK.db.settings.difficulty or "Normal"):upper() }
+    battle and (AK.BATTLE_BALLOONS .. " BALLOONS") or ((race.laps or 3) .. " LAPS"),
+    (AK.db.settings.difficulty or "Normal"):upper() }
   if AK.db.settings.mirror then table.insert(conditions, "MIRROR") end
-  self.subtitle:SetText(("%s  /  finished %s of %d  /  %s"):format(
-    race.track.name, ORDINALS[position] or (position .. "TH"), #race.vehicles,
+  self.subtitle:SetText(("%s  /  %s %s of %d  /  %s"):format(
+    race.track.name, battle and "placed" or "finished",
+    ORDINALS[position] or (position .. "TH"), #race.vehicles,
     table.concat(conditions, "  ")))
 
   local ordered = {}
@@ -335,6 +348,11 @@ function Results:Show(race)
       local leadTime = leader and leader.finishTime
       if not vehicle.finishTime then
         row.time:SetText("--")
+      elseif battle then
+        -- In an arena the column is HOW LONG YOU LASTED, and the winner lasted
+        -- longest -- so a gap to the leader is negative for everybody, and the
+        -- gap branch below printed a whole field of "+-42.10s".
+        row.time:SetText(AK.RaceUI:FormatTime(vehicle.finishTime))
       elseif not leadTime or vehicle == leader then
         row.time:SetText(AK.RaceUI:FormatTime(vehicle.finishTime))
       else
@@ -372,6 +390,8 @@ function Results:Show(race)
     self.cupLine:Show()
   elseif race.mode == "multiplayer" then
     self.primary.label:SetText("RETURN TO PITS")
+  elseif battle then
+    self.primary.label:SetText("BATTLE AGAIN")
   else
     self.primary.label:SetText("RACE AGAIN")
   end

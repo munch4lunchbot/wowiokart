@@ -1372,6 +1372,88 @@ for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
       hudText(banner, HW, nb.y + nb.h / 2 - u(30) * 0.5, u(30), bcol, "center");
     }
 
+    // STATE=pause -- the panel every player opens mid-race, and the only
+    // screen in the game whose height is computed rather than declared. DEV=1
+    // adds the developer row, CUP=1 makes it a Grand Prix (which renames the
+    // quit button and gives the where-line a heat count).
+    if (STATE === "pause") {
+      const DEV = !!process.env.DEV, CUP = !!process.env.CUP;
+      const P = (re, d) => rnum(re, d);
+      const PW = P(/local PAUSE_W = (\d+)/, 320);
+      const WHERE_Y = P(/local PAUSE_WHERE_Y = (\d+)/, 54);
+      const COUNT_Y = P(/local PAUSE_COUNT_Y = (\d+)/, 71);
+      const FIRST_Y = P(/local PAUSE_FIRST_Y = (\d+)/, 96);
+      const BW = P(/local PAUSE_BTN_W, PAUSE_BTN_H = (\d+)/, 240);
+      const BH = P(/local PAUSE_BTN_W, PAUSE_BTN_H = \d+, (\d+)/, 40);
+      const BGAP = P(/local PAUSE_BTN_GAP = (\d+)/, 6);
+      const TW = P(/local PAUSE_TOOL_W, PAUSE_TOOL_H = (\d+)/, 76);
+      const TH = P(/local PAUSE_TOOL_W, PAUSE_TOOL_H = \d+, (\d+)/, 28);
+      const TGAP = P(/local PAUSE_TOOL_GAP = (\d+)/, 16);
+      const PBOT = P(/local PAUSE_BOTTOM = (\d+)/, 22);
+
+      // The whole race dims behind it.
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 3;
+        for (let k = 0; k < 3; k++) fb[i + k] *= 0.40;
+      }
+
+      const stack = ["RESUME", "RESTART RACE", CUP ? "ABANDON CUP" : "QUIT TO MENU"];
+      let used = FIRST_Y;
+      const at = stack.map((label) => { const y = used; used += BH + BGAP; return { label, y }; });
+      used -= BGAP;
+      let toolY = 0;
+      if (DEV) { used += TGAP; toolY = used; used += TH; }
+      const PH = used + PBOT;
+
+      // Centred, 30px low -- CENTER, 0, -30 in RaceUI.
+      const px = Math.round(HW - PW / 2), py = Math.round(HH - PH / 2 + 30);
+      if (PH > H - 40) throw new Error(`preview-render: the pause panel is ${PH} tall on a ${H} screen`);
+      rect(px, py, PW, PH, 0.045, 0.075, 0.125, 0.98);
+      rect(px + 3, py + 1, PW - 6, 3, 1, 0.86, 0.55, 0.40);
+
+      hudText("PAUSED", px + PW / 2, py + 22, 28, [1, 0.82, 0.25], "center");
+      // The worst case, not a friendly one: the longest circuit name in the
+      // game, on the last heat of a cup.
+      const where = "NETHERSTORM TURBO CIRCUIT";
+      const count = CUP ? "RACE 4 OF 4  --  LAP 3 OF 3" : "LAP 2 OF 3";
+      for (const [line, size] of [[where, 12], [count, 11]]) {
+        if (drawTextWidth(line, size) > PW - 24) {
+          throw new Error(`preview-render: the pause menu's "${line}" line is wider than the panel`);
+        }
+      }
+      hudText(where, px + PW / 2, py + WHERE_Y, 12, [0.84, 0.90, 1], "center");
+      hudText(count, px + PW / 2, py + COUNT_Y, 11, [0.62, 0.68, 0.78], "center");
+
+      for (const { label, y } of at) {
+        const danger = label === "QUIT TO MENU" || label === "ABANDON CUP";
+        const bx = px + (PW - BW) / 2;
+        rect(bx, py + y, BW, BH, danger ? 0.28 : 0.18, danger ? 0.09 : 0.28,
+          danger ? 0.09 : 0.42, 0.97);
+        rect(bx, py + y, BW, 1, 1, 1, 1, 0.10);
+        if (drawTextWidth(label, 15) > BW - 16) {
+          throw new Error(`preview-render: "${label}" does not fit a ${BW}px pause button`);
+        }
+        hudText(label, px + PW / 2, py + y + (BH - 15) / 2, 15,
+          danger ? [1, 0.42, 0.38] : [1, 0.82, 0.25], "center");
+      }
+      // The armed state of the cup's quit button is the widest thing that ever
+      // appears on this panel, and it appears by replacing a label rather than
+      // by being built -- so nothing else would ever measure it.
+      if (drawTextWidth("REALLY ABANDON THE CUP?", 15) > BW - 16) {
+        throw new Error("preview-render: the armed ABANDON CUP label does not fit its button");
+      }
+      if (DEV) {
+        ["TUNE", "BEATS", "AI"].forEach((label, i) => {
+          const cx = px + PW / 2 + (i - 1) * (TW + 4);
+          rect(cx - TW / 2, py + toolY, TW, TH, 0.18, 0.28, 0.42, 0.97);
+          hudText(label, cx, py + toolY + (TH - 12) / 2, 12, [1, 0.82, 0.25], "center");
+        });
+        if (toolY + TH + PBOT > PH + 0.5) {
+          throw new Error("preview-render: the developer row hangs off the pause panel");
+        }
+      }
+    }
+
     if (STATE === "finish") {
       hudText("FINISHED 2ND", HW, HH - H * 0.06 - u(40) * 0.5, u(40), [1, 0.82, 0.25], "center");
       // The cooldown ladder: LADDER in UI/RaceUI.lua, anchored RIGHT -30, +20.

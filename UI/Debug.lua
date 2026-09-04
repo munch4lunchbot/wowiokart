@@ -129,6 +129,10 @@ function Debug:Toggle()
   self:Build()
   local show = not self.frame:IsShown()
   self.frame:SetShown(show)
-  AK.db.settings.debug = show
+  -- This used to write settings.debug, which is the DEVELOPER TOOLS switch --
+  -- the one that decides whether the pause menu carries a tuning row at all.
+  -- Opening a readout for a moment is not a request to change a saved setting,
+  -- and nothing ever read the flag back, so all it did was quietly rewrite the
+  -- player's preference every time /kart debug was typed.
   AK:Print("Debug readout " .. (show and "on" or "off") .. ".")
 end

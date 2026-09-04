@@ -4,7 +4,13 @@ local defaults = {
   settings = {
     uiScale = 1, sfx = true, engineNote = false, reducedEffects = false, difficulty = "Normal",
     aiCount = 7, showSpeed = true, showMinimap = true,
-    engineClass = "150cc", mirror = false, debug = false,
+    engineClass = "150cc", mirror = false,
+    -- DEVELOPER TOOLS. Off, and off is the shipped game: the pause menu is
+    -- RESUME, RESTART and QUIT, the way a kart game's pause menu has always
+    -- been. On, it also carries the live tuning panel, the presentation-beat
+    -- player and the AI telemetry dump. The slash commands reach all three
+    -- either way -- this decides what is on screen, not what exists.
+    debug = false,
     -- How finely the road is sliced. Balanced draws about a quarter fewer
     -- strips than High and is the single biggest frame-rate dial there is;
     -- at 720p the difference is six pixels a strip against five.

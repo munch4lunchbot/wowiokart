@@ -48,3 +48,8 @@ end
 function AK:Print(message)
   DEFAULT_CHAT_FRAME:AddMessage("|cff" .. self:ColorHex(self.COLORS.gold) .. "Azeroth Kart|r " .. message)
 end
+
+--- How many balloons each kart carries into a battle. Read by the arena rules
+--- that pop them, by the clean-sheet achievement, and by the HUD that draws one
+--- pip per balloon -- three places that each used to say "3" on their own.
+AK.BATTLE_BALLOONS = 3
