@@ -115,6 +115,23 @@ function labelWrapped(cx, y, str, size, colour, maxWidth) {
   return y + lines.length * step;
 }
 
+/** Wrapped text that grows to the RIGHT from x, the way a LEFT-justified
+ *  FontString with a width does. labelWrapped centres each line instead. */
+function labelLeftWrapped(x, y, str, size, colour, maxWidth) {
+  const words = str.split(" ");
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const candidate = line ? line + " " + word : word;
+    if (textWidth(candidate, size) > maxWidth && line) { lines.push(line); line = word; }
+    else line = candidate;
+  }
+  if (line) lines.push(line);
+  const step = Math.round(size * 1.45);
+  lines.forEach((l, i) => label(x, y + i * step, l, size, colour));
+  return y + lines.length * step;
+}
+
 function label(x, y, s, size, colour, align) {
   const wpx = textWidth(s, size);
   const sx = align === "center" ? Math.round(x - wpx / 2)
@@ -563,6 +580,75 @@ if (process.env.SCREEN === "tracks") {
       throw new Error("preview-ui: " + KIND + " -- " + worst.id + "'s card overflows by "
         + Math.ceil(worst.over) + "px (" + columns + " columns, " + cardW + "x" + cardH + ")");
     }
+  }
+}
+
+// ---- the trophy room, on demand: SCREEN=trophies -----------------------------
+//
+// The last player-facing screen with no picture. Fourteen achievements in a
+// two-column grid whose card height is derived from the count, so adding a
+// fifteenth re-flows -- which is exactly the sort of thing that quietly stops
+// fitting.
+if (process.env.SCREEN === "trophies") {
+  for (let i = 0; i < W * H; i++) { fb[i*3] = 0.030; fb[i*3+1] = 0.040; fb[i*3+2] = 0.070; }
+  panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);
+  label(OX + CW / 2, OY - 12, "TROPHY ROOM", 20, GOLD, "center");
+
+  const ACH = fs.readFileSync(path.join(__dirname, "..", "Data", "Achievements.lua"), "utf8");
+  const byId = {};
+  for (const m of ACH.matchAll(/(\w+) = \{ name = "([^"]+)", description = "([^"]+)" \}/g)) {
+    byId[m[1]] = { name: m[2], description: m[3] };
+  }
+  const orderBlock = ACH.slice(ACH.indexOf("AK.AchievementOrder = {"));
+  const order = [...orderBlock.matchAll(/"(\w+)"/g)].map(m => m[1]);
+  if (!order.length) throw new Error("preview-ui: parsed no achievement order");
+  const missing = order.filter(id => !byId[id]);
+  if (missing.length) throw new Error("preview-ui: no such achievement: " + missing.join(", "));
+
+  // Mirrors Menu:BuildAchievements.
+  const COLUMNS = 2, MARGIN = 40, TOP = 92, GAP = 6;
+  const cardW = Math.floor((CW - MARGIN * 2 - GAP * (COLUMNS - 1)) / COLUMNS);
+  const rows = Math.ceil(order.length / COLUMNS);
+  const cardH = Math.min(52, Math.floor((CH - TOP - 56 - GAP * (rows - 1)) / Math.max(1, rows)));
+
+  const earned = new Set(order.slice(0, 5));   // a plausible half-finished room
+  label(OX + CW / 2, OY - 40 + 62, earned.size + " OF " + order.length + " EARNED",
+    13, [0.42, 0.95, 0.42], "center");
+
+  let lowest = 0;
+  order.forEach((id, index) => {
+    const a = byId[id];
+    const col = index % COLUMNS, row = Math.floor(index / COLUMNS);
+    const x = OX + MARGIN + col * (cardW + GAP);
+    const y = OY - 40 + TOP + row * (cardH + GAP);
+    const got = earned.has(id);
+    // The nine-slice panel plate the game uses for these, not the button's
+    // three-slice: a card here is UI:NewPanel, and the two wear different art.
+    panel(x, y, cardW, cardH, got ? [0.10, 0.18, 0.12] : [0.07, 0.09, 0.14], 0.96);
+    const mark = tex[got ? "tick" : "socket"];
+    if (mark) {
+      blitUV(mark, x + 11, y + cardH / 2 - 7, 14, 14, 0, 1, 0, 1,
+        got ? GOLD : [0.34, 0.38, 0.46], 1);
+    }
+    label(x + 30, y + 7, a.name, 14, got ? GOLD : [0.62, 0.66, 0.74]);
+    // LEFT, as the FontString is justified in Menu:BuildAchievements. Centring
+    // it here would be the sheet inventing a layout the game does not have.
+    const end = labelLeftWrapped(x + 30, y + 25, a.description, 11,
+      got ? [0.78, 0.86, 0.78] : [0.44, 0.48, 0.56], cardW - 42);
+    lowest = Math.max(lowest, end);
+    // A description that runs past its own card is the failure this screen is
+    // most likely to have: the cards are 52 tall at most and the text is free.
+    if (end > y + cardH - 2) {
+      throw new Error("preview-ui: " + id + "'s description overflows its card by "
+        + Math.ceil(end - (y + cardH - 2)) + "px");
+    }
+  });
+  label(OX + CW / 2, OY - 40 + CH - 30,
+    "RACES 42      WINS 12      PODIUMS 25      CUPS 2      TOKENS 240",
+    13, MUTED, "center");
+  if (lowest > OY - 40 + CH - 44) {
+    throw new Error("preview-ui: the trophy grid runs into the career line by "
+      + Math.ceil(lowest - (OY - 40 + CH - 44)) + "px");
   }
 }
 
