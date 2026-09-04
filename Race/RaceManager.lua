@@ -1630,7 +1630,20 @@ function Race:FinishRace(race)
   end
 
   if race.grandPrix then
-    for vehicle, place in pairs(race.positions) do race.grandPrix.points[vehicle.owner or vehicle.racer.name] = (race.grandPrix.points[vehicle.owner or vehicle.racer.name] or 0) + math.max(1, 9 - place) end
+    -- KEYED BY OWNER, DISPLAYED BY NAME. "player" is the sentinel this file
+    -- gives the local kart in AddVehicle -- it is not anybody's name -- so the
+    -- cup table keyed the player as the literal string "player", and the
+    -- trophy screen then printed that as the champion. The key has to stay the
+    -- owner so a multiplayer grid cannot merge two people driving the same
+    -- racer; what gets shown is a separate question.
+    local gp = race.grandPrix
+    gp.names = gp.names or {}
+    for vehicle, place in pairs(race.positions) do
+      local owner = vehicle.owner
+      local key = owner or vehicle.racer.name
+      gp.points[key] = (gp.points[key] or 0) + math.max(1, 9 - place)
+      gp.names[key] = (owner and owner ~= "player" and owner) or vehicle.racer.name
+    end
   end
   -- A Time Trial run only replaces the stored ghost if it was actually faster.
   if race.recorder and race.player.finishTime then

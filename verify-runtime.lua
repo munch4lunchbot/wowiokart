@@ -125,6 +125,14 @@ function widget:SetPoint(point, a, b, c, d)
   end
   return self
 end
+--- Recorded so a frame that fills its parent still has a measurable size. The
+--- pause panel does this, and without it every control on it was unplaceable.
+function widget:SetAllPoints(target)
+  self.akAllPoints = target or self.akParent or true
+  self.akAnchor = self.akAnchor or "TOPLEFT"
+  self.akX, self.akY = self.akX or 0, self.akY or 0
+  return self
+end
 function widget:SetSize(w, h) self.akWidth, self.akHeight = w, h return self end
 function widget:SetWidth(w) self.akWidth = w return self end
 function widget:SetHeight(h) self.akHeight = h return self end
@@ -948,16 +956,26 @@ if loadFailures == 0 then
     -- an empty string and written by Update, so measuring it at build time
     -- measures nothing at all -- which is how a 430-wide window full of
     -- sixty-character lines passed.
+    AK.RaceUI:Build()
     AK.Debug:Build()
     AK.Debug.frame:Show()
     AK.Race:Start("quick", { track = "elwynn" })
     for _ = 1, math.ceil(3 / FRAME) do AK.Race:Update(FRAME) end
     AK.Debug:Update(AK.Race.current)
     AK.Race:Stop(true)
+    -- The AI report and the creature previewer are windows too, and neither had
+    -- ever been looked at either.
+    AK.AI:Report()
+    AK:PreviewNPC(36648)
     local roots = {
       [AK.SoundEditor.frame] = "sound editor",
       [AK.Workshop.frame] = "workshop",
       [AK.Debug.frame] = "debug readout",
+      [AK.AI.panel] = "AI report",
+      [AK.npcPreview] = "creature preview",
+      -- Not a standalone window, but the same kind of thing: a panel of
+      -- controls nobody can screenshot without pausing a race first.
+      [AK.RaceUI.pause] = "pause panel",
     }
     local function rootOf(w)
       local guard = 0
@@ -981,6 +999,15 @@ if loadFailures == 0 then
     --- How big is this thing.
     local function sizeOf(w)
       if w.akWidth and w.akHeight then return w.akWidth, w.akHeight end
+      if w.akAllPoints then
+        -- Fills something: whatever that is, this is the same size. A frame
+        -- with no explicit size at the top of the tree is the screen.
+        if type(w.akAllPoints) == "table" then
+          local pw, ph = sizeOf(w.akAllPoints)
+          if pw then return pw, ph end
+        end
+        return 1365, 768
+      end
       if w.akKind == "FontString" then
         -- FrizQt: ~0.62 of the point size per uppercase character, ~1.2 line
         -- height. Both calibrated in Art/hud-font.js against the real font.
@@ -1136,6 +1163,10 @@ if loadFailures == 0 then
       .. "%d sibling pairs compared, %d collisions"):format(
       windowCount, measured, total, pairCount, #hits))
     for i = 1, math.min(6, #hits) do say("          " .. hits[i]) end
+    -- Leave nothing on screen for the checks that follow.
+    if AK.AI.panel then AK.AI.panel:Hide() end
+    if AK.npcPreview then AK.npcPreview:Hide() end
+    AK.Debug.frame:Hide()
     assert(#hits == 0, #hits .. " controls are misplaced")
   end)
 
@@ -1268,6 +1299,74 @@ if loadFailures == 0 then
     if AK.SoundEditor.frame and AK.SoundEditor.frame:IsShown() then AK.SoundEditor:Toggle() end
     AK.Menu:Hide()
     say(("        %d commands dispatched, typos reported"):format(27))
+  end)
+
+  -- A GRAND PRIX IS THE HEADLINE ITEM ON THE MENU AND NOTHING HAD EVER RUN ONE.
+  --
+  -- Four races, one points table, one trophy -- and no check anywhere started
+  -- a cup, let alone finished one. So the between-races screen could show the
+  -- player nothing about the cup they were running (it did), and the
+  -- completion screen could put the last race's winner under the cup
+  -- champion's name (it did).
+  ok("a grand prix runs all four races and crowns the right champion", function()
+    AK.db.selection.cup = "wild"
+    AK.Race:StartGrandPrix()
+    local cup = AK.Race.current.grandPrix.cup
+    local seen = {}
+    for round = 1, #cup.tracks do
+      local race = AK.Race.current
+      assert(race and race.grandPrix, "round " .. round .. " is not a grand prix race")
+      assert(race.grandPrix.index == round,
+        ("round %d thinks it is race %d"):format(round, race.grandPrix.index))
+      seen[#seen + 1] = race.track.id
+      -- Run it to the flag the way the game does, rather than faking a finish:
+      -- the points come off race.positions, which only the real finish fills.
+      race.state = AK.RACE_STATES.RACING
+      for index, vehicle in ipairs(race.vehicles) do
+        vehicle.finished = true
+        vehicle.finishTime = 90 + index
+        vehicle.lap = race.laps
+      end
+      AK.Race:UpdatePositions(race)
+      AK.Race:FinishRace(race)
+      AK.Results:Show(race)
+      -- The cup line has to say where the player stands, from race one.
+      local line = AK.Results.cupLine:GetText() or ""
+      assert(line:find("RACE " .. round .. " OF " .. #cup.tracks),
+        ("the results screen after race %d does not say which race it was: %q")
+          :format(round, line))
+      assert(line:find("YOU ARE"),
+        ("the results screen after race %d never says where you stand in the cup")
+          :format(round))
+      AK.Race:NextGrandPrix()
+    end
+
+    -- Every circuit in the cup, in order, and no repeats.
+    for index, id in ipairs(cup.tracks) do
+      assert(seen[index] == id,
+        ("race %d ran %s, the cup says %s"):format(index, tostring(seen[index]), id))
+    end
+    assert(AK.db.progress.trophies[cup.id], "finishing the cup awarded no trophy")
+
+    -- And the champion on the podium is the champion in the table.
+    local gp = AK.Results.lastGrandPrix
+    local top, topPoints
+    for key, points in pairs(gp.points) do
+      local shown = (gp.names and gp.names[key]) or key
+      if not topPoints or points > topPoints
+        or (points == topPoints and shown < top) then top, topPoints = shown, points end
+    end
+    -- "player" is this file's own sentinel for the local kart, not anybody's
+    -- name, and it used to be what the trophy screen printed.
+    assert(top ~= "player", "the cup champion is the string \"player\"")
+    assert(AK.Results.winnerName:GetText() == top,
+      ("the podium says %q, the points table says %q"):format(
+        tostring(AK.Results.winnerName:GetText()), tostring(top)))
+    say(("        %s: %d races, champion %s on %d points"):format(
+      cup.name, #cup.tracks, top, topPoints))
+    AK.Results:Hide()
+    AK.Race:Stop(true)
+    AK.Menu:Hide()
   end)
 
   ok("the menu, the workshop and the sound editor all build", function()

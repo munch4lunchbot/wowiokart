@@ -6,6 +6,13 @@ local UI = AK.UI
 local ART = AK.ART
 
 local ORDINALS = { "1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH" }
+
+--- A racer, found by the name the Grand Prix table stores.
+local function racerByName(name)
+  for _, racer in ipairs(AK.Racers or {}) do
+    if racer.name == name then return racer end
+  end
+end
 local ROW_HEIGHT, ROW_GAP = 38, 4
 
 -- The size this screen is authored at, and the size it therefore needs.
@@ -156,6 +163,16 @@ function Results:Build()
 
   self.reward = UI:NewText(content, "", 15, AK.COLORS.lime, "CENTER")
   self.reward:SetPoint("TOP", self.statPanel, "BOTTOM", 0, -14)
+  -- WHERE YOU STAND IN THE CUP, after every race in it.
+  --
+  -- A Grand Prix is four races and one table, and that table was shown exactly
+  -- once: at the very end. Between races the player was told their finishing
+  -- position in the race they had just run and nothing at all about the cup
+  -- they were running it for -- so the structure that makes a cup a cup, the
+  -- points adding up, was invisible for three quarters of it.
+  self.cupLine = UI:NewText(content, "", 14, AK.COLORS.gold, "CENTER")
+  self.cupLine:SetPoint("TOP", self.reward, "BOTTOM", 0, -12)
+  self.cupLine:Hide()
 
   self.primary = UI:NewButton(content, "RACE AGAIN", 240, 44, function()
     local race = AK.Race.current
@@ -237,6 +254,41 @@ local function styleRow(row, place, isPlayer)
   end
 end
 
+--- Who is on top of the cup, and where you are in it.
+---
+--- Points are keyed by NAME (a multiplayer owner, or the racer's own name), so
+--- the player's line is found the same way.
+local function cupStandingLine(gp, player)
+  if not gp or not gp.points then return "" end
+  local standings = {}
+  for key, points in pairs(gp.points) do
+    standings[#standings + 1] =
+      { key = key, name = (gp.names and gp.names[key]) or key, points = points }
+  end
+  -- Sorted by points, then by name so the order cannot wobble between two
+  -- racers on the same score -- pairs() deals in a different order every time.
+  table.sort(standings, function(a, b)
+    if a.points ~= b.points then return a.points > b.points end
+    return a.name < b.name
+  end)
+  local mine = player and (player.owner or (player.racer and player.racer.name))
+  local yourPlace, yourPoints
+  for index, entry in ipairs(standings) do
+    if entry.key == mine then yourPlace, yourPoints = index, entry.points end
+  end
+  local leader = standings[1]
+  local line = ("%s  --  RACE %d OF %d"):format(
+    gp.cup.name:upper(), gp.index, #gp.cup.tracks)
+  if yourPlace then
+    line = line .. ("  --  YOU ARE %s ON %d PTS"):format(
+      ORDINALS[yourPlace] or (yourPlace .. "TH"), yourPoints)
+    if yourPlace > 1 and leader then
+      line = line .. ("  (%s LEADS ON %d)"):format(leader.name:upper(), leader.points)
+    end
+  end
+  return line
+end
+
 function Results:Show(race)
   self:Build()
   self.grandPrixComplete = false
@@ -313,13 +365,17 @@ function Results:Show(race)
     race.rewardCoins or 0, AK.db.progress.coins))
 
   if race.grandPrix then
-    local isFinal = race.grandPrix.index >= #race.grandPrix.cup.tracks
+    local gp = race.grandPrix
+    local isFinal = gp.index >= #gp.cup.tracks
     self.primary.label:SetText(isFinal and "CLAIM TROPHY" or "NEXT RACE")
+    self.cupLine:SetText(cupStandingLine(gp, race.player))
+    self.cupLine:Show()
   elseif race.mode == "multiplayer" then
     self.primary.label:SetText("RETURN TO PITS")
   else
     self.primary.label:SetText("RACE AGAIN")
   end
+  if not race.grandPrix then self.cupLine:Hide() end
 
   self.animTime, self.revealed = 0, 0
   self.ticker:Show()
@@ -330,17 +386,37 @@ end
 function Results:ShowGrandPrix(gp)
   self:Build()
   self.grandPrixComplete = true
+  -- Kept so the finished cup can be inspected after the race is torn down.
+  self.lastGrandPrix = gp
   self.title:SetText(gp.cup.name:upper() .. " COMPLETE")
   self.title:SetTextColor(unpack(AK.COLORS.gold))
   self.subtitle:SetText("Trophy added to your garage.")
 
   local standings = {}
-  for name, points in pairs(gp.points) do table.insert(standings, { name = name, points = points }) end
-  table.sort(standings, function(a, b) return a.points > b.points end)
+  for key, points in pairs(gp.points) do
+    table.insert(standings,
+      { key = key, name = (gp.names and gp.names[key]) or key, points = points })
+  end
+  -- Name as the tiebreak, so two racers level on points cannot swap places
+  -- every time the screen is opened: pairs() deals in a different order each
+  -- run, and the cup champion is not something to leave to that.
+  table.sort(standings, function(a, b)
+    if a.points ~= b.points then return a.points > b.points end
+    return a.name < b.name
+  end)
 
+  -- THE CHAMPION, NOT WHOEVER WON THE LAST RACE. This reframed whatever model
+  -- happened to be loaded -- which is the winner of the final race -- and put
+  -- the cup champion's NAME under it. They are frequently not the same person.
+  local championName = standings[1] and standings[1].name
+  local champion = championName and racerByName(championName)
+  if champion then
+    AK.Model:SetSpec(self.winner, champion.model)
+    AK.Model:SetSeat(self.winner, champion)
+  end
   AK.Model:Reframe(self.winner)
   self.winner:SetShown(AK.Model:IsReady(self.winner))
-  self.winnerName:SetText(standings[1] and standings[1].name or "")
+  self.winnerName:SetText(championName or "")
   self.winnerTag:SetText("CUP CHAMPION")
 
   self.rowCount = 0
@@ -361,9 +437,18 @@ function Results:ShowGrandPrix(gp)
       row.slide = nil
     end
   end
-  self.stats:SetText("")
-  self.splits:SetText("")
+  -- The four circuits it took, rather than an empty strip where the race stats
+  -- were: a cup is the set of tracks, and this is the one screen that can say
+  -- so without the player having to remember.
+  local names = {}
+  for _, trackId in ipairs(gp.cup.tracks) do
+    names[#names + 1] = AK:GetTrack(trackId).name:upper()
+  end
+  self.stats:SetText(table.concat(names, "     "))
+  self.splits:SetText(("%d RACES  --  %d POINTS AVAILABLE"):format(
+    #gp.cup.tracks, #gp.cup.tracks * 8))
   self.reward:SetText("CUP TROPHY UNLOCKED")
+  self.cupLine:Hide()
   self.primary.label:SetText("BACK TO GARAGE")
   self.animTime, self.revealed = 0, 0
   self.ticker:Show()
