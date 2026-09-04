@@ -95,6 +95,10 @@ function UI:NewPanel(parent, width, height, color)
   return panel
 end
 
+--- What a button looks like at rest. Named because the selection grid has to
+--- be able to put a card BACK to it when the player picks a different one.
+UI.BUTTON_REST = { 0.18, 0.28, 0.42 }
+
 function UI:NewText(parent, text, size, color, justify)
   local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   label:SetFont(STANDARD_TEXT_FONT, size or 14, "OUTLINE")
@@ -172,7 +176,7 @@ end
 function UI:NewButton(parent, text, width, height, onClick)
   local button = CreateFrame("Button", nil, parent)
   button:SetSize(width, height)
-  button.restColor = { 0.18, 0.28, 0.42 }
+  button.restColor = { UI.BUTTON_REST[1], UI.BUTTON_REST[2], UI.BUTTON_REST[3] }
   button.restText = AK.COLORS.gold
 
   button.plate = newPlate(button, "BACKGROUND", "btn.tga", 0)
@@ -735,7 +739,11 @@ function Menu:BuildHome()
   -- WHAT YOU ARE ABOUT TO RACE, on the same screen as the button that starts
   -- it. The model, the circuit, your record on it and the combined stat line.
   local previewW = HOME.contentW - HOME.modeW - HOME.margin * 2 - HOME.gutter
-  local preview = UI:NewPanel(home, previewW, 400, { 0.055, 0.10, 0.17, .98 })
+  -- 420, not 400. The panel gained the racer's own line, and everything under
+  -- it is anchored rather than hand-placed, so a two-line quip pushes the stack
+  -- down -- which put the tokens-and-wins footer nine pixels through the bottom
+  -- edge. There is room: the panel starts 66 down a 520-tall content area.
+  local preview = UI:NewPanel(home, previewW, 420, { 0.055, 0.10, 0.17, .98 })
   preview:SetPoint("TOPRIGHT", -40, -66)
   self.preview = preview
   self.previewIcon = preview:CreateTexture(nil, "ARTWORK")
@@ -746,19 +754,36 @@ function Menu:BuildHome()
   self.previewModel:SetPoint("TOP", 0, -6)
   self.previewTitle = UI:NewText(preview, "", 19, AK.COLORS.gold, "CENTER")
   self.previewTitle:SetPoint("TOP", 0, -158)
+  -- The racer's line, next to the racer. It used to be printed on their card
+  -- in CHOOSE YOUR RACER, where eleven cards share a 960x520 panel and there
+  -- was no room for it -- so it went off the bottom of the card along with two
+  -- stat lines. Here there is exactly one racer and they are standing above it.
+  self.previewQuip = UI:NewText(preview, "", 11, { .58, .64, .74 }, "CENTER")
+  self.previewQuip:SetPoint("TOPLEFT", 20, -186)
+  self.previewQuip:SetPoint("TOPRIGHT", -20, -186)
   self.previewSub = UI:NewText(preview, "", 13, AK.COLORS.muted, "CENTER")
-  self.previewSub:SetPoint("TOP", self.previewTitle, "BOTTOM", 0, -5)
+  self.previewSub:SetPoint("TOP", self.previewQuip, "BOTTOM", 0, -8)
   self.previewRecord = UI:NewText(preview, "", 12, AK.COLORS.gold, "CENTER")
   self.previewRecord:SetPoint("TOP", self.previewSub, "BOTTOM", 0, -6)
+  -- ANCHORED, not hand-counted. A quip that wraps to two lines pushes
+  -- everything under it down, and a stack of fixed offsets would just draw the
+  -- bars through the text instead of moving out of its way.
   self.previewBars = {}
+  -- ONE point each, because two would fight: a TOPLEFT and a TOPRIGHT both
+  -- name a top, and the bars are already the panel's width less its margins,
+  -- so centring them on the record is the same x with none of the argument.
   for index, name in ipairs({ "SPEED", "ACCEL", "HANDLING", "DRIFT" }) do
     local bar = UI:NewStatBar(preview, previewW - 48, name)
-    bar:SetPoint("TOPLEFT", 24, -226 - (index - 1) * 18)
+    if index == 1 then
+      bar:SetPoint("TOP", self.previewRecord, "BOTTOM", 0, -9)
+    else
+      bar:SetPoint("TOP", self.previewBars[index - 1], "BOTTOM", 0, -4)
+    end
     self.previewBars[index] = bar
   end
   self.previewStats = UI:NewText(preview, "", 12, { .86, .92, 1 }, "LEFT")
-  self.previewStats:SetPoint("TOPLEFT", 24, -308)
-  self.previewStats:SetPoint("TOPRIGHT", -24, -308)
+  self.previewStats:SetPoint("TOPLEFT", self.previewBars[4], "BOTTOMLEFT", 0, -10)
+  self.previewStats:SetWidth(previewW - 48)
   self.previewStats:SetJustifyV("TOP")
 
   -- Say so rather than printing the footer over the edge of the panel.
@@ -770,8 +795,10 @@ end
 
 function Menu:ShowMultiplayer()
   self:HideDynamic()
-  local page = self:AddDynamic(CreateFrame("Frame", nil, self.content))
-  page:SetAllPoints()
+  self:Page("multiplayer", function(page) self:BuildMultiplayer(page) end):Show()
+end
+
+function Menu:BuildMultiplayer(page)
   local header = UI:NewText(page, "PARTY & RAID RACING", 25, AK.COLORS.gold, "CENTER")
   header:SetPoint("TOP", 0, -35)
   -- 680x400, and the buttons stacked down the left with the lobby status
@@ -790,13 +817,16 @@ function Menu:ShowMultiplayer()
   -- four buttons has no reading order at all: which of the top two comes
   -- first is a coin toss, and one of them only makes sense after the other.
   local ACTIONS = {
-    { "OPEN PARTY LOBBY", function() if AK.Net:OpenLobby() then self:ShowMultiplayer() end end },
+    { "OPEN PARTY LOBBY", function() if AK.Net:OpenLobby() then page:akRefresh() end end },
     { "START HOST RACE", function() AK.Net:StartLobbyRace() end },
     { "JOIN ANNOUNCED LOBBY", function() AK.Net:JoinLobby() end },
     { "REFRESH LOBBIES", function()
         AK.Net:RefreshLobbies()
+        -- Replies come back over the addon channel, so there is a beat before
+        -- there is anything new to say. It only has to re-read the lobby now,
+        -- not tear the screen down and build it again.
         C_Timer.After(.35, function()
-          if self.frame and self.frame:IsShown() then self:ShowMultiplayer() end
+          if self.frame and self.frame:IsShown() then page:akRefresh() end
         end)
       end },
   }
@@ -820,23 +850,33 @@ function Menu:ShowMultiplayer()
   lobbyText:SetPoint("TOPLEFT", 330, -140)
   lobbyText:SetPoint("TOPRIGHT", -25, -140)
   lobbyText:SetJustifyV("TOP")
-  local own = AK.Net.lobby
-  local found = AK.Net.availableLobby
-  if own then
-    local count = 0
-    for _ in pairs(own.roster) do count = count + 1 end
-    lobbyText:SetText(("Hosting |cff%s%s|r\n%d racer%s ready\nTrack: %s"):format(AK:ColorHex(AK.COLORS.lime), own.id, count, count == 1 and "" or "s", AK:GetTrack(own.track).name))
-  elseif found then
-    local count = 0
-    for _ in pairs(found.roster or {}) do count = count + 1 end
-    lobbyText:SetText(("Lobby found\nHost: %s\nTrack: %s\n%d racer%s announced"):format(found.host, AK:GetTrack(found.track).name, count, count == 1 and "" or "s"))
-  else
-    lobbyText:SetText("No lobby announced yet.\nHave a friend open one, then revisit this screen.")
+  -- LIVE. This is the one readout on the screen that changes while you sit on
+  -- it: a lobby opens, a friend announces one, a racer joins. It was baked in
+  -- at build time and the four actions each rebuilt the whole page to update
+  -- it -- which is why REFRESH LOBBIES had to wait a third of a second and then
+  -- reconstruct everything. The page is kept now, so this is a refresh.
+  function page:akRefresh()
+    local own = AK.Net.lobby
+    local found = AK.Net.availableLobby
+    if own then
+      local count = 0
+      for _ in pairs(own.roster) do count = count + 1 end
+      lobbyText:SetText(("Hosting |cff%s%s|r\n%d racer%s ready\nTrack: %s"):format(
+        AK:ColorHex(AK.COLORS.lime), own.id, count, count == 1 and "" or "s",
+        AK:GetTrack(own.track).name))
+    elseif found then
+      local count = 0
+      for _ in pairs(found.roster or {}) do count = count + 1 end
+      lobbyText:SetText(("Lobby found\nHost: %s\nTrack: %s\n%d racer%s announced"):format(
+        found.host, AK:GetTrack(found.track).name, count, count == 1 and "" or "s"))
+    else
+      lobbyText:SetText(
+        "No lobby announced yet.\nHave a friend open one, then revisit this screen.")
+    end
   end
   local note = UI:NewText(panel, "Multiplayer fills empty grid spots with AI racers. Results and unlocks are saved locally for every participant.", 13, AK.COLORS.muted, "CENTER")
   note:SetPoint("BOTTOMLEFT", 35, 25)
   note:SetPoint("BOTTOMRIGHT", -35, 25)
-  page:Show()
 end
 
 function Menu:UpdateSummary()
@@ -854,6 +894,7 @@ function Menu:UpdateSummary()
     self.previewIcon:Show()
   end)
   self.previewTitle:SetText(racer.name .. " in the " .. kart.name)
+  self.previewQuip:SetText(racer.quip or "")
   self.previewSub:SetText(track.name .. "  /  " .. track.subtitle)
   -- Your record on the circuit you are about to race, on the screen you press
   -- QUICK RACE from. It was two menus away.
@@ -885,10 +926,40 @@ function Menu:AddDynamic(frame)
   return frame
 end
 
+--- A dynamic page, built once and kept.
+---
+--- A FRAME IS FOREVER. WoW has no way to destroy one -- Hide is all there is --
+--- so every Show* that called CreateFrame on entry was leaving its entire page
+--- behind on the way out and building another. CHOOSE YOUR RACER is eleven
+--- PlayerModel frames, each holding a streamed creature display: open it ten
+--- times in a session and a hundred and ten of them are alive and hidden, all
+--- still owned by the client. That is the compounding cost behind "racer
+--- select has some glitchyness" -- the screen gets slower and the models get
+--- less reliable the longer you play, and a fresh visit re-streams every model
+--- from scratch, which is the second of blank cards you see on the way in.
+---
+--- Built once, then refreshed. `akRefresh` is where anything that can change
+--- between visits gets re-read.
+function Menu:Page(key, build)
+  self.pages = self.pages or {}
+  local page = self.pages[key]
+  if not page then
+    page = CreateFrame("Frame", nil, self.content)
+    page:SetAllPoints()
+    self.pages[key] = page
+    build(page)
+  end
+  if page.akRefresh then page:akRefresh() end
+  return self:AddDynamic(page)
+end
+
 function Menu:ShowSelection(kind)
   self:HideDynamic()
-  local page = self:AddDynamic(CreateFrame("Frame", nil, self.content))
-  page:SetAllPoints()
+  local page = self:Page("select:" .. kind, function(page) self:BuildSelection(page, kind) end)
+  page:Show()
+end
+
+function Menu:BuildSelection(page, kind)
   local names = { racer = "CHOOSE YOUR RACER", kart = "CHOOSE YOUR KART", track = "CHOOSE YOUR TRACK", cup = "CHOOSE YOUR CUP" }
   local header = UI:NewText(page, names[kind], 25, AK.COLORS.gold, "CENTER")
   header:SetPoint("TOP", 0, -28)
@@ -911,23 +982,33 @@ function Menu:ShowSelection(kind)
   -- spilling.
   local MARGIN, TOP, GAP, BOTTOM, MIN_CARD = 42, 82, 18, 22, 150
   local availableW, availableH = 960 - MARGIN * 2, 520 - TOP - BOTTOM
+  -- RACERS DO NOT GROW COLUMNS. Eleven of them pushed the grid to five, which
+  -- is a 160x126 card -- and the racer card stacks a 78px model, a name, a
+  -- race, two stat lines, a blank and a quip into it. Rendered (SCREEN=racers
+  -- in Art/preview-ui.js) that overflowed by ONE HUNDRED AND TWENTY-TWO PIXELS
+  -- on a card a hundred and twenty-six tall: every card's text ran straight
+  -- through the row beneath it and the bottom row ran off the panel. Four
+  -- columns is what every racer's name fits on in one line, so it is fixed
+  -- there and the CARD was cut down to fit instead.
   local columns = kind == "racer" and 4 or 3
   local function rowsFor(n) return math.ceil(#entries / n) end
   local function heightFor(n)
     local rows = rowsFor(n)
     return math.floor((availableH - GAP * (rows - 1)) / rows)
   end
-  while columns < 5 and heightFor(columns) < MIN_CARD do columns = columns + 1 end
+  if kind ~= "racer" then
+    while columns < 5 and heightFor(columns) < MIN_CARD do columns = columns + 1 end
+  end
   local cardWidth = math.floor((availableW - GAP * (columns - 1)) / columns)
   local cardHeight = heightFor(columns)
 
+  local cards = {}
   for index, entry in ipairs(entries) do
     local card = UI:NewButton(page, "", cardWidth, cardHeight, function()
       AK.db.selection[kind] = entry.id
       self:ShowHome()
     end)
-    local chosen = AK.db.selection[kind] == entry.id
-    if chosen then card:SetRestStyle({ 0.44, 0.33, 0.09 }, { 1, 0.95, 0.80 }) end
+    cards[index] = { card = card, entry = entry }
     local col, row = (index - 1) % columns, math.floor((index - 1) / columns)
     card:SetPoint("TOPLEFT", MARGIN + col * (cardWidth + GAP), -TOP - row * (cardHeight + GAP))
     local icon = card:CreateTexture(nil, "ARTWORK")
@@ -941,7 +1022,8 @@ function Menu:ShowSelection(kind)
       shape:SetPoint("TOP", 0, -6)
     end
     if kind == "racer" then
-      local model = AK.Model:New(card, 78, 78, -0.6, 1, entry.model)
+      -- 64, not 78: the name sits at 68 and a 78px model ran underneath it.
+      local model = AK.Model:New(card, 64, 64, -0.6, 1, entry.model)
       model:SetPoint("TOP", 0, -2)
       icon:Hide()
       -- Model streaming is async; fall back to the flat icon if it never lands.
@@ -951,34 +1033,43 @@ function Menu:ShowSelection(kind)
         icon:Show()
       end)
     end
-    local name = UI:NewText(card, entry.name, 16,
-      chosen and { 1, 0.95, 0.80 } or AK.COLORS.gold, "CENTER")
+    local name = UI:NewText(card, entry.name, kind == "racer" and 14 or 16,
+      AK.COLORS.gold, "CENTER")
+    cards[index].name = name
     -- The track cards carry a 64px plan view where the others carry a 50px
-    -- icon, so the name starts a little lower on those.
-    local nameTop = kind == "track" and 68 or 72
+    -- icon, so the name starts a little lower on those; the racer cards carry
+    -- a model and are the shortest, so theirs starts higher still.
+    local nameTop = kind == "track" and 68 or (kind == "racer" and 68 or 72)
     name:SetPoint("TOPLEFT", 7, -nameTop)
     name:SetPoint("TOPRIGHT", -7, -nameTop)
-    if chosen then
-      -- A gold card IS the selection. Printing the word "SELECTED" under it as
-      -- well is a caption on a picture of itself; a mark in the corner is how
-      -- a game says it.
-      local tick = card:CreateTexture(nil, "OVERLAY")
-      tick:SetTexture(ART .. "chevron.tga")
-      tick:SetSize(12, 16)
-      tick:SetPoint("TOPLEFT", 9, -9)
-      tick:SetVertexColor(1, 0.95, 0.80, 1)
-    end
+    -- A gold card IS the selection. Printing the word "SELECTED" under it as
+    -- well is a caption on a picture of itself; a mark in the corner is how a
+    -- game says it. Built for every card and SHOWN for the chosen one, because
+    -- the page outlives the choice now.
+    local tick = card:CreateTexture(nil, "OVERLAY")
+    tick:SetTexture(ART .. "chevron.tga")
+    tick:SetSize(12, 16)
+    tick:SetPoint("TOPLEFT", 9, -9)
+    tick:SetVertexColor(1, 0.95, 0.80, 1)
+    cards[index].tick = tick
     -- ANCHORED TO THE NAME, not to a hand-counted -99. At five columns a card
     -- is 160px wide and "Stranglethorn Grand Prix" wraps to two lines, which
     -- ran the name straight through the detail underneath it. Flowing from the
     -- name's own bottom edge cannot collide however long a name gets.
-    local detail = UI:NewText(card, "", 12, AK.COLORS.muted, "CENTER")
+    -- 11pt on a racer card: at 12 the four-stat line is 190px wide against a
+    -- 187px card and wraps to a second line the card has no room for.
+    local detail = UI:NewText(card, "", kind == "racer" and 11 or 12, AK.COLORS.muted, "CENTER")
     detail:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 2, -7)
     detail:SetPoint("TOPRIGHT", name, "BOTTOMRIGHT", -2, -7)
     if kind == "racer" then
-      detail:SetText(("%s\nSPD %d  ACC %d  HND %d\nDRIFT %d  LUCK %d\n\n|cff%s%s|r"):format(
-        entry.race, entry.speed, entry.acceleration, entry.handling, entry.drift, entry.luck,
-        AK:ColorHex(AK.COLORS.muted), entry.quip or ""))
+      -- ONE LINE. The race, two stat lines, a blank and the quip is five lines
+      -- of text under a model on a 126px card, and it did not fit by a factor
+      -- of two. The quip has a home on the setup panel, where the racer you
+      -- have actually chosen is standing and there is room to read it; the
+      -- rest of the stats are on the bars there too. What a card in a grid of
+      -- eleven has to answer is "who is this and what are they good at".
+      detail:SetText(("SPD %d  ACC %d  HND %d  DRF %d"):format(
+        entry.speed, entry.acceleration, entry.handling, entry.drift))
     elseif kind == "kart" then
       detail:SetText(("%s\nSPD %d  ACC %d  HND %d\nWEIGHT %d  DRIFT %d"):format(entry.description, entry.speed, entry.acceleration, entry.handling, entry.weight, entry.drift))
     elseif kind == "cup" then
@@ -986,6 +1077,7 @@ function Menu:ShowSelection(kind)
       for _, trackId in ipairs(entry.tracks) do table.insert(names, AK:GetTrack(trackId).name) end
       detail:SetText(("%d races\n%s"):format(#entry.tracks, table.concat(names, "\n")))
     else
+      cards[index].detail = detail
       -- Lap count came off a hard-coded "3 laps" that would have lied the
       -- moment a circuit was authored with a different one.
       -- THREE LINES, not five. This used to carry the subtitle, the shortcut
@@ -998,7 +1090,26 @@ function Menu:ShowSelection(kind)
         AK:ColorHex(AK.COLORS.gold), trackRecord(entry.id)))
     end
   end
-  page:Show()
+
+  --- Everything that can have changed since the last visit.
+  function page:akRefresh()
+    for _, slot in ipairs(cards) do
+      local chosen = AK.db.selection[kind] == slot.entry.id
+      -- The unchosen colour is NewButton's own default, not a second copy of
+      -- it typed here: a card that has just been deselected has to go back to
+      -- looking exactly like one that was never chosen.
+      slot.card:SetRestStyle(chosen and { 0.44, 0.33, 0.09 } or UI.BUTTON_REST,
+        chosen and { 1, 0.95, 0.80 } or AK.COLORS.gold)
+      slot.name:SetTextColor(unpack(chosen and { 1, 0.95, 0.80 } or AK.COLORS.gold))
+      slot.tick:SetShown(chosen)
+      -- A lap record set since the page was built has to appear on it.
+      if slot.detail then
+        slot.detail:SetText(("%s\n%d LAPS  /  %dM\n|cff%s%s|r"):format(
+          slot.entry.subtitle, slot.entry.laps or 3, slot.entry.length,
+          AK:ColorHex(AK.COLORS.gold), trackRecord(slot.entry.id)))
+      end
+    end
+  end
 end
 
 --- The trophy room.
@@ -1009,22 +1120,23 @@ end
 --- may as well not have been there. This is that list.
 function Menu:ShowAchievements()
   self:HideDynamic()
-  local page = self:AddDynamic(CreateFrame("Frame", nil, self.content))
-  page:SetAllPoints()
+  self:Page("trophies", function(page) self:BuildAchievements(page) end):Show()
+end
+
+function Menu:BuildAchievements(page)
   local header = UI:NewText(page, "TROPHY ROOM", 25, AK.COLORS.gold, "CENTER")
   header:SetPoint("TOP", 0, -28)
   local back = UI:NewButton(page, "BACK", 120, 32, function() self:ShowHome() end)
   back:SetPoint("TOPLEFT", 25, -25)
 
-  local progress = AK.db.progress
-  local earned = progress.achievements or {}
   local order = AK.AchievementOrder or {}
-  local have = 0
-  for _, id in ipairs(order) do if earned[id] then have = have + 1 end end
 
-  local summary = UI:NewText(page,
-    ("%d of %d earned"):format(have, #order), 14, AK.COLORS.lime, "CENTER")
+  local summary = UI:NewText(page, "", 14, AK.COLORS.lime, "CENTER")
   summary:SetPoint("TOP", header, "BOTTOM", 0, -4)
+  -- The whole point of this screen is what you have EARNED, and that changes
+  -- every race. Colours, marks, the count and the career line are all set in
+  -- akRefresh below rather than baked in at build time.
+  local slots = {}
 
   -- Two columns, sized from the entry count rather than hard-coded, so adding
   -- an achievement re-flows instead of spilling off the panel.
@@ -1036,10 +1148,8 @@ function Menu:ShowAchievements()
   for index, id in ipairs(order) do
     local achievement = AK.Achievements[id]
     if achievement then
-      local got = earned[id] and true or false
       local column, row = (index - 1) % COLUMNS, math.floor((index - 1) / COLUMNS)
-      local card = UI:NewPanel(page, cardWidth, cardHeight,
-        got and { .10, .18, .12, .96 } or { .07, .09, .14, .94 })
+      local card = UI:NewPanel(page, cardWidth, cardHeight, { .07, .09, .14, .94 })
       card:SetPoint("TOPLEFT", MARGIN + column * (cardWidth + GAP), -TOP - row * (cardHeight + GAP))
 
       -- A tick versus an empty socket, so earned reads at a glance without
@@ -1047,31 +1157,43 @@ function Menu:ShowAchievements()
       -- a shape rather than drawing one is the loudest possible sign that
       -- nobody ever looked at the screen.
       local mark = card:CreateTexture(nil, "ARTWORK")
-      mark:SetTexture(ART .. (got and "tick.tga" or "socket.tga"))
       mark:SetSize(14, 14)
       mark:SetPoint("LEFT", 11, 0)
-      mark:SetVertexColor(unpack(got and AK.COLORS.gold or { .34, .38, .46 }))
 
-      local name = UI:NewText(card, achievement.name, 14,
-        got and AK.COLORS.gold or { .62, .66, .74 }, "LEFT")
+      local name = UI:NewText(card, achievement.name, 14, { .62, .66, .74 }, "LEFT")
       name:SetPoint("TOPLEFT", 30, -7)
-      local description = UI:NewText(card, achievement.description, 11,
-        got and { .78, .86, .78 } or { .44, .48, .56 }, "LEFT")
+      local description = UI:NewText(card, achievement.description, 11, { .44, .48, .56 }, "LEFT")
       description:SetPoint("TOPLEFT", 30, -25)
       description:SetWidth(cardWidth - 42)
       description:SetJustifyH("LEFT")
+      slots[#slots + 1] =
+        { id = id, card = card, mark = mark, name = name, description = description }
     end
   end
 
-  local trophies = 0
-  for _ in pairs(progress.trophies or {}) do trophies = trophies + 1 end
-  local stats = UI:NewText(page,
-    ("RACES %d      WINS %d      PODIUMS %d      CUPS %d      TOKENS %d")
-      :format(progress.races or 0, progress.wins or 0, progress.podiums or 0,
-        trophies, progress.coins or 0),
-    13, AK.COLORS.muted, "CENTER")
+  local stats = UI:NewText(page, "", 13, AK.COLORS.muted, "CENTER")
   stats:SetPoint("BOTTOM", 0, 18)
-  page:Show()
+
+  function page:akRefresh()
+    local progress = AK.db.progress
+    local earned = progress.achievements or {}
+    local have = 0
+    for _, slot in ipairs(slots) do
+      local got = earned[slot.id] and true or false
+      if got then have = have + 1 end
+      slot.card:SetPlateColor(got and { .10, .18, .12, .96 } or { .07, .09, .14, .94 })
+      slot.mark:SetTexture(ART .. (got and "tick.tga" or "socket.tga"))
+      slot.mark:SetVertexColor(unpack(got and AK.COLORS.gold or { .34, .38, .46 }))
+      slot.name:SetTextColor(unpack(got and AK.COLORS.gold or { .62, .66, .74 }))
+      slot.description:SetTextColor(unpack(got and { .78, .86, .78 } or { .44, .48, .56 }))
+    end
+    summary:SetText(("%d of %d earned"):format(have, #order))
+    local trophies = 0
+    for _ in pairs(progress.trophies or {}) do trophies = trophies + 1 end
+    stats:SetText(("RACES %d      WINS %d      PODIUMS %d      CUPS %d      TOKENS %d")
+      :format(progress.races or 0, progress.wins or 0, progress.podiums or 0,
+        trophies, progress.coins or 0))
+  end
 end
 
 --- WHAT EVERY SETTING ACTUALLY DOES.
@@ -1236,8 +1358,10 @@ end
 
 function Menu:ShowSettings()
   self:HideDynamic()
-  local page = self:AddDynamic(CreateFrame("Frame", nil, self.content))
-  page:SetAllPoints()
+  self:Page("settings", function(page) self:BuildSettings(page) end):Show()
+end
+
+function Menu:BuildSettings(page)
   local header = UI:NewText(page, "SETTINGS", 25, AK.COLORS.gold, "CENTER")
   header:SetPoint("TOP", 0, -22)
   local back = UI:NewButton(page, "BACK", 120, 32, function() self:ShowHome() end)
@@ -1293,7 +1417,13 @@ function Menu:ShowSettings()
   if used > 458 then
     AK:Print("Settings page overflows its panel by " .. math.ceil(used - 458) .. "px.")
   end
-  page:Show()
+
+  --- The page outlives a visit now, and a setting can be changed from outside
+  --- it -- RESTORE DEFAULTS, /kart tune, a fresh profile -- so every control
+  --- re-reads its value on the way in rather than on the way out.
+  function page:akRefresh()
+    for _, control in ipairs(controls) do control:Refresh() end
+  end
 end
 
 function Menu:Show()

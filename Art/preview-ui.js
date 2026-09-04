@@ -316,18 +316,28 @@ const half = (home.modeW - 8) / 2;
 
 // The setup preview on the right.
 const previewW = CW - home.modeW - M * 2 - home.gutter;
-panel(OX + CW - M - previewW, OY + 66, previewW, 400, PANEL, 0.98);
+panel(OX + CW - M - previewW, OY + 66, previewW, 420, PANEL, 0.98);
 {
   const px = OX + CW - M - previewW + previewW / 2, py = OY + 66;
   label(px, py + 66, "[ RACER MODEL ]", 12, [.30, .36, .46], "center");
   label(px, py + 158, "BAINE IN THE KODO", 19, GOLD, "center");
-  label(px, py + 186, "ELWYNN SPRINT  /  GOLDSHIRE'S FASTEST", 11, MUTED, "center");
-  label(px, py + 206, "LAP 33.46   RACE 1:44.21", 12, GOLD, "center");
+  // The racer's line, which used to be crammed onto their card in the grid.
+  // Everything under it is ANCHORED, in the game and here, because a quip that
+  // wraps to two lines has to push the rest of the panel down rather than have
+  // the panel drawn through it.
+  const quipBottom = labelWrapped(px, py + 186,
+    "Has not stood up since Oribos. Will not start now.", 11, [.58, .64, .74], previewW - 40);
+  const subBottom = labelWrapped(px, quipBottom + 8,
+    "ELWYNN SPRINT  /  GOLDSHIRE'S FASTEST", 13, MUTED, previewW - 40);
+  const recordBottom = labelWrapped(px, subBottom + 6,
+    "LAP 33.46   RACE 1:44.21", 12, GOLD, previewW - 40);
   // The four stat bars, laid out exactly as UI:NewStatBar does.
   const bx = OX + CW - M - previewW + 24, barW = previewW - 48;
   const track = barW - 72, gap = 2, cellW = (track - gap * 9) / 10;
+  let barsBottom = recordBottom;
   [["SPEED", 7], ["ACCEL", 6], ["HANDLING", 5], ["DRIFT", 8]].forEach(([name, v], i) => {
-    const y = py + 226 + i * 18;
+    const y = recordBottom + 9 + i * 16;
+    barsBottom = y + 12;
     label(bx, y + 2, name, 11, MUTED);
     for (let c = 0; c < 10; c++) {
       const t = c / 9;
@@ -340,9 +350,20 @@ panel(OX + CW - M - previewW, OY + 66, previewW, 400, PANEL, 0.98);
       }
     }
   });
-  label(bx, py + 308, "ELWYNN FOREST", 12, GOLD);
-  label(bx, py + 326, "Cut the river ford", 12, MUTED);
-  label(bx, py + 360, "TOKENS 240     WINS 12", 12, GOLD);
+  // LEFT, because previewStats is a LEFT-justified FontString anchored to the
+  // bars' own left edge -- centring it here was the sheet inventing a layout.
+  const step = Math.round(12 * 1.45);
+  label(bx, barsBottom + 10, "ELWYNN FOREST", 12, GOLD);
+  label(bx, barsBottom + 10 + step, "Cut the river ford", 12, MUTED);
+  const foot = barsBottom + 10 + step * 4;
+  label(bx, foot - step, "TOKENS 240     WINS 12", 12, GOLD);
+  // 420 is the panel's height in Menu:BuildHome. The whole stack is anchored
+  // now, so a longer quip pushes everything below it -- which is only an
+  // improvement if the bottom of the stack still lands inside the panel.
+  if (foot > py + 420 - 10) {
+    throw new Error("preview-ui: the setup panel overflows by "
+      + Math.ceil(foot - (py + 420 - 10)) + "px");
+  }
 }
 
 // ---- the track grid, on demand: SCREEN=tracks --------------------------------
@@ -405,6 +426,107 @@ if (process.env.SCREEN === "tracks") {
         + Math.ceil(ny - (y + cardH - 4)) + "px");
     }
   });
+}
+
+// ---- the racer / kart / cup grids: SCREEN=racers|karts|cups -------------------
+//
+// The same Menu:ShowSelection that draws the track grid draws these, off the
+// same column-growing maths -- but only the track cards had ever been looked
+// at. Racers were the worst of it: eleven entries push the grid to FIVE
+// columns, which makes a card 160x126, and the racer card stacks a name, a
+// race, two stat lines, a blank and a quip into it. Nobody had seen that.
+{
+  const KIND = process.env.SCREEN;
+  if (KIND === "racers" || KIND === "karts" || KIND === "cups") {
+    for (let i = 0; i < W * H; i++) { fb[i*3] = 0.030; fb[i*3+1] = 0.040; fb[i*3+2] = 0.070; }
+    panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);
+    const TITLE = { racers: "CHOOSE YOUR RACER", karts: "CHOOSE YOUR KART",
+      cups: "CHOOSE YOUR CUP" }[KIND];
+    label(OX + CW / 2, OY - 12, TITLE, 20, GOLD, "center");
+
+    const read = f => fs.readFileSync(path.join(__dirname, "..", "Data", f), "utf8");
+    const entries = [];
+    if (KIND === "racers") {
+      for (const b of read("Racers.lua").split(/\n  \{ id = "/).slice(1)) {
+        const id = b.slice(0, b.indexOf('"'));
+        const g = (re, d) => { const m = b.match(re); return m ? m[1] : d; };
+        entries.push({ id, name: g(/name = "([^"]+)"/, id),
+          lines: ["SPD " + g(/speed = (\d+)/, "0") + "  ACC " + g(/acceleration = (\d+)/, "0")
+            + "  HND " + g(/handling = (\d+)/, "0") + "  DRF " + g(/drift = (\d+)/, "0")] });
+      }
+    } else if (KIND === "karts") {
+      for (const b of read("Karts.lua").split(/\n  \{ id = "/).slice(1)) {
+        const id = b.slice(0, b.indexOf('"'));
+        const g = (re, d) => { const m = b.match(re); return m ? m[1] : d; };
+        entries.push({ id, name: g(/name = "([^"]+)"/, id),
+          lines: [
+            g(/description = "([^"]+)"/, ""),
+            "SPD " + g(/speed = (\d+)/, "0") + "  ACC " + g(/acceleration = (\d+)/, "0")
+              + "  HND " + g(/handling = (\d+)/, "0"),
+            "WEIGHT " + g(/weight = (\d+)/, "0") + "  DRIFT " + g(/drift = (\d+)/, "0"),
+          ] });
+      }
+    } else {
+      const TR = read("Tracks.lua");
+      const trackName = tid => (TR.match(new RegExp('id = "' + tid + '", name = "([^"]+)"')) || [, tid])[1];
+      // AK.Cups lives at the foot of Data/Tracks.lua, not in a file of its own.
+      const CUPS = TR.slice(TR.indexOf("AK.Cups = {"));
+      for (const b of CUPS.split(/\n  \{ id = "/).slice(1)) {
+        const id = b.slice(0, b.indexOf('"'));
+        const g = (re, d) => { const m = b.match(re); return m ? m[1] : d; };
+        const ids = [...(g(/tracks = \{([^}]*)\}/, "")).matchAll(/"(\w+)"/g)].map(m => m[1]);
+        entries.push({ id, name: g(/name = "([^"]+)"/, id),
+          lines: [ids.length + " races", ...ids.map(trackName)] });
+      }
+    }
+    if (!entries.length) throw new Error("preview-ui: parsed no " + KIND);
+
+    // Mirrors Menu:ShowSelection exactly -- including that it GROWS the column
+    // count until the cards clear MIN_CARD, and gives racers a head start of
+    // four columns because their cards carry a model rather than an icon.
+    const MARGIN = 42, TOP = 82, BOTTOM = 22, GAP = 18, MIN_CARD = 150;
+    const availableH = CH - TOP - BOTTOM;
+    const rowsFor = n => Math.ceil(entries.length / n);
+    const heightFor = n => Math.floor((availableH - GAP * (rowsFor(n) - 1)) / rowsFor(n));
+    // Racers are pinned at four; see the note in Menu:ShowSelection.
+    let columns = KIND === "racers" ? 4 : 3;
+    if (KIND !== "racers") while (columns < 5 && heightFor(columns) < MIN_CARD) columns++;
+    const cardW = Math.floor((CW - MARGIN * 2 - GAP * (columns - 1)) / columns);
+    const cardH = heightFor(columns);
+
+    let worst = null;
+    entries.forEach((e, i) => {
+      const col = i % columns, row = Math.floor(i / columns);
+      const x = OX + MARGIN + col * (cardW + GAP), y = OY - 40 + TOP + row * (cardH + GAP);
+      const chosen = i === 0;
+      slice(tex.btn, x, y, cardW, cardH, chosen ? [0.44, 0.33, 0.09] : REST, 1);
+      if (chosen && tex.chevron) blitUV(tex.chevron, x + 9, y + 9, 12, 16, 0, 1, 0, 1, LIT, 1);
+      if (KIND === "racers") {
+        // The model frame's footprint, so its collision with the name shows.
+        for (let dy = 0; dy < 64; dy++) for (let dx = 0; dx < 64; dx++)
+          blend(x + cardW / 2 - 32 + dx, y + 2 + dy, 0.30, 0.36, 0.46, 0.30);
+      } else {
+        for (let dy = 0; dy < 50; dy++) for (let dx = 0; dx < 50; dx++)
+          blend(x + cardW / 2 - 25 + dx, y + 15 + dy, 0.30, 0.36, 0.46, 0.30);
+      }
+      const nameTop = KIND === "racers" ? 68 : 72;
+      const nameSize = KIND === "racers" ? 14 : 16;
+      let ny = labelWrapped(x + cardW / 2, y + nameTop, e.name, nameSize,
+        chosen ? LIT : GOLD, cardW - 14);
+      ny += 7;
+      for (const line of e.lines) {
+        const size = KIND === "racers" ? 11 : 12;
+        if (line === "") { ny += Math.round(size * 1.45); continue; }
+        ny = labelWrapped(x + cardW / 2, ny, line, size, MUTED, cardW - 18);
+      }
+      const over = ny - (y + cardH - 4);
+      if (!worst || over > worst.over) worst = { id: e.id, over };
+    });
+    if (worst && worst.over > 0) {
+      throw new Error("preview-ui: " + KIND + " -- " + worst.id + "'s card overflows by "
+        + Math.ceil(worst.over) + "px (" + columns + " columns, " + cardW + "x" + cardH + ")");
+    }
+  }
 }
 
 // ---- the results screen, on demand: SCREEN=results ---------------------------

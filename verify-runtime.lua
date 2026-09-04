@@ -64,7 +64,15 @@ widget.__index = function(self, key)
   end
   return nil
 end
+--- Every widget ever created, counted by kind.
+---
+--- WoW cannot destroy a frame; Hide is the whole vocabulary. So a screen that
+--- builds itself again on every visit does not replace anything, it ADDS -- and
+--- for the racer grid what it adds is eleven PlayerModels a time. Counting is
+--- the only way to see that from outside.
+local widgetsMade = {}
 local function newWidget(kind, name, parent)
+  widgetsMade[kind] = (widgetsMade[kind] or 0) + 1
   local w = setmetatable({ akKind = kind, akName = name, akParent = parent,
     akShown = false, akPoints = {} }, widget)
   return w
@@ -832,6 +840,45 @@ if loadFailures == 0 then
     AK.Results:Show(race)
     AK.Results:Hide()
     AK.Race:Stop(true)
+  end)
+
+  -- A SCREEN MAY NOT BUILD ITSELF TWICE.
+  --
+  -- CHOOSE YOUR RACER is eleven PlayerModel frames, each streaming a creature
+  -- display, and every Show* used to CreateFrame a fresh page on entry. Every
+  -- screen did it, but that one is the expensive one. Nothing
+  -- in WoW destroys the old one, so ten visits in a session leave a hundred and
+  -- ten live PlayerModels behind, the screen gets slower the longer you play,
+  -- and each visit re-streams every model from scratch -- which is the second
+  -- of blank cards on the way in. The pages are cached and refreshed now, and
+  -- this is what says so: open every grid twice and count.
+  ok("opening a menu screen twice builds it once", function()
+    AK.Menu:Build()
+    AK.Menu:Show()
+    local function everyScreen()
+      for _, kind in ipairs({ "racer", "kart", "track", "cup" }) do
+        AK.Menu:ShowSelection(kind)
+      end
+      AK.Menu:ShowSettings()
+      AK.Menu:ShowAchievements()
+      AK.Menu:ShowMultiplayer()
+      AK.Menu:ShowHome()
+    end
+    everyScreen()
+    local before = {}
+    for kind, count in pairs(widgetsMade) do before[kind] = count end
+    for _ = 1, 3 do everyScreen() end
+    local leaked = {}
+    for kind, count in pairs(widgetsMade) do
+      local grew = count - (before[kind] or 0)
+      if grew > 0 then table.insert(leaked, ("%s +%d"):format(kind, grew)) end
+    end
+    table.sort(leaked)
+    say(("        three more passes over every menu screen: %s"):format(
+      #leaked > 0 and table.concat(leaked, ", ") or "nothing new built"))
+    assert(#leaked == 0,
+      "reopening the menu screens built new widgets: " .. table.concat(leaked, ", "))
+    AK.Menu:Hide()
   end)
 
   ok("the menu, the workshop and the sound editor all build", function()
