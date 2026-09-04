@@ -16,8 +16,7 @@ local Net = AK.Net
 --- that renumbers them. ApplySnapshot uses the client's own strsplit, which
 --- does keep empties -- one file, two splitters, two behaviours.
 local function split(message)
-  local values = {}
-  for value in string.gmatch(message, "([^\t]+)") do table.insert(values, value) end
+  local values = { strsplit("\t", message or "") }
   return values
 end
 
