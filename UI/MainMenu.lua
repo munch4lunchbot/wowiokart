@@ -743,52 +743,96 @@ function Menu:BuildHome()
   -- it is anchored rather than hand-placed, so a two-line quip pushes the stack
   -- down -- which put the tokens-and-wins footer nine pixels through the bottom
   -- edge. There is room: the panel starts 66 down a 520-tall content area.
-  local preview = UI:NewPanel(home, previewW, 420, { 0.055, 0.10, 0.17, .98 })
+  -- 434 is every pixel there is: the panel starts 66 down a 520-tall content
+  -- area and needs twenty at the bottom. The section rules that split this
+  -- panel into three cost about forty, and this is where a third of it came
+  -- from -- the rest came off the portrait.
+  local PREVIEW_H = 434
+  local PREVIEW_PORTRAIT = 132
+  local preview = UI:NewPanel(home, previewW, PREVIEW_H, { 0.055, 0.10, 0.17, .98 })
   preview:SetPoint("TOPRIGHT", -40, -66)
   self.preview = preview
   self.previewIcon = preview:CreateTexture(nil, "ARTWORK")
-  self.previewIcon:SetSize(86, 86)
+  self.previewIcon:SetSize(80, 80)
   self.previewIcon:SetPoint("TOP", 0, -22)
   -- The racer you have chosen, standing, three-quarter view, in the slot the
   -- flat icon used to hold. Standing for the same reason the cards are: this is
   -- a portrait of a person, not of someone sitting in a kart, and the seated
   -- pose at portrait distance is an unreadable hunch.
-  self.previewModel = AK.Model:New(preview, 150, 150, -0.5,
+  self.previewModel = AK.Model:New(preview, PREVIEW_PORTRAIT, PREVIEW_PORTRAIT, -0.5,
     AK.Model:PortraitZoom(), nil, AK.MODEL.anim.stand)
   self.previewModel:SetPoint("TOP", 0, -6)
   self.previewTitle = UI:NewText(preview, "", 19, AK.COLORS.gold, "CENTER")
-  self.previewTitle:SetPoint("TOP", 0, -158)
+  self.previewTitle:SetPoint("TOP", 0, -(PREVIEW_PORTRAIT + 8))
   -- The racer's line, next to the racer. It used to be printed on their card
   -- in CHOOSE YOUR RACER, where eleven cards share a 960x520 panel and there
   -- was no room for it -- so it went off the bottom of the card along with two
   -- stat lines. Here there is exactly one racer and they are standing above it.
   self.previewQuip = UI:NewText(preview, "", 11, { .58, .64, .74 }, "CENTER")
-  self.previewQuip:SetPoint("TOPLEFT", 20, -186)
-  self.previewQuip:SetPoint("TOPRIGHT", -20, -186)
-  self.previewSub = UI:NewText(preview, "", 13, AK.COLORS.muted, "CENTER")
-  self.previewSub:SetPoint("TOP", self.previewQuip, "BOTTOM", 0, -8)
-  self.previewRecord = UI:NewText(preview, "", 12, AK.COLORS.gold, "CENTER")
-  self.previewRecord:SetPoint("TOP", self.previewSub, "BOTTOM", 0, -6)
-  -- ANCHORED, not hand-counted. A quip that wraps to two lines pushes
-  -- everything under it down, and a stack of fixed offsets would just draw the
-  -- bars through the text instead of moving out of its way.
-  self.previewBars = {}
+  self.previewQuip:SetPoint("TOPLEFT", 20, -(PREVIEW_PORTRAIT + 36))
+  self.previewQuip:SetPoint("TOPRIGHT", -20, -(PREVIEW_PORTRAIT + 36))
+  -- THREE SUBJECTS, THREE SECTIONS.
+  --
+  -- This panel ran the racer's line, the circuit, your lap record, four stat
+  -- bars, the circuit's theme, its shortcut and your career totals down the
+  -- middle of a box in small caps with nothing between any of them. Three
+  -- different things -- who you are driving as, what you are about to drive,
+  -- and what you have done so far -- read as one wall of text, and the tokens
+  -- and wins at the bottom looked like they belonged to the circuit above
+  -- them. The left-hand column has said RACE and GARAGE over hairlines since
+  -- it was built; this is the same treatment for the other half of the screen.
+  local function section(title, anchor, gap)
+    local head = UI:NewText(preview, title, 10, AK.COLORS.gold, "LEFT")
+    head:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 2, -(gap or 12))
+    local line = preview:CreateTexture(nil, "ARTWORK")
+    line:SetTexture(ART .. "hairline.tga")
+    line:SetPoint("TOPLEFT", head, "BOTTOMLEFT", -2, -3)
+    line:SetPoint("TOPRIGHT", preview, "TOPRIGHT", -24, 0)
+    line:SetHeight(2)
+    line:SetVertexColor(1, 0.78, 0.30, 0.30)
+    return line
+  end
+
+  -- Anchors for the two rules, so the sections below can hang off them.
+  local buildRule = section("YOUR BUILD", self.previewQuip, 10)
   -- ONE point each, because two would fight: a TOPLEFT and a TOPRIGHT both
   -- name a top, and the bars are already the panel's width less its margins,
-  -- so centring them on the record is the same x with none of the argument.
+  -- so centring them is the same x with none of the argument.
+  self.previewBars = {}
   for index, name in ipairs({ "SPEED", "ACCEL", "HANDLING", "DRIFT" }) do
     local bar = UI:NewStatBar(preview, previewW - 48, name)
     if index == 1 then
-      bar:SetPoint("TOP", self.previewRecord, "BOTTOM", 0, -9)
+      bar:SetPoint("TOP", buildRule, "BOTTOM", 0, -6)
     else
       bar:SetPoint("TOP", self.previewBars[index - 1], "BOTTOM", 0, -4)
     end
     self.previewBars[index] = bar
   end
-  self.previewStats = UI:NewText(preview, "", 12, { .86, .92, 1 }, "LEFT")
-  self.previewStats:SetPoint("TOPLEFT", self.previewBars[4], "BOTTOMLEFT", 0, -10)
-  self.previewStats:SetWidth(previewW - 48)
-  self.previewStats:SetJustifyV("TOP")
+
+  local circuitRule = section("NEXT CIRCUIT", self.previewBars[4], 12)
+  self.previewSub = UI:NewText(preview, "", 13, { .86, .92, 1 }, "CENTER")
+  self.previewSub:SetPoint("TOPLEFT", preview, "TOPLEFT", 20, 0)
+  self.previewSub:SetPoint("TOP", circuitRule, "BOTTOM", 0, -8)
+  self.previewSub:SetPoint("TOPRIGHT", preview, "TOPRIGHT", -20, 0)
+  self.previewStats = UI:NewText(preview, "", 11, AK.COLORS.muted, "CENTER")
+  self.previewStats:SetPoint("TOPLEFT", preview, "TOPLEFT", 20, 0)
+  self.previewStats:SetPoint("TOP", self.previewSub, "BOTTOM", 0, -5)
+  self.previewStats:SetPoint("TOPRIGHT", preview, "TOPRIGHT", -20, 0)
+  self.previewRecord = UI:NewText(preview, "", 12, AK.COLORS.gold, "CENTER")
+  self.previewRecord:SetPoint("TOP", self.previewStats, "BOTTOM", 0, -6)
+
+  -- ON THE FLOOR, under its own rule. Your career totals have nothing to do
+  -- with the circuit they were sitting under, and pinning them means a
+  -- two-line quip or a long shortcut cannot push them off the panel.
+  self.previewCareer = UI:NewText(preview, "", 12, { .86, .92, 1 }, "CENTER")
+  self.previewCareer:SetPoint("BOTTOMLEFT", 20, 12)
+  self.previewCareer:SetPoint("BOTTOMRIGHT", -20, 12)
+  local careerRule = preview:CreateTexture(nil, "ARTWORK")
+  careerRule:SetTexture(ART .. "hairline.tga")
+  careerRule:SetPoint("BOTTOMLEFT", self.previewCareer, "TOPLEFT", -2, 9)
+  careerRule:SetPoint("BOTTOMRIGHT", self.previewCareer, "TOPRIGHT", 2, 9)
+  careerRule:SetHeight(2)
+  careerRule:SetVertexColor(1, 0.78, 0.30, 0.20)
 
   -- Say so rather than printing the footer over the edge of the panel.
   local used = footTop + HOME.footH
@@ -949,7 +993,7 @@ function Menu:UpdateSummary()
   end)
   self.previewTitle:SetText(racer.name .. " in the " .. kart.name)
   self.previewQuip:SetText(racer.quip or "")
-  self.previewSub:SetText(track.name .. "  /  " .. track.subtitle)
+  self.previewSub:SetText(track.name)
   -- Your record on the circuit you are about to race, on the screen you press
   -- QUICK RACE from. It was two menus away.
   self.previewRecord:SetText(trackRecord(track.id))
@@ -961,10 +1005,12 @@ function Menu:UpdateSummary()
     math.floor((racer.drift + kart.drift) / 2),
   }
   for index, bar in ipairs(self.previewBars) do bar:Set(combined[index]) end
-  self.previewStats:SetText(("|cff%s%s|r\n%s\n\nTOKENS |cff%s%d|r     WINS |cff%s%d|r")
-    :format(AK:ColorHex(AK.COLORS.gold), track.theme, track.shortcut,
-      AK:ColorHex(AK.COLORS.gold), AK.db.progress.coins,
-      AK:ColorHex(AK.COLORS.gold), AK.db.progress.wins))
+  self.previewStats:SetText(("%s  --  %s\n%s"):format(
+    track.subtitle, track.theme, track.shortcut))
+  self.previewCareer:SetText(("TOKENS |cff%s%d|r     WINS |cff%s%d|r     RACES |cff%s%d|r")
+    :format(AK:ColorHex(AK.COLORS.gold), AK.db.progress.coins,
+      AK:ColorHex(AK.COLORS.gold), AK.db.progress.wins,
+      AK:ColorHex(AK.COLORS.gold), AK.db.progress.races))
 end
 
 function Menu:ShowHome()
@@ -1035,6 +1081,11 @@ function Menu:BuildSelection(page, kind)
   -- height cannot change, so adding an eighth track re-flows instead of
   -- spilling.
   local MARGIN, TOP, GAP, BOTTOM, MIN_CARD, MAX_CARD = 42, 82, 18, 22, 150, 210
+  -- Three cups is ONE row, so their card is allowed to be taller than the cap
+  -- the grids need -- but only as tall as it has content for. At 300 the extra
+  -- ninety pixels landed as a hole in the middle of the plate, which is the
+  -- same fault as the empty panel, moved inside the card.
+  local CUP_CARD = 248
   -- What a racer card's text needs under the portrait: a name that may wrap to
   -- two lines at 14pt, the gap, two short stat lines at 11pt, and a margin.
   -- The portrait gets everything else, so adding a twelfth racer shrinks the
@@ -1074,7 +1125,13 @@ function Menu:BuildSelection(page, kind)
   -- dark bands across the top and bottom of every card. The tallest thing any
   -- of these cards carries is a cup's four circuit names under an icon and a
   -- title, which comes to about a hundred and eighty.
-  local cardHeight = math.min(heightFor(columns), MAX_CARD)
+  -- A CUP CARD IS THE ONLY ONE WITH A WHOLE ROW TO ITSELF, so it gets to be
+  -- taller. Three cups is one row of a 416px space, and at MAX_CARD that left
+  -- two hundred pixels of empty panel above and below a strip of cards --
+  -- the emptiest screen in the game, on the one that picks the longest thing
+  -- you can do in it. The extra height goes into bigger circuit plans and into
+  -- saying whether the cup has actually been won.
+  local cardHeight = math.min(heightFor(columns), kind == "cup" and CUP_CARD or MAX_CARD)
   -- Whatever height that leaves over goes above and below the grid, so a short
   -- grid sits in the middle of the panel instead of hanging from its top edge.
   local rows = rowsFor(columns)
@@ -1099,6 +1156,9 @@ function Menu:BuildSelection(page, kind)
     -- small one -- there it is only the fallback for a model that has not
     -- streamed, and it has to sit in the model's own 64px slot.
     local iconSize = kind == "kart" and 68 or 50
+    -- How tall the cup's row of circuit plans came out, so the name below can
+    -- be placed under it rather than at a hand-counted offset.
+    local cupPlan = 44
     local icon = card:CreateTexture(nil, "ARTWORK")
     icon:SetSize(iconSize, iconSize)
     icon:SetPoint("TOP", 0, kind == "kart" and -10 or -15)
@@ -1135,11 +1195,13 @@ function Menu:BuildSelection(page, kind)
       -- many hairpins, how many long sweeps, whether it is a fast set or a
       -- technical one, at a glance.
       icon:Hide()
-      local plan = 44
-      local span = #entry.tracks * plan
+      -- Sized from the card rather than fixed at 44, so the plans grow with it.
+      cupPlan = math.max(36, math.min(72,
+        math.floor((cardWidth - 18) / math.max(1, #entry.tracks))))
+      local span = #entry.tracks * cupPlan
       for slot, trackId in ipairs(entry.tracks) do
-        local shape = UI:NewTrackShape(card, AK:GetTrack(trackId), plan)
-        shape:SetPoint("TOP", -span * 0.5 + plan * (slot - 0.5), -8)
+        local shape = UI:NewTrackShape(card, AK:GetTrack(trackId), cupPlan)
+        shape:SetPoint("TOP", -span * 0.5 + cupPlan * (slot - 0.5), -10)
       end
     end
     if kind == "racer" then
@@ -1174,7 +1236,9 @@ function Menu:BuildSelection(page, kind)
     -- a model and are the shortest, so theirs starts higher still.
     local nameTop = (kind == "track" and 68)
       or (kind == "racer" and (RACER_PORTRAIT + 8))
-      or (kind == "cup" and 58)
+      -- Under the plans, whatever size they came out -- they scale with the
+      -- card now, so a hand-counted 58 would sit on top of them.
+      or (kind == "cup" and (cupPlan + 18))
       or (kind == "kart" and 84) or 72
     name:SetPoint("TOPLEFT", 7, -nameTop)
     name:SetPoint("TOPRIGHT", -7, -nameTop)
@@ -1195,6 +1259,25 @@ function Menu:BuildSelection(page, kind)
     -- 11pt on a racer card: at 12 the four-stat line is 190px wide against a
     -- 187px card and wraps to a second line the card has no room for.
     local detail = UI:NewText(card, "", kind == "racer" and 11 or 12, AK.COLORS.muted, "CENTER")
+    -- THE NUMBERS GO ON THE FLOOR, THE PROSE HANGS OFF THE NAME.
+    --
+    -- Every card's whole text block flowed from the name's bottom edge, and
+    -- both the name and the blurb under it wrap to one line or two depending
+    -- on how long they happen to be. So "3 LAPS / 2500M" sat at four different
+    -- heights across a row of five track cards, and a kart's stat lines at
+    -- three across a row of four -- a grid of numbers that will not line up,
+    -- which is the difference between a layout and an accident. Prose being
+    -- ragged reads as prose; a column of figures being ragged reads as broken.
+    --
+    -- The racer cards were fixed this way already; this is the same fix for
+    -- the other two grids that carry figures.
+    local stat
+    if kind == "track" or kind == "kart" or kind == "cup" then
+      stat = UI:NewText(card, "", 12, AK.COLORS.muted, "CENTER")
+      stat:SetPoint("BOTTOMLEFT", 2, 9)
+      stat:SetPoint("BOTTOMRIGHT", -2, 9)
+      cards[index].stat = stat
+    end
     if kind == "racer" then
       -- PINNED TO THE FLOOR, not flowed from the name. Six of the eleven names
       -- fit on one line at this width and five wrap to two, so a stat block
@@ -1221,22 +1304,41 @@ function Menu:BuildSelection(page, kind)
       detail:SetText(("SPD %d   ACC %d\nHND %d   DRF %d"):format(
         entry.speed, entry.acceleration, entry.handling, entry.drift))
     elseif kind == "kart" then
-      detail:SetText(("%s\nSPD %d  ACC %d  HND %d\nWEIGHT %d  DRIFT %d"):format(entry.description, entry.speed, entry.acceleration, entry.handling, entry.weight, entry.drift))
+      detail:SetText(entry.description)
+      -- The same three-letter codes the racer cards use. This card said
+      -- "SPD ACC HND" on one line and "WEIGHT DRIFT" on the next -- two
+      -- naming schemes for five stats, on the same card, in the same colour.
+      stat:SetText(("SPD %d  ACC %d  HND %d\nDRF %d  WGT %d"):format(
+        entry.speed, entry.acceleration, entry.handling, entry.drift, entry.weight))
     elseif kind == "cup" then
-      local names = {}
-      for _, trackId in ipairs(entry.tracks) do table.insert(names, AK:GetTrack(trackId).name) end
-      detail:SetText(("%d races\n%s"):format(#entry.tracks, table.concat(names, "\n")))
+      local names, metres = {}, 0
+      for _, trackId in ipairs(entry.tracks) do
+        local circuit = AK:GetTrack(trackId)
+        table.insert(names, circuit.name)
+        metres = metres + (circuit.length or 0) * (circuit.laps or 3)
+      end
+      detail:SetText(table.concat(names, "\n"))
+      -- WHETHER YOU HAVE WON IT. The trophy has been recorded since the cup
+      -- screen was written and this was the one place that never said so, so
+      -- the only way to find out which cups you still owed was to open the
+      -- trophy room and count. A cup is the longest commitment in the game;
+      -- the screen that starts one should say whether it is a rerun.
+      local won = AK.db.progress.trophies and AK.db.progress.trophies[entry.id]
+      stat:SetText(("%d RACES  /  %dM\n|cff%s%s|r"):format(
+        #entry.tracks, metres,
+        AK:ColorHex(won and AK.COLORS.gold or AK.COLORS.muted),
+        won and "CUP WON" or "NOT YET WON"))
     else
-      cards[index].detail = detail
-      -- Lap count came off a hard-coded "3 laps" that would have lied the
-      -- moment a circuit was authored with a different one.
       -- THREE LINES, not five. This used to carry the subtitle, the shortcut
       -- blurb, the lap count, a blank and the record -- and with five columns
       -- the cards are 160px wide, so the subtitle wraps and the name wraps and
       -- the whole stack ran off the bottom of the card. The shortcut already
       -- has a home on the setup panel, where there is room to read it.
-      detail:SetText(("%s\n%d LAPS  /  %dM\n|cff%s%s|r"):format(
-        entry.subtitle, entry.laps or 3, entry.length,
+      detail:SetText(entry.subtitle)
+      -- Lap count came off a hard-coded "3 laps" that would have lied the
+      -- moment a circuit was authored with a different one.
+      stat:SetText(("%d LAPS  /  %dM\n|cff%s%s|r"):format(
+        entry.laps or 3, entry.length,
         AK:ColorHex(AK.COLORS.gold), trackRecord(entry.id)))
     end
   end
@@ -1273,9 +1375,9 @@ function Menu:BuildSelection(page, kind)
       slot.name:SetTextColor(unpack(chosen and { 1, 0.95, 0.80 } or AK.COLORS.gold))
       slot.tick:SetShown(chosen)
       -- A lap record set since the page was built has to appear on it.
-      if slot.detail then
-        slot.detail:SetText(("%s\n%d LAPS  /  %dM\n|cff%s%s|r"):format(
-          slot.entry.subtitle, slot.entry.laps or 3, slot.entry.length,
+      if kind == "track" and slot.stat then
+        slot.stat:SetText(("%d LAPS  /  %dM\n|cff%s%s|r"):format(
+          slot.entry.laps or 3, slot.entry.length,
           AK:ColorHex(AK.COLORS.gold), trackRecord(slot.entry.id)))
       end
     end

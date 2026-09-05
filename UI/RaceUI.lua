@@ -1298,13 +1298,35 @@ function RaceUI:Build()
   --
   -- Start gantry: three lamps that light one per countdown tick and go green
   -- together on GO. A countdown you can SEE beats a number you have to read.
-  self.startLights = CreateFrame("Frame", nil, self.hudLayer)
+  --
+  -- IT IS THE FIRST THING YOU SEE, EVERY SINGLE RACE.
+  --
+  -- And it was a black rectangle with three red smudges on it: a raw SOLID
+  -- quad and three additive blobs, square-cornered, floating in the sky above
+  -- the horizon. Nothing else in this game looks like that -- every panel the
+  -- player meets in the menus is a rounded plate with a warm edge -- so the
+  -- one piece of furniture that opens the race looked like a placeholder
+  -- somebody meant to come back to.
+  --
+  -- It is a plated housing now, with a bezel round each lamp and a dark bulb
+  -- behind it, so an unlit lamp reads as a lamp that is off rather than as an
+  -- absence, and a lit one has something solid to be bright against.
+  self.startLights = UI:NewPanel(self.hudLayer, HUD.lights.w, HUD.lights.h,
+    { .05, .06, .09, .96 })
   self.startLights:Hide()
-  self.startLights.bar = makeTexture(self.startLights, "ARTWORK", { .06, .07, .10, .95 }, 0)
-  self.startLights.bar:SetAllPoints()
   self.startLights.lamps = {}
+  self.startLights.bulbs = {}
+  self.startLights.bezels = {}
   for i = 1, 3 do
-    self.startLights.lamps[i] = makeGlow(self.startLights, "OVERLAY", { 1, .22, .18, 1 }, i)
+    -- The bulb: a dark disc, so the lamp has a body when it is not lit.
+    local bulb = makeTexture(self.startLights, "ARTWORK", { .07, .07, .09, 1 }, 1, "glow.tga")
+    self.startLights.bulbs[i] = bulb
+    -- The light itself, additive over the bulb.
+    self.startLights.lamps[i] = makeGlow(self.startLights, "ARTWORK", { 1, .22, .18, 1 }, 2)
+    -- And the rim that holds it, so three lamps read as three fittings in a
+    -- gantry rather than three coloured stains on a board.
+    local bezel = makeTexture(self.startLights, "OVERLAY", { .46, .50, .58, 1 }, 0, "socket.tga")
+    self.startLights.bezels[i] = bezel
   end
 
   -- Lap split against your best, shown for a couple of seconds on each cross.
@@ -2530,16 +2552,42 @@ function RaceUI:UpdatePresentation(race, dt)
       placeHud(self.startLights, HUD.lights)
       self.startLights:SetSize(HUD.lights.w, HUD.lights.h)
       for i, lamp in ipairs(self.startLights.lamps) do
+        local x = (i - 2) * gap
+        local on = self.lightsGreen or i <= (self.lightsLit or 0)
+        local bulb = self.startLights.bulbs[i]
+        bulb:SetSize(lampSize * 0.92, lampSize * 0.92)
+        bulb:ClearAllPoints()
+        bulb:SetPoint("CENTER", self.startLights, "CENTER", x, 0)
+        -- A lit bulb takes some of its own colour, so the dark disc under the
+        -- glow does not grey it out.
+        if self.lightsGreen then
+          bulb:SetVertexColor(0.06, 0.20, 0.10, 1)
+        elseif on then
+          bulb:SetVertexColor(0.22, 0.05, 0.05, 1)
+        else
+          bulb:SetVertexColor(0.07, 0.07, 0.09, 1)
+        end
         lamp:SetSize(lampSize, lampSize)
         lamp:ClearAllPoints()
-        lamp:SetPoint("CENTER", self.startLights, "CENTER", (i - 2) * gap, 0)
-        local on = i <= (self.lightsLit or 0)
+        lamp:SetPoint("CENTER", self.startLights, "CENTER", x, 0)
         if self.lightsGreen then
           lamp:SetVertexColor(0.30, 1.0, 0.38, 1)
           lamp:SetAlpha(0.95)
         else
           lamp:SetVertexColor(1.0, 0.22, 0.18, 1)
-          lamp:SetAlpha(on and 0.95 or 0.14)
+          lamp:SetAlpha(on and 0.95 or 0.10)
+        end
+        local bezel = self.startLights.bezels[i]
+        bezel:SetSize(lampSize * 1.18, lampSize * 1.18)
+        bezel:ClearAllPoints()
+        bezel:SetPoint("CENTER", self.startLights, "CENTER", x, 0)
+        -- The rim catches the lamp it is holding.
+        if self.lightsGreen then
+          bezel:SetVertexColor(0.52, 0.78, 0.56, 1)
+        elseif on then
+          bezel:SetVertexColor(0.78, 0.46, 0.42, 1)
+        else
+          bezel:SetVertexColor(0.34, 0.37, 0.44, 1)
         end
       end
     end

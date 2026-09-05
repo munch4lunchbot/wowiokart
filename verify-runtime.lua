@@ -1914,7 +1914,12 @@ if loadFailures == 0 then
       assert(seen[index] == id,
         ("race %d ran %s, the cup says %s"):format(index, tostring(seen[index]), id))
     end
-    assert(AK.db.progress.trophies[cup.id], "finishing the cup awarded no trophy")
+    assert(AK.db.progress.trophies[cup.id], "winning the cup awarded no trophy")
+    assert(AK.db.progress.achievements.cup_champion,
+      "winning the cup did not unlock Realm First!")
+    assert((AK.Results.title:GetText() or ""):find("WON"),
+      ("the podium for a cup the player won reads %q")
+        :format(tostring(AK.Results.title:GetText())))
 
     -- And the champion on the podium is the champion in the table.
     local gp = AK.Results.lastGrandPrix
@@ -1932,6 +1937,75 @@ if loadFailures == 0 then
         tostring(AK.Results.winnerName:GetText()), tostring(top)))
     say(("        %s: %d races, champion %s on %d points"):format(
       cup.name, #cup.tracks, top, topPoints))
+    AK.Results:Hide()
+    AK.Race:Stop(true)
+    AK.Menu:Hide()
+  end)
+
+  -- AND THE CUP THE PLAYER LOSES.
+  --
+  -- The check above drives a cup the player wins every race of, which is the
+  -- easy half: it passed just as happily when the trophy was handed out for
+  -- turning up. This one comes LAST in every race of a different cup and
+  -- insists that nothing is awarded, nothing is unlocked, and the screen does
+  -- not congratulate anybody.
+  ok("losing a cup awards no trophy", function()
+    AK.db.progress.trophies = {}
+    AK.db.progress.achievements = {}
+    AK.db.selection.cup = "frontier"
+    AK.Race:StartGrandPrix()
+    local cup = AK.Race.current.grandPrix.cup
+    for _ = 1, #cup.tracks do
+      local race = AK.Race.current
+      race.state = AK.RACE_STATES.RACING
+      -- Reverse of the winning run: the player is vehicles[1], so give that
+      -- kart the SLOWEST time and the field comes home ahead of it every time.
+      local count = #race.vehicles
+      for index, vehicle in ipairs(race.vehicles) do
+        vehicle.finished = true
+        vehicle.finishTime = 90 + (count - index + 1)
+        vehicle.lap = race.laps
+      end
+      AK.Race:UpdatePositions(race)
+      assert(race.positions[race.player] == count,
+        ("the player should be last, the table says %s")
+          :format(tostring(race.positions[race.player])))
+      AK.Race:FinishRace(race)
+      AK.Race:NextGrandPrix()
+    end
+    assert(not AK.db.progress.trophies[cup.id],
+      "coming last in every race of a cup still put a trophy in the garage")
+    assert(not AK.db.progress.achievements.cup_champion,
+      "coming last in every race of a cup still unlocked Realm First!")
+    local gp = AK.Results.lastGrandPrix
+    assert(gp and gp.won == false, "the cup does not know it was lost")
+    assert(gp.yourPlace and gp.yourPlace > 1,
+      ("the player placed %s in a cup they lost every race of")
+        :format(tostring(gp.yourPlace)))
+    local title = AK.Results.title:GetText() or ""
+    assert(not title:find("WON"),
+      ("the podium for a lost cup reads %q"):format(title))
+    local reward = AK.Results.reward:GetText() or ""
+    assert(not reward:find("UNLOCKED"),
+      ("a lost cup still says %q"):format(reward))
+    -- And the row the player is actually looking for is marked.
+    local marked = 0
+    for index = 1, AK.Results.rowCount do
+      if AK.Results.rows[index].accent.akShown then marked = marked + 1 end
+    end
+    assert(marked >= 2,
+      ("the championship table marks %d rows; the leader and the player are two")
+        :format(marked))
+    -- THE TABLE MUST FIT THE SCREEN. Every round of a cup used to roll its own
+    -- grid, so the points table accumulated everyone who had ever started --
+    -- ten competitors in eight rows, with the player off the bottom of their
+    -- own trophy screen.
+    assert(#gp.standings <= #AK.Results.rows,
+      ("%d competitors in a table with %d rows: the cup changed its field")
+        :format(#gp.standings, #AK.Results.rows))
+    assert(gp.yourPlace <= #AK.Results.rows, "the player is off the bottom of the table")
+    say(("        %s: player %s of %d, no trophy")
+      :format(cup.name, tostring(gp.yourPlace), AK.Results.rowCount))
     AK.Results:Hide()
     AK.Race:Stop(true)
     AK.Menu:Hide()

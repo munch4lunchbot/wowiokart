@@ -263,17 +263,10 @@ end
 --- the player's line is found the same way.
 local function cupStandingLine(gp, player)
   if not gp or not gp.points then return "" end
-  local standings = {}
-  for key, points in pairs(gp.points) do
-    standings[#standings + 1] =
-      { key = key, name = (gp.names and gp.names[key]) or key, points = points }
-  end
-  -- Sorted by points, then by name so the order cannot wobble between two
-  -- racers on the same score -- pairs() deals in a different order every time.
-  table.sort(standings, function(a, b)
-    if a.points ~= b.points then return a.points > b.points end
-    return a.name < b.name
-  end)
+  -- One comparator, in Race:CupStandings. This screen used to keep its own copy
+  -- twice over, which is how the table on the podium comes to disagree with the
+  -- trophy in the garage.
+  local standings = AK.Race:CupStandings(gp)
   local mine = player and (player.owner or (player.racer and player.racer.name))
   local yourPlace, yourPoints
   for index, entry in ipairs(standings) do
@@ -403,6 +396,7 @@ function Results:Show(race)
     table.insert(splits, ("L%d %s"):format(lap, AK.RaceUI:FormatTime(split)))
   end
   self.splits:SetText(table.concat(splits, "     "))
+  self.reward:SetTextColor(unpack(AK.COLORS.lime))
   self.reward:SetText(("+%d RACE TOKENS   /   GARAGE TOTAL: %d"):format(
     race.rewardCoins or 0, AK.db.progress.coins))
 
@@ -432,22 +426,30 @@ function Results:ShowGrandPrix(gp)
   self.grandPrixComplete = true
   -- Kept so the finished cup can be inspected after the race is torn down.
   self.lastGrandPrix = gp
-  self.title:SetText(gp.cup.name:upper() .. " COMPLETE")
-  self.title:SetTextColor(unpack(AK.COLORS.gold))
-  self.subtitle:SetText("Trophy added to your garage.")
-
-  local standings = {}
-  for key, points in pairs(gp.points) do
-    table.insert(standings,
-      { key = key, name = (gp.names and gp.names[key]) or key, points = points })
+  local standings = gp.standings or AK.Race:CupStandings(gp)
+  -- WON, OR MERELY SURVIVED. This screen said "Trophy added to your garage"
+  -- and played the victory stinger for finishing four races in any order at
+  -- all -- see Race:NextGrandPrix. What it says now depends on whether the
+  -- cup was actually won, because that is the only version of this screen a
+  -- player can be proud of.
+  local yourPlace = gp.yourPlace
+  if not yourPlace and gp.you then
+    for index, entry in ipairs(standings) do
+      if entry.key == gp.you then yourPlace = index end
+    end
   end
-  -- Name as the tiebreak, so two racers level on points cannot swap places
-  -- every time the screen is opened: pairs() deals in a different order each
-  -- run, and the cup champion is not something to leave to that.
-  table.sort(standings, function(a, b)
-    if a.points ~= b.points then return a.points > b.points end
-    return a.name < b.name
-  end)
+  local won = gp.won
+  if won == nil then won = yourPlace == 1 end
+  self.title:SetText(gp.cup.name:upper() .. (won and " WON" or " COMPLETE"))
+  self.title:SetTextColor(unpack(won and AK.COLORS.gold or AK.COLORS.muted))
+  if won then
+    self.subtitle:SetText("Trophy added to your garage.")
+  elseif yourPlace then
+    self.subtitle:SetText(("You finished %s in the championship."):format(
+      (ORDINALS[yourPlace] or (yourPlace .. "TH")):lower()))
+  else
+    self.subtitle:SetText("No points scored.")
+  end
 
   -- THE CHAMPION, NOT WHOEVER WON THE LAST RACE. This reframed whatever model
   -- happened to be loaded -- which is the winner of the final race -- and put
@@ -472,7 +474,10 @@ function Results:ShowGrandPrix(gp)
       row.kart:SetText("")
       row.time:SetText(entry.points .. " pts")
       row.best:SetText("")
-      styleRow(row, index, false)
+      -- YOUR row, marked. The single-race table highlights it and this one
+      -- passed a flat `false`, so in the eight-line championship the one line
+      -- the player is looking for was styled exactly like the other seven.
+      styleRow(row, index, gp.you ~= nil and entry.key == gp.you)
       row:Hide()
       row.slide = nil
       self.rowCount = index
@@ -491,13 +496,30 @@ function Results:ShowGrandPrix(gp)
   self.stats:SetText(table.concat(names, "     "))
   self.splits:SetText(("%d RACES  --  %d POINTS AVAILABLE"):format(
     #gp.cup.tracks, #gp.cup.tracks * 8))
-  self.reward:SetText("CUP TROPHY UNLOCKED")
+  local leader = standings[1]
+  if won then
+    self.reward:SetText("CUP TROPHY UNLOCKED")
+    self.reward:SetTextColor(unpack(AK.COLORS.lime))
+  elseif leader then
+    -- Lime is this line's "you earned something" colour, and somebody else
+    -- taking the cup is not that.
+    self.reward:SetText(("%s TAKES THE CUP"):format(leader.name:upper()))
+    self.reward:SetTextColor(unpack(AK.COLORS.muted))
+  else
+    self.reward:SetText("")
+  end
   self.cupLine:Hide()
   self.primary.label:SetText("BACK TO GARAGE")
   self.animTime, self.revealed = 0, 0
   self.ticker:Show()
   self.frame:Show()
-  if AK.PlayStinger then AK:PlayStinger("victory", 3, 0.07) end
+  -- A fanfare for a cup you lost is the same lie the trophy was. The podium
+  -- still gets one -- finishing on the box is worth hearing -- and everything
+  -- below it gets the flat one.
+  if AK.PlayStinger then
+    local podium = yourPlace ~= nil and yourPlace <= 3
+    AK:PlayStinger(podium and "victory" or "defeat", won and 3 or 1, 0.07)
+  end
 end
 
 function Results:Hide()

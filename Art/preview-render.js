@@ -1363,7 +1363,7 @@ const R = {};
 for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) R[r.name] = r;
 const GOLD = LAYOUT.COLORS.GOLD;
 
-function panel(r, alpha = 1) {
+function panel(r, alpha = 1, tint = null) {
   // NINE-SLICED, exactly as UI:NewPanel draws it: corners keep their pixels,
   // edges stretch along one axis, the middle stretches both. Stretching the
   // whole texture is what turns a rounded corner into an oval.
@@ -1376,7 +1376,7 @@ function panel(r, alpha = 1) {
     for (let row = 0; row < 3; row++) {
       for (let col = 0; col < 3; col++) {
         blit(tex.panelplate, xs[col], ys[row], ws[col], hs[row],
-          u[col][0], u[col][1], u[row][0], u[row][1], PANEL_TINT, alpha);
+          u[col][0], u[col][1], u[row][0], u[row][1], tint || PANEL_TINT, alpha);
       }
     }
     if (tex.panelgleam) {
@@ -1524,13 +1524,25 @@ for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
       const lampSize = u(LAYOUT.HUD.lights.h) / 1.7, gapPx = lampSize * 1.5;
       const barW = bar.w, barH = bar.h;
       const barTop = bar.y;
-      rect(bar.x, barTop, barW, barH, 0.06, 0.07, 0.10, 0.95);
+      // A PLATED HOUSING, the same nine-slice every panel in the game is made
+      // of -- see the note in RaceUI:Build. This drew a raw rectangle, which is
+      // what the gantry itself used to be.
+      panel({ x: bar.x, y: barTop, w: barW, h: barH }, 0.96, [.05, .06, .09]);
       const lit = STATE === "go" ? 3 : 2;
       for (let i = 1; i <= 3; i++) {
-        const on = STATE === "go" || i <= lit;
-        const c = STATE === "go" ? [0.30, 1.0, 0.38] : [1.0, 0.22, 0.18];
-        const a = STATE === "go" ? 0.95 : (on ? 0.95 : 0.14);
+        const green = STATE === "go";
+        const on = green || i <= lit;
+        const c = green ? [0.30, 1.0, 0.38] : [1.0, 0.22, 0.18];
+        const a = green ? 0.95 : (on ? 0.95 : 0.10);
         const cx = bar.x + barW / 2 + (i - 2) * gapPx, cy = barTop + barH / 2;
+        // The bulb: a dark disc, so an unlit lamp is a lamp that is off rather
+        // than an absence. glow.tga in BLEND, as makeTexture draws it.
+        const bulb = green ? [0.06, 0.20, 0.10] : (on ? [0.22, 0.05, 0.05] : [0.07, 0.07, 0.09]);
+        const bulbSize = lampSize * 0.92;
+        if (tex.glow) {
+          blit(tex.glow, cx - bulbSize / 2, cy - bulbSize / 2, bulbSize, bulbSize,
+            0, 1, 0, 1, bulb, 1);
+        }
         // makeGlow is an additive radial, so it reads as a lamp rather than a
         // disc: brightest at the centre and gone by its own edge.
         for (let dy = -lampSize / 2; dy < lampSize / 2; dy++) {
@@ -1540,6 +1552,14 @@ for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
             const fall = Math.pow(1 - r, 1.8);
             add(Math.round(cx + dx), Math.round(cy + dy), c[0], c[1], c[2], a * fall);
           }
+        }
+        // And the rim that holds it: three fittings in a gantry, rather than
+        // three coloured stains on a board.
+        const bez = green ? [0.52, 0.78, 0.56] : (on ? [0.78, 0.46, 0.42] : [0.34, 0.37, 0.44]);
+        const bezSize = lampSize * 1.18;
+        if (tex.socket) {
+          blit(tex.socket, cx - bezSize / 2, cy - bezSize / 2, bezSize, bezSize,
+            0, 1, 0, 1, bez, 1);
         }
       }
       const banner = STATE === "go" ? "GO!" : "LINE UP FOR THE COUNTDOWN";
@@ -1589,8 +1609,13 @@ for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
       // Centred, 30px low -- CENTER, 0, -30 in RaceUI.
       const px = Math.round(HW - PW / 2), py = Math.round(HH - PH / 2 + 30);
       if (PH > H - 40) throw new Error(`preview-render: the pause panel is ${PH} tall on a ${H} screen`);
-      rect(px, py, PW, PH, 0.045, 0.075, 0.125, 0.98);
-      rect(px + 3, py + 1, PW - 6, 3, 1, 0.86, 0.55, 0.40);
+      // The real plate and the real button art. This drew a square-cornered
+      // rectangle with a one-pixel highlight, so the one panel a player opens
+      // mid-race looked like a different, older program than the menus -- in
+      // the mirror only: UI:NewPanel and UI:NewButton have always drawn it
+      // properly. A picture that makes shipped work look unfinished sends you
+      // off to fix something that is not broken.
+      panel({ x: px, y: py, w: PW, h: PH }, 0.98, [0.045, 0.075, 0.125]);
 
       hudText("PAUSED", px + PW / 2, py + 22, 28, [1, 0.82, 0.25], "center");
       // The worst case, not a friendly one: the longest circuit name in the
@@ -1608,9 +1633,7 @@ for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
       for (const { label, y } of at) {
         const danger = label === "QUIT TO MENU" || label === "ABANDON CUP";
         const bx = px + (PW - BW) / 2;
-        rect(bx, py + y, BW, BH, danger ? 0.28 : 0.18, danger ? 0.09 : 0.28,
-          danger ? 0.09 : 0.42, 0.97);
-        rect(bx, py + y, BW, 1, 1, 1, 1, 0.10);
+        plate(bx, py + y, BW, BH, danger ? [0.34, 0.11, 0.11] : [0.18, 0.28, 0.42]);
         if (drawTextWidth(label, 15) > BW - 16) {
           throw new Error(`preview-render: "${label}" does not fit a ${BW}px pause button`);
         }
@@ -1626,7 +1649,7 @@ for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
       if (DEV) {
         ["TUNE", "BEATS", "AI"].forEach((label, i) => {
           const cx = px + PW / 2 + (i - 1) * (TW + 4);
-          rect(cx - TW / 2, py + toolY, TW, TH, 0.18, 0.28, 0.42, 0.97);
+          plate(cx - TW / 2, py + toolY, TW, TH, [0.18, 0.28, 0.42]);
           hudText(label, cx, py + toolY + (TH - 12) / 2, 12, [1, 0.82, 0.25], "center");
         });
         if (toolY + TH + PBOT > PH + 0.5) {

@@ -207,6 +207,24 @@ function Race:BuildRace(mode, options)
     -- same faces in the same order every single race, no matter how many
     -- racers the roster actually holds -- see BuildAIField.
     local field = AK:BuildAIField(chosen, total - 1, race.rngAI)
+    -- A CHAMPIONSHIP IS THE SAME EIGHT RACERS, FOUR TIMES.
+    --
+    -- Each race of a cup rolled its own grid, so the four rounds were run
+    -- against four different fields drawn from an eleven-strong roster. The
+    -- points table then accumulated everyone who had ever turned up: measured
+    -- on the Frontier Cup, TEN competitors in an eight-race table, several of
+    -- whom had only started twice. A racer who ran two rounds cannot be
+    -- compared with one who ran four, so the championship it produced was not
+    -- a championship -- and with ten entries in eight result rows the player
+    -- could finish tenth and not appear on their own trophy screen at all.
+    --
+    -- The field is drawn once, when the cup starts, and every round of that cup
+    -- is run against it. A single race is unaffected: it still shuffles.
+    local gp = options.grandPrix
+    if gp then
+      gp.field = gp.field or field
+      field = gp.field
+    end
     while #race.vehicles < total do
       local index = #race.vehicles + 1
       self:AddVehicle(race, field[index - 1], AK.Karts[(index + 1) % #AK.Karts + 1], nil, false, index)
@@ -486,14 +504,55 @@ function Race:StartGrandPrix()
   self:Start("grand_prix", { track = cup.tracks[1], grandPrix = gp })
 end
 
+--- The cup table, most points first, name as the tiebreak.
+---
+--- Shared, because there were three copies of this sort -- one in NextGrandPrix
+--- to find the champion, two in Results -- and three copies of a comparator is
+--- how the standings on the screen come to disagree with the trophy in the
+--- garage. `pairs()` deals in a different order every run, so the tiebreak is
+--- not decoration: without it two racers level on points swap places every time
+--- the screen is opened.
+function Race:CupStandings(gp)
+  local standings = {}
+  if not (gp and gp.points) then return standings end
+  for key, points in pairs(gp.points) do
+    standings[#standings + 1] =
+      { key = key, name = (gp.names and gp.names[key]) or key, points = points }
+  end
+  table.sort(standings, function(a, b)
+    if a.points ~= b.points then return a.points > b.points end
+    return a.name < b.name
+  end)
+  return standings
+end
+
 function Race:NextGrandPrix()
   local race = self.current
   local gp = race and race.grandPrix
   if not gp then AK.Menu:Show(); return end
   gp.index = gp.index + 1
   if gp.index > #gp.cup.tracks then
-    AK.db.progress.trophies[gp.cup.id] = true
-    AK:UnlockAchievement("cup_champion")
+    -- A TROPHY YOU CANNOT LOSE IS NOT A TROPHY.
+    --
+    -- This awarded the cup, unlocked "Realm First! -- Win a Grand Prix cup",
+    -- printed "Trophy added to your garage" and played the victory stinger for
+    -- FINISHING four races. Come last in all four, at the back of the table by
+    -- thirty points, and the game congratulated you and put a trophy on the
+    -- shelf. That is the one moment in this game that most needs to mean
+    -- something, and it meant nothing at all: the trophy room's cup row was a
+    -- record of having pressed START.
+    local standings = self:CupStandings(gp)
+    gp.standings = standings
+    gp.champion = standings[1] and standings[1].key
+    gp.yourPlace = nil
+    for index, entry in ipairs(standings) do
+      if entry.key == gp.you then gp.yourPlace = index end
+    end
+    gp.won = gp.you ~= nil and gp.champion == gp.you
+    if gp.won then
+      AK.db.progress.trophies[gp.cup.id] = true
+      AK:UnlockAchievement("cup_champion")
+    end
     AK.Results:ShowGrandPrix(gp)
     return
   end
@@ -1817,6 +1876,11 @@ function Race:FinishRace(race)
       local key = owner or vehicle.racer.name
       gp.points[key] = (gp.points[key] or 0) + math.max(1, 9 - place)
       gp.names[key] = (owner and owner ~= "player" and owner) or vehicle.racer.name
+      -- WHICH ROW IS YOURS, recorded here because this is the only place that
+      -- knows. The cup outlives the race that scored it -- the trophy screen
+      -- opens after everything has been torn down -- so by the time anything
+      -- asks "did the player win the cup" there is no race left to ask.
+      if vehicle == race.player then gp.you = key end
     end
   end
   -- A Time Trial run only replaces the stored ghost if it was actually faster.
