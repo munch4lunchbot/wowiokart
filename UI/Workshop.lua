@@ -284,27 +284,84 @@ function Workshop:BuildRosterPane(pane, kind)
       y = y - ROW_H
     end
 
-    y = y - 14
-    local add = UI:NewButton(pane, "ADD RACER", 130, 24, function()
+    -- A RACER YOU JUST MADE HAS TO BE FINISHABLE FROM HERE.
+    --
+    -- ADD RACER used to append "New Racer 1" with no model and print a line of
+    -- chat telling you to go to the MODELS tab -- where you then had to find it
+    -- again in a second list. Two of the three things a new racer needs, its
+    -- NAME and its MODEL, were not on the tab that made it, and one of them was
+    -- not anywhere at all: nothing in the workshop could rename a racer.
+    y = y - 10
+    local nameLabel = UI:NewText(pane, "NAME", 12, { .84, .90, 1 }, "LEFT")
+    nameLabel:SetPoint("TOPLEFT", dx, y)
+    local nameBox = CreateFrame("EditBox", nil, pane, "InputBoxTemplate")
+    nameBox:SetSize(238, 22)
+    nameBox:SetPoint("TOPLEFT", dx + 150, y + 4)
+    nameBox:SetAutoFocus(false)
+    nameBox:SetMaxLetters(24)
+    local function commitName(box)
+      local entry = self:RosterEntry(kind)
+      local text = (box:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+      box:ClearFocus()
+      if not entry or text == "" or text == entry.name then
+        self:RefreshRoster(kind)
+        return
+      end
+      AK.Roster:Set(kind, entry.id, "name", text)
+      -- The tag is what the picker and the grid's small labels show, so a
+      -- rename that left it behind would show two different names for one
+      -- racer depending on which list you were looking at.
+      AK.Roster:Set(kind, entry.id, "tag", text:upper())
+      self:RebuildRosterList(kind)
+      self:RefreshRoster(kind)
+      if self.racerButtons then self:RebuildModelList() end
+    end
+    nameBox:SetScript("OnEnterPressed", commitName)
+    nameBox:SetScript("OnEditFocusLost", commitName)
+    nameBox:SetScript("OnEscapePressed", function(box)
+      box:ClearFocus()
+      self:RefreshRoster(kind)
+    end)
+    state.nameBox = nameBox
+    y = y - ROW_H - 6
+
+    local add = UI:NewButton(pane, "ADD RACER", 118, 24, function()
       local entry = AK.Roster:AddRacer()
       self:RebuildRosterList(kind)
       for index, racer in ipairs(AK.Racers) do
         if racer.id == entry.id then state.index = index end
       end
       self:RefreshRoster(kind)
-      AK:Print("Added " .. entry.name .. " -- give it a model on the MODELS tab.")
+      -- Straight into the name field, because that is the next thing anyone
+      -- does and it is right here now.
+      nameBox:SetFocus()
+      nameBox:HighlightText()
     end)
     add:SetPoint("TOPLEFT", dx, y)
     add.tooltip = "Append a new racer to the grid. It starts with middling stats and no model."
-    local remove = UI:NewButton(pane, "REMOVE", 110, 24, function()
+    -- ONE CLICK TO THE GALLERY, with this racer already selected. The models
+    -- tab picks its subject from AK.db.selection.racer, so pointing that at
+    -- the racer in hand is the whole trip.
+    local pick = UI:NewButton(pane, "PICK MODEL", 128, 24, function()
+      local entry = self:RosterEntry(kind)
+      if not entry then return end
+      AK.db.selection.racer = entry.id
+      self.selectedHazard = nil
+      self:SelectTab("MODELS")
+    end)
+    pick:SetPoint("TOPLEFT", dx + 126, y)
+    pick:SetRestStyle({ .13, .22, .25, 1 }, AK.COLORS.gold)
+    pick.tooltip = "Open the model gallery with this racer selected."
+    local remove = UI:NewButton(pane, "REMOVE", 100, 24, function()
       local entry = self:RosterEntry(kind)
       if entry and AK.Roster:RemoveRacer(entry.id) then
         state.index = 1
         self:RebuildRosterList(kind)
         self:RefreshRoster(kind)
+        if self.racerButtons then self:RebuildModelList() end
       end
     end)
-    remove:SetPoint("TOPLEFT", dx + 138, y)
+    remove:SetPoint("TOPLEFT", dx + 262, y)
     remove:SetRestStyle({ .22, .08, .08, .95 }, AK.COLORS.danger)
     remove.tooltip = "Only racers you added can be removed; the shipped roster stays."
     y = y - 32
@@ -372,11 +429,24 @@ function Workshop:RefreshRoster(kind)
   if not entry then return end
 
   state.title:SetText(entry.name)
-  state.sub:SetText(kind == "racers"
-    and ("%s  /  creature %s%s"):format(entry.race or "?",
-      tostring(entry.model and entry.model.creature or (entry.model and entry.model.unit) or "-"),
-      entry.custom and "   (added by you)" or "")
-    or (entry.description or ""))
+  if kind == "racers" then
+    -- SAY WHETHER IT HAS ONE. "creature 1" is what a racer added here starts
+    -- with and there is no such model, so the honest reading of that line was
+    -- "this racer is invisible" -- which it did not say.
+    local creature = entry.model and entry.model.creature
+    local unit = entry.model and entry.model.unit
+    local has = unit or (creature and creature > 1)
+    state.sub:SetText(("%s  /  %s%s"):format(entry.race or "?",
+      has and ("model " .. tostring(unit or creature))
+        or ("|cff" .. AK:ColorHex(AK.COLORS.gold) .. "no model yet -- press PICK MODEL|r"),
+      entry.custom and "   (added by you)" or ""))
+  else
+    state.sub:SetText(entry.description or "")
+  end
+  if state.nameBox and not state.nameBox:HasFocus() then
+    state.nameBox:SetText(entry.name or "")
+    state.nameBox:SetCursorPosition(0)
+  end
 
   for _, spec in ipairs(STAT_FIELDS) do
     local row = state.rows[spec.key]
@@ -958,6 +1028,26 @@ function Workshop:BuildModelPane(pane)
     self:RefreshModels()
   end)
   goBox:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
+
+  -- THE WAY BACK. Getting here is one button on the racer's own tab; going
+  -- back was three -- notice the tab strip, find RACERS, find the racer again.
+  -- A round trip has to be symmetrical or only half of it gets used.
+  local back = UI:NewButton(pane, "BACK TO RACER", 150, 22, function()
+    local racer = AK.Tuning:SelectedRacer()
+    if racer and self.roster and self.roster.racers then
+      for index, entry in ipairs(AK.Racers) do
+        if entry.id == racer.id then self.roster.racers.index = index end
+      end
+    end
+    self:SelectTab("RACERS")
+  end)
+  -- Right-aligned on the header row, flush with the gallery's outer edge. Not
+  -- the stepper row -- that one is already the jump label, the jump box and
+  -- JUMP TO CURRENT -- and not the left of the header row either, because the
+  -- two lines of help text there are wider than they look.
+  back:SetPoint("TOPLEFT", gx + 3 * 156, -14)
+  back:SetRestStyle({ .13, .22, .25, 1 }, AK.COLORS.gold)
+  back.tooltip = "Return to this racer's stats."
 
   local here = UI:NewButton(pane, "JUMP TO CURRENT", 164, 22, function()
     local target
