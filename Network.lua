@@ -56,20 +56,53 @@ end
 function Net:Send(parts, channel, target)
   channel = channel or self:Channel()
   if not channel then
-    AK:Print("Multiplayer needs a party or raid. Invite friends with the addon, then open a lobby.")
+    -- ONCE EVERY FEW SECONDS, NOT SIX TIMES A SECOND. Leaving the party in the
+    -- middle of a hosted race does not stop the snapshot loop -- it just makes
+    -- every send fail -- so this printed the same sentence into chat at the
+    -- snapshot rate until the race ended.
+    local now = GetTime()
+    if not self.lastChannelWarning or now - self.lastChannelWarning > 5 then
+      self.lastChannelWarning = now
+      AK:Print("Multiplayer needs a party or raid. Invite friends with the addon, then open a lobby.")
+    end
     return false
   end
   C_ChatInfo.SendAddonMessage(self.prefix, table.concat(parts, "\t"), channel, target)
   return true
 end
 
+--- Tell everyone who is on the grid.
+---
+--- ONE PACKET PER MEMBER WAS A BURST WAITING TO HAPPEN. This fired the whole
+--- roster on every join, so the eighth person joining an eight-kart lobby set
+--- off eight messages at once -- and eight people joining in the same few
+--- seconds is sixty-four, which is exactly the shape of traffic the server
+--- throttles. Batched to the same 250-byte ceiling the snapshot uses, an eight
+--- kart roster is two packets.
 function Net:BroadcastRoster()
   if not self.lobby then return end
-  -- Individual roster packets keep party races safely below WoW's addon-message
-  -- payload limit even when everyone in a full raid joins the grid.
-  for name, player in pairs(self.lobby.roster) do
-    self:Send({ "ROSTER", self.lobby.id, name, player.racer, player.kart })
+  local id = self.lobby.id
+  local header = 6 + 1 + #tostring(id) + 1     -- "ROSTER" + tab + id + tab
+  local batch, size = {}, 0
+  local function flush()
+    if #batch == 0 then return end
+    self:Send({ "ROSTER", id, table.concat(batch, "~") })
+    wipe(batch)
+    size = 0
   end
+  -- Sorted, so the packets are the same every time and a re-broadcast does not
+  -- reshuffle which member lands in which message.
+  local names = {}
+  for name in pairs(self.lobby.roster) do names[#names + 1] = name end
+  table.sort(names)
+  for _, name in ipairs(names) do
+    local player = self.lobby.roster[name]
+    local entry = table.concat({ name, player.racer or "you", player.kart or "mechano" }, ",")
+    if size > 0 and header + size + #entry + 1 > 250 then flush() end
+    batch[#batch + 1] = entry
+    size = size + #entry + 1
+  end
+  flush()
 end
 
 function Net:OpenLobby()
@@ -90,6 +123,43 @@ function Net:OpenLobby()
   self:BroadcastRoster()
   self:LobbyChanged()
   AK:Print("Multiplayer lobby open. Friends can join from /kart > Multiplayer.")
+  return true
+end
+
+--- The host is leaving a race in progress.
+---
+--- Clients notice a silent host after eight seconds, which is the safety net
+--- for a crash or a disconnect. When the host quits deliberately there is no
+--- reason to make everybody sit through it.
+function Net:AnnounceHostLeft(race)
+  if not race or not race.network or not race.network.isHost then return end
+  self:Send({ "HOSTGONE", race.network.session })
+end
+
+--- Stop hosting, and tell the party so their screens stop offering it.
+---
+--- There was no way to do this at all. A lobby opened once stayed open for the
+--- rest of the session: the host's screen said HOSTING forever, START HOST RACE
+--- kept working with a roster that might be half people who had logged out, and
+--- everyone else's screen kept advertising a lobby that no longer meant
+--- anything. Leaving a lobby is a thing people do.
+function Net:CloseLobby()
+  if not self.lobby then
+    -- Not hosting: this is the button that clears somebody else's stale
+    -- announcement off your own screen.
+    if self.availableLobby then
+      self.availableLobby = nil
+      AK:Print("Forgot the announced lobby.")
+      self:LobbyChanged()
+      return true
+    end
+    AK:Print("You are not hosting a lobby.")
+    return false
+  end
+  self:Send({ "CLOSED", self.lobby.id })
+  self.lobby = nil
+  AK:Print("Lobby closed.")
+  self:LobbyChanged()
   return true
 end
 
@@ -119,8 +189,14 @@ function Net:StartLobbyRace()
     return
   end
   self:BroadcastRoster()
-  self:Send({ "START", self.lobby.id, self.lobby.track })
-  AK.Race:Start("multiplayer", { session = self.lobby.id, host = self:PlayerName(), roster = self.lobby.roster, isHost = true, track = self.lobby.track })
+  -- The seed goes on the wire as well as being derivable from the session id.
+  -- Derivation is the safety net for a packet that never arrives or a client on
+  -- an older build; this is the authoritative copy, so the host stays the one
+  -- deciding what the grid looks like.
+  local seed = AK.RNG:SeedFrom(self.lobby.id)
+  self:Send({ "START", self.lobby.id, self.lobby.track, tostring(seed) })
+  AK.Race:Start("multiplayer", { session = self.lobby.id, host = self:PlayerName(),
+    roster = self.lobby.roster, isHost = true, track = self.lobby.track, seed = seed })
 end
 
 --- THE THROTTLE GOES ON THE WIRE.
@@ -164,27 +240,86 @@ end
 -- so it is measured rather than assumed, and 250 leaves margin under the 255.
 local MAX_MESSAGE = 250
 
+-- HOW MUCH THE ADDON CHANNEL WILL ACTUALLY CARRY.
+--
+-- Addon chat is rate limited by the server, and going over it does not produce
+-- an error: messages are dropped, or the client is disconnected for spamming.
+-- The figure the whole addon ecosystem is built around -- it is what
+-- ChatThrottleLib holds itself to -- is 800 bytes a second.
+--
+-- Measured, once something finally counted: a hosted eight-kart race was
+-- sending TWO THOUSAND NINE HUNDRED. The host of every full grid was on course
+-- to be throttled or kicked, and the failure would have looked like "the other
+-- karts stopped moving", which is unfixable from inside the game.
+--
+-- Three things bring it down, and a fourth guarantees it:
+--   a kart is addressed by its GRID INDEX rather than by "Name-Realm", which
+--   is twenty-odd bytes ten times a second per kart, and is only safe now that
+--   every client provably builds the same grid from the same seed;
+--   trailing zeros are dropped, and a kart that is not holding, spinning,
+--   flying or shrinking is almost all trailing zeros;
+--   snapshots go out at 6.7Hz instead of 10Hz -- clients dead-reckon between
+--   them, so this is invisible;
+--   and the governor below simply refuses to send once the second's budget is
+--   spent, whatever the grid size turns out to be.
+local WIRE_BUDGET = 800
+local SNAPSHOT_PERIOD = 0.15
+
+--- Bytes sent in the last rolling second, and whether there is room for more.
+function Net:WireRoom(bytes)
+  local now = GetTime()
+  if not self.wireWindow or now - self.wireWindow >= 1 then
+    self.wireWindow, self.wireSpent = now, 0
+  end
+  return (self.wireSpent or 0) + bytes <= WIRE_BUDGET
+end
+
+function Net:WireSpend(bytes)
+  self.wireSpent = (self.wireSpent or 0) + bytes
+end
+
+--- Drop trailing zeros from a snapshot entry. ApplySnapshot already defaults
+--- every optional field, so a shorter row means exactly the same thing.
+local function trimZeros(fields)
+  local last = #fields
+  while last > 4 and (fields[last] == "0" or fields[last] == 0) do last = last - 1 end
+  local out = {}
+  for i = 1, last do out[i] = fields[i] end
+  return table.concat(out, ",")
+end
+
 function Net:BroadcastSnapshot(race)
   if not race.network or not race.network.isHost then return end
   self.snapshotClock = self.snapshotClock + race.delta
-  if self.snapshotClock < .10 then return end
+  if self.snapshotClock < SNAPSHOT_PERIOD then return end
   self.snapshotClock = 0
   local batch, size = {}, 0
   local session = race.network.session
   -- "STATE" + tab + session + tab
-  local budget = MAX_MESSAGE - (5 + 1 + #tostring(session) + 1)
+  local header = 5 + 1 + #tostring(session) + 1
+  local budget = MAX_MESSAGE - header
   local function flush()
     if #batch == 0 then return end
-    self:Send({ "STATE", session, table.concat(batch, "~") })
+    local body = table.concat(batch, "~")
+    -- The governor. A skipped snapshot costs a client a sixth of a second of
+    -- dead reckoning; a throttled host costs everyone the race.
+    if self:WireRoom(header + #body) then
+      self:WireSpend(header + #body)
+      self:Send({ "STATE", session, body })
+    end
     wipe(batch)
     size = 0
   end
-  for _, vehicle in ipairs(race.vehicles) do
+  for slot, vehicle in ipairs(race.vehicles) do
     -- Held item and the hit-reaction timers ride along, or none of the new
     -- mechanics (trailing shields, spin-outs, airtime, shrinking) are visible
     -- to anyone but the host.
-    local entry = table.concat({
-      vehicle.networkId, math.floor(vehicle.distance), math.floor(vehicle.lateral * 100),
+    local entry = trimZeros({
+      -- THE GRID SLOT, not the name. Every client sorts the roster the same way
+      -- and fills the rest from the same seed, so slot N is the same kart on
+      -- every machine -- and a slot is one byte where "Aaaaaaaaaaaa-Proudmoore"
+      -- is twenty-three, ten times a second, for every kart on the grid.
+      slot, math.floor(vehicle.distance), math.floor(vehicle.lateral * 100),
       math.floor(vehicle.speed * 10),
       vehicle.item and AK.ItemIndex[vehicle.item] or 0,
       math.floor((vehicle.boostTime or 0) * 10),
@@ -200,7 +335,7 @@ function Net:BroadcastSnapshot(race)
       -- while three tracks had branches and nobody used them; now every track
       -- has one.
       (vehicle.route and vehicle.route ~= race.track and vehicle.route.index) or 0,
-    }, ",")
+    })
     -- +1 for the "~" this entry will need once it is not the first.
     if size > 0 and size + #entry + 1 > budget then flush() end
     batch[#batch + 1] = entry
@@ -214,7 +349,14 @@ function Net:ApplySnapshot(race, data)
   for entry in string.gmatch(data or "", "([^~]+)") do
     local owner, distance, lateral, speed, item, boost, finished,
       held, spin, air, shrunk, routeIndex = strsplit(",", entry)
-    local vehicle = race.byNetworkId[owner]
+    -- EITHER FORM. A slot is a bare integer; a networkId is "Name-Realm" or
+    -- "ai3", and neither can ever be one. So a client on this build understands
+    -- a host on the previous one, and a host on this build addressing a slot an
+    -- older client cannot resolve leaves that kart dead-reckoning rather than
+    -- drawing it somewhere wrong.
+    local slot = tonumber(owner)
+    local vehicle = (slot and race.vehicles and race.vehicles[slot])
+      or race.byNetworkId[owner]
     if vehicle then
       -- Set the road BEFORE the distance, since the distance is measured along
       -- it. A packet from an older build has no route field, which reads as 0
@@ -223,7 +365,18 @@ function Net:ApplySnapshot(race, data)
       local branches = race.track.branches
       vehicle.route = (branchIndex > 0 and branches and branches[branchIndex]) or race.track
       vehicle.distance = tonumber(distance) or vehicle.distance
-      vehicle.lateral = (tonumber(lateral) or 0) / 100
+      -- LATERAL IS A TARGET, NOT A TELEPORT. Dead reckoning carries `distance`
+      -- forward at the last known speed between packets, so distance moves
+      -- smoothly -- but nothing carried `lateral`, so a kart weaving across the
+      -- road jumped sideways once per snapshot. At ten a second that read as
+      -- jitter; at the slower rate the wire budget allows it would read as
+      -- teleporting. Race:DeadReckon eases toward this.
+      local want = (tonumber(lateral) or 0) / 100
+      vehicle.netLateral = want
+      if not vehicle.lateral or math.abs(want - vehicle.lateral) > 0.9 then
+        -- A correction that large is not a weave, it is a respawn or a fork.
+        vehicle.lateral = want
+      end
       vehicle.speed = (tonumber(speed) or 0) / 10
       -- Items arrive as an AK.ItemIndex number; 0 is "none". A packet from an
       -- older build carrying a raw id or "-" tonumbers to nil and reads as no
@@ -244,6 +397,14 @@ function Net:ApplySnapshot(race, data)
 end
 
 function Net:HandleMessage(message, sender)
+  -- YOUR OWN PARTY MESSAGES COME BACK TO YOU.
+  --
+  -- CHAT_MSG_ADDON fires for what you sent as well as for what you received, so
+  -- opening a lobby announced it to yourself: the LOBBY handler filed your own
+  -- lobby as an AVAILABLE one, and the roster broadcast that followed then told
+  -- the host "You are on the grid. Waiting for the host to start." There is
+  -- nothing in your own broadcast you do not already know.
+  if sender and sender == self:PlayerName() then return end
   local values = split(message)
   local kind = values[1]
   if kind == "LOBBY" then
@@ -253,10 +414,27 @@ function Net:HandleMessage(message, sender)
     self:LobbyChanged()
   elseif kind == "ROSTER" and self.availableLobby and self.availableLobby.id == values[2] then
     self.availableLobby.roster = self.availableLobby.roster or {}
-    local mine = values[3] == self:PlayerName()
-    local first = mine and not self.availableLobby.roster[values[3]]
-    self.availableLobby.roster[values[3]] =
-      { name = values[3], racer = field(values, 4, "you"), kart = field(values, 5, "mechano") }
+    local me = self:PlayerName()
+    local first = false
+    -- EITHER FORM. A batched body carries commas; the old one-member-per-packet
+    -- form put the name in field 3 on its own, and a WoW name cannot contain a
+    -- comma -- so a host on the previous build is still understood.
+    local body = values[3] or ""
+    if body:find(",", 1, true) then
+      for entry in body:gmatch("([^~]+)") do
+        local name, racer, kart = strsplit(",", entry)
+        if name and name ~= "" then
+          if name == me and not self.availableLobby.roster[name] then first = true end
+          self.availableLobby.roster[name] = { name = name,
+            racer = (racer ~= "" and racer) or "you",
+            kart = (kart ~= "" and kart) or "mechano" }
+        end
+      end
+    elseif body ~= "" then
+      if body == me and not self.availableLobby.roster[body] then first = true end
+      self.availableLobby.roster[body] =
+        { name = body, racer = field(values, 4, "you"), kart = field(values, 5, "mechano") }
+    end
     -- The host's roster coming back with your own name on it is the only
     -- confirmation there is that you are actually in the race.
     if first then
@@ -286,10 +464,27 @@ function Net:HandleMessage(message, sender)
     self:BroadcastRoster()
   elseif kind == "START" then
     if self.lobby and self.lobby.id == values[2] and self.lobby.host == self:PlayerName() then return end
+    -- TWO PEOPLE BOTH PRESSED OPEN LOBBY. It happens: the button is the first
+    -- one on the screen. Whoever starts second should not be dragged into the
+    -- other person's race, and should certainly not be told theirs "started
+    -- without them" -- they are hosting their own.
+    if self.lobby then return end
     local roster = self.availableLobby and self.availableLobby.roster or {}
-    if not roster[self:PlayerName()] then return end
+    -- LEFT BEHIND IN SILENCE. If the roster never came back with this player on
+    -- it -- they never pressed JOIN, or the reply was dropped -- the race
+    -- started for everybody else and this client did nothing whatsoever: no
+    -- message, no screen change, just a menu while their friends drove off. Say
+    -- what happened and what to do about it.
+    if not roster[self:PlayerName()] then
+      if self.availableLobby and self.availableLobby.id == values[2] then
+        AK:Print("|cffff5555The race started without you.|r You are not on that "
+          .. "lobby's grid -- press JOIN ANNOUNCED LOBBY before the host starts.")
+      end
+      return
+    end
     self.availableLobby = nil
-    AK.Race:Start("multiplayer", { session = values[2], host = sender, roster = roster, isHost = false, track = values[3] })
+    AK.Race:Start("multiplayer", { session = values[2], host = sender, roster = roster,
+      isHost = false, track = values[3], seed = tonumber(values[4]) })
   elseif kind == "INPUT" and AK.Race.current and AK.Race.current.network and AK.Race.current.network.isHost and values[2] == AK.Race.current.network.session then
     local race = AK.Race.current
     -- A packet from a build that predates the throttle fields has nothing in
@@ -298,6 +493,13 @@ function Net:HandleMessage(message, sender)
     -- Physics to obey the flag at all, so it is only set when the flag is
     -- really there.
     local throttled = values[8] ~= nil and values[8] ~= ""
+    -- WHEN, as well as what. A player who alt-tabs, disconnects or walks out
+    -- of range stops sending, and their kart was left with the last table they
+    -- ever sent -- which physics reads as the throttle held down, so an absent
+    -- player's kart drove into the scenery at full speed for the rest of the
+    -- race. Race:Step hands a kart nobody is driving back to the AI.
+    race.remoteHeard = race.remoteHeard or {}
+    race.remoteHeard[values[3]] = GetTime()
     race.remoteInputs[values[3]] = {
       left = values[4] == "1", right = values[5] == "1",
       drift = values[6] == "1", itemPulse = values[7] == "1",
@@ -306,9 +508,24 @@ function Net:HandleMessage(message, sender)
       throttleAware = throttled,
     }
   elseif kind == "STATE" and AK.Race.current and AK.Race.current.network and values[2] == AK.Race.current.network.session then
+    AK.Race.current.lastSnapshot = GetTime()
     self:ApplySnapshot(AK.Race.current, values[3])
   elseif kind == "FINISH" and AK.Race.current and AK.Race.current.network and values[2] == AK.Race.current.network.session then
     AK.Race:FinishFromHost(values[3])
+  elseif kind == "HOSTGONE" then
+    local race = AK.Race.current
+    if race and race.network and not race.network.isHost
+      and race.network.session == values[2] then
+      AK:Print("|cffff5555The host left the race.|r")
+      AK.RaceUI:Announce("HOST LEFT THE RACE", AK.COLORS.danger)
+      AK.Race:Stop(true)
+    end
+  elseif kind == "CLOSED" then
+    if self.availableLobby and self.availableLobby.id == values[2] then
+      self.availableLobby = nil
+      AK:Print("The party race lobby was closed.")
+      self:LobbyChanged()
+    end
   elseif kind == "FULL" then
     AK:Print("That multiplayer grid is already full.")
   end

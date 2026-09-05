@@ -613,7 +613,8 @@ const camouflagedRoads = [];
 const brokenScreens = [];
 {
   const shots = fs.mkdtempSync(path.join(os.tmpdir(), "kartui-"));
-  for (const screen of ["home", "tracks", "settings", "results"]) {
+  for (const screen of ["home", "tracks", "settings", "results",
+    "racers", "karts", "cups", "trophies", "multiplayer"]) {
     try {
       execFileSync("node", [path.join(ADDON, "Art", "preview-ui.js"), path.join(ADDON, "Art"),
         path.join(shots, screen + ".png")],
@@ -629,6 +630,57 @@ const brokenScreens = [];
     }
   }
   fs.rmSync(shots, { recursive: true, force: true });
+}
+
+// --- file-level constants read before the line that declares them ------------
+//
+// A Lua local is invisible to every function defined ABOVE it, and reading one
+// early is not an error -- it is nil, and the fault surfaces somewhere else
+// entirely, as arithmetic on nil or a comparison against nil, in a code path
+// that may only run during a race. It has now happened twice: `ART` in the
+// sound editor, and the two multiplayer timeouts, which were written beside the
+// function that set them and read from one three hundred lines higher up.
+//
+// The language-server check below finds this too, when a language server is
+// installed. This one needs nothing, and covers the case that actually keeps
+// happening: a SCREAMING_SNAKE constant at file scope.
+const earlyConstants = [];
+for (const listed of toc) {
+  const rel = listed.replace(/\\/g, path.sep);
+  const full = path.join(ADDON, rel);
+  if (!fs.existsSync(full)) continue;
+  const lines = fs.readFileSync(full, "utf8").split("\n");
+  const declaredAt = new Map();
+  lines.forEach((line, index) => {
+    // File scope only: no leading whitespace, and a single name.
+    const m = /^local ([A-Z][A-Z0-9_]{1,})\s*=/.exec(line);
+    if (m && !declaredAt.has(m[1])) declaredAt.set(m[1], index);
+    // `local A, B = 1, 2` at file scope declares several at once.
+    const pair = /^local ([A-Z][A-Z0-9_, ]+?)\s*=/.exec(line);
+    if (pair) {
+      for (const name of pair[1].split(",").map((n) => n.trim())) {
+        if (/^[A-Z][A-Z0-9_]{1,}$/.test(name) && !declaredAt.has(name)) {
+          declaredAt.set(name, index);
+        }
+      }
+    }
+  });
+  for (const [name, at] of declaredAt) {
+    for (let i = 0; i < at; i++) {
+      const line = lines[i];
+      if (/^\s*--/.test(line)) continue;                 // a comment draws nothing
+      const code = line.split("--")[0];
+      // A field access is a different thing entirely: `AK.RNG = {}` on the line
+      // above `local RNG = AK.RNG` mentions the word and reads nothing.
+      if (!new RegExp("(?<![.:\\w])" + name + "\\b").test(code)) continue;
+      // And a line that declares its OWN local of that name is a shadow, not a
+      // read -- legal, and none of this check's business.
+      if (new RegExp("^\\s*local\\b[^=]*\\b" + name + "\\b").test(code)) continue;
+      earlyConstants.push(`${listed}:${i + 1}  reads ${name}, which is not declared `
+        + `until line ${at + 1} -- it is nil here`);
+      break;
+    }
+  }
 }
 
 // --- locals used above the line that declares them ---------------------------
@@ -763,12 +815,15 @@ console.log("items the player cannot tell apart: " + sameLookingItems.length);
 for (const u of sameLookingItems) console.log("  " + u);
 console.log("ipairs over a list that can hold a nil: " + nilProneLoops.length);
 for (const u of nilProneLoops) console.log("  " + u);
+console.log("constants read before they are declared: " + earlyConstants.length);
+for (const e of earlyConstants) console.log("  " + e);
 console.log("circuits wearing another circuit's scenery: " + borrowedScenery.length);
 for (const b of borrowedScenery) console.log("  " + b);
 console.log("roads that vanish into their own verge: " + camouflagedRoads.length);
 for (const c of camouflagedRoads) console.log("  " + c);
 
-const bad = errors.length + leaks.size + missing.length + unlisted.length
+const bad = earlyConstants.length
+  + errors.length + leaks.size + missing.length + unlisted.length
   + tooNarrow.length + unanchored.length + clamped.length + tableCalls.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
   + unfaded.length + unscaled.length + invisibleSurfaces.length + sameLookingItems.length

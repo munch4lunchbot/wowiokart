@@ -824,6 +824,10 @@ function Menu:BuildMultiplayer(page)
     { "OPEN PARTY LOBBY", function() if AK.Net:OpenLobby() then page:akRefresh() end end },
     { "START HOST RACE", function() AK.Net:StartLobbyRace() end },
     { "JOIN ANNOUNCED LOBBY", function() AK.Net:JoinLobby() end },
+    { "CLOSE / FORGET LOBBY", function()
+        AK.Net:CloseLobby()
+        page:akRefresh()
+      end },
     { "REFRESH LOBBIES", function()
         AK.Net:RefreshLobbies()
         -- Replies come back over the addon channel, so there is a beat before
@@ -834,10 +838,23 @@ function Menu:BuildMultiplayer(page)
         end)
       end },
   }
+  -- FIVE ROWS NOW, so they are shorter and tighter. At 42 tall on a 52 pitch a
+  -- fifth button reached -362 in a 400-tall panel, and the two-line note along
+  -- the bottom starts at about -341: the last action would have been printed
+  -- through it. 36 on a 42 pitch ends at -312 and leaves the note alone.
+  -- Not named ROW_H: this file already has a file-level ROW_H for the settings
+  -- rows, and a second one inside a function is a shadow that reads like a
+  -- reference to the first.
+  local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = 36, 42, 108
   for index, action in ipairs(ACTIONS) do
-    local button = UI:NewButton(panel, action[1], 280, 42, action[2])
-    button:SetPoint("TOPLEFT", 25, -112 - (index - 1) * 52)
+    local button = UI:NewButton(panel, action[1], 280, LOBBY_ROW, action[2])
+    button:SetPoint("TOPLEFT", 25, -LOBBY_TOP - (index - 1) * LOBBY_PITCH)
     if index == 1 then button:SetRestStyle({ 0.42, 0.31, 0.08 }, { 1, 0.95, 0.80 }) end
+  end
+  -- The lowest thing in the left column, so the check below knows where it is.
+  local actionsBottom = LOBBY_TOP + (#ACTIONS - 1) * LOBBY_PITCH + LOBBY_ROW
+  if actionsBottom > 330 then
+    AK:Print("Multiplayer actions overflow into the note: " .. actionsBottom .. "px.")
   end
   -- The status column gets a heading, the same way the home screen's sections
   -- do, so it reads as a place rather than as a paragraph that happens to be

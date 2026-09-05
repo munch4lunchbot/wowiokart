@@ -232,7 +232,21 @@ SOUNDKIT = setmetatable({}, { __index = function() return 1 end })
 function PlaySound() return true, 1 end
 function PlaySoundFile() return true, 0 end
 function StopSound() end
-function GetTime() return os.clock() end
+-- A CLOCK THAT MATCHES THE SIMULATION, not the CPU.
+--
+-- This was os.clock(), which is processor time -- so a check that drove ten
+-- seconds of race might see two seconds pass on the clock, or twenty on a
+-- slower machine. Everything timed against GetTime was therefore measured
+-- against a different clock from the one the race runs on: presentation
+-- deadlines expired at the wrong moment, and "how many bytes a second does
+-- multiplayer send" was bytes per CPU-second, which is not a rate that exists.
+--
+-- The wrapper further down advances this by exactly the dt handed to
+-- Race:Update, so a second of race time is a second here. It also removes the
+-- last thing in the harness that varied between runs.
+local clockNow = 0
+function GetTime() return clockNow end
+function advanceClock(by) clockNow = clockNow + by end
 function GetLocale() return "enUS" end
 function UnitName() return "Tester" end
 function UnitFullName() return "Tester", "Testrealm" end
@@ -375,6 +389,13 @@ if loadFailures == 0 then
   -- This gives the same sequence on every run and a different race each time
   -- inside it, and it covers battles too, which build their race without ever
   -- being handed an options table.
+  -- Race time IS clock time in here. See the note on GetTime above.
+  local realUpdate = AK.Race.Update
+  function AK.Race:Update(elapsed)
+    advanceClock(elapsed or 0)
+    return realUpdate(self, elapsed)
+  end
+
   local seedTicks = 0
   function AK.RNG:FreshSeed()
     seedTicks = seedTicks + 1
@@ -1281,10 +1302,15 @@ if loadFailures == 0 then
     end
 
     -- Receive it as a client with its own copy of the field.
+    -- A client's own copy of the grid, addressed BOTH ways: by slot, which is
+    -- what a snapshot carries now, and by networkId, which is what one from an
+    -- older host carries.
     local mirror = { network = { isHost = false, session = "S1" }, track = race.track,
-      byNetworkId = {} }
+      byNetworkId = {}, vehicles = {} }
     for index in ipairs(race.vehicles) do
-      mirror.byNetworkId["R" .. index] = { distance = 0, lateral = 0, speed = 0 }
+      local copy = { distance = 0, lateral = 0, speed = 0 }
+      mirror.byNetworkId["R" .. index] = copy
+      mirror.vehicles[index] = copy
     end
     for _, message in ipairs(sent) do
       local values = { strsplit("\t", message) }
@@ -1293,8 +1319,15 @@ if loadFailures == 0 then
     local worst, worstAt = 0, ""
     for index, vehicle in ipairs(race.vehicles) do
       local copy = mirror.byNetworkId["R" .. index]
+      -- LATERAL IS COMPARED AS THE WIRE DELIVERED IT, not as the kart is
+      -- currently drawn. A client no longer teleports sideways on every
+      -- packet -- it eases toward the reported position over about a sixth of
+      -- a second -- so `lateral` mid-glide is not what arrived, and
+      -- `netLateral` is. What this check is for is whether the number survived
+      -- the trip, which it still is.
+      local landed = copy.netLateral or copy.lateral
       local off = math.abs(copy.distance - math.floor(vehicle.distance))
-        + math.abs(copy.lateral - vehicle.lateral) * 100
+        + math.abs(landed - vehicle.lateral) * 100
         + math.abs(copy.speed - vehicle.speed) * 10
       if off > worst then worst, worstAt = off, "R" .. index end
     end
@@ -1441,6 +1474,249 @@ if loadFailures == 0 then
     Net.lobby, Net.availableLobby = nil, nil
     Net.PlayerName = realName
     C_ChatInfo.SendAddonMessage = realSend
+  end)
+
+  -- MULTIPLAYER WHEN THINGS GO WRONG.
+  --
+  -- The handshake check proves the happy path. Nobody tests the happy path in
+  -- a party of eight: somebody double-clicks JOIN, somebody's reply is dropped,
+  -- somebody alt-tabs into a loading screen, the host closes the game. Every
+  -- one of those used to be silent -- the worst possible behaviour, because the
+  -- person it happens to cannot tell it from the addon being broken.
+  ok("multiplayer survives a party behaving like a party", function()
+    local Net, Race = AK.Net, AK.Race
+    local realSend = C_ChatInfo.SendAddonMessage
+    local sent = {}
+    C_ChatInfo.SendAddonMessage = function(_, message, _, target)
+      sent[#sent + 1] = { message = message, target = target }
+      return true
+    end
+    local function lastOfKind(kind)
+      for i = #sent, 1, -1 do
+        local m = sent[i].message
+        if m:sub(1, #kind + 1) == kind .. "\t" then return m end
+      end
+    end
+    local said = {}
+    local realPrint = AK.Print
+    AK.Print = function(_, text) said[#said + 1] = tostring(text) end
+    local function saidSomethingAbout(word)
+      for _, line in ipairs(said) do if line:lower():find(word, 1, true) then return true end end
+      return false
+    end
+
+    -- 1. A FULL GRID TURNS THE NEXT ONE AWAY, and says so.
+    Net.lobby = { id = "S9", host = "Host-Testrealm", track = "elwynn", roster = {} }
+    for i = 1, AK.MAX_RACERS do
+      Net.lobby.roster["P" .. i] = { name = "P" .. i, racer = "baine", kart = "kodo" }
+    end
+    wipe(sent)
+    Net:HandleMessage("JOIN\tS9\tLatecomer\tthrall\tmechano", "Latecomer")
+    assert(not Net.lobby.roster.Latecomer, "a ninth racer got onto an eight-kart grid")
+    assert(lastOfKind("FULL"), "the grid was full and nobody was told")
+
+    -- 2. A DOUBLE-CLICKED JOIN is one racer, not two, and is not announced
+    --    twice.
+    Net.lobby.roster = { ["Host-Testrealm"] = { name = "Host-Testrealm", racer = "baine", kart = "kodo" } }
+    said = {}
+    Net:HandleMessage("JOIN\tS9\tGuest\tthrall\tmechano", "Guest")
+    Net:HandleMessage("JOIN\tS9\tGuest\tthrall\tmechano", "Guest")
+    local size = 0
+    for _ in pairs(Net.lobby.roster) do size = size + 1 end
+    assert(size == 2, "a double-clicked JOIN put " .. size .. " racers on a two-kart grid")
+    local joins = 0
+    for _, line in ipairs(said) do if line:find("joined the pit lane", 1, true) then joins = joins + 1 end end
+    assert(joins == 1, "a double-clicked JOIN was announced " .. joins .. " times")
+
+    -- 3. A PACKET FOR SOMEBODY ELSE'S LOBBY is ignored outright.
+    Net:HandleMessage("JOIN\tSOMEONE-ELSE\tStranger\tthrall\tmechano", "Stranger")
+    assert(not Net.lobby.roster.Stranger, "a JOIN for another session reached this lobby")
+
+    -- 4. MALFORMED AND TRUNCATED PACKETS do not throw. A thrown error inside
+    --    CHAT_MSG_ADDON takes the whole event handler down with it.
+    for _, junk in ipairs({ "", "JOIN", "JOIN\tS9", "JOIN\tS9\t", "STATE",
+        "STATE\tS9\t", "STATE\tS9\tgarbage~~~", "INPUT\tS9",
+        "ROSTER\tS9\t\t\t", "\t\t\t", "NOPE\t1\t2" }) do
+      local good, err = pcall(function() Net:HandleMessage(junk, "Nuisance") end)
+      assert(good, ("a malformed packet %q threw: %s"):format(junk, tostring(err)))
+    end
+
+    -- 5. THE RACE STARTED WITHOUT YOU. A client that never made it onto the
+    --    roster used to get nothing at all -- no race, no message.
+    Net.lobby = nil
+    Net.availableLobby = { id = "S9", track = "elwynn", host = "Host-Testrealm", roster = {} }
+    Race.current = nil
+    said = {}
+    Net:HandleMessage("START\tS9\telwynn\t12345", "Host-Testrealm")
+    assert(not Race.current, "a client not on the roster was put into the race anyway")
+    assert(saidSomethingAbout("without you"),
+      "the race started without this client and nothing said so")
+
+    -- 6. EVERY CLIENT ROLLS THE SAME GRID. The seed used to be local, and the
+    --    AI fillers are shuffled off it -- so two people watched the same race
+    --    with a different six bots in it.
+    Net.availableLobby.roster = { ["Tester-Testrealm"] = { name = "Tester-Testrealm",
+      racer = "thrall", kart = "mechano" } }
+    Race.current = nil
+    Net:HandleMessage("START\tS9\telwynn\t\t", "Host-Testrealm")
+    assert(Race.current, "a rostered client did not start")
+    local fromSession = {}
+    for _, vehicle in ipairs(Race.current.vehicles) do
+      fromSession[#fromSession + 1] = vehicle.racer.id .. "/" .. vehicle.kart.id
+    end
+    local seedA = Race.current.seed
+    Race:Stop(true)
+    -- The same session id, built again: identical grid, because the seed comes
+    -- from the session rather than from the clock. The lobby has to be put back
+    -- first -- entering a race clears it, exactly as it does for a real client.
+    Race.current = nil
+    Net.availableLobby = { id = "S9", track = "elwynn", host = "Host-Testrealm",
+      roster = { ["Tester-Testrealm"] = { name = "Tester-Testrealm",
+        racer = "thrall", kart = "mechano" } } }
+    Net:HandleMessage("START\tS9\telwynn\t\t", "Host-Testrealm")
+    assert(Race.current, "the same client could not rejoin the same session")
+    assert(Race.current.seed == seedA, "two clients on one session rolled different seeds")
+    for index, vehicle in ipairs(Race.current.vehicles) do
+      local now = vehicle.racer.id .. "/" .. vehicle.kart.id
+      assert(now == fromSession[index],
+        ("grid slot %d is %s on one client and %s on the other")
+          :format(index, fromSession[index], now))
+    end
+    Race:Stop(true)
+
+    -- 7. A PLAYER WHO STOPS SENDING is handed to the AI, not left flooring it.
+    Race:Start("quick", { track = "elwynn" })
+    local race = Race.current
+    race.network = { isHost = true, session = "S9", host = "Tester-Testrealm" }
+    local remote = race.vehicles[2]
+    remote.owner = "Ghosted-Testrealm"
+    remote.networkId = remote.owner
+    race.remoteInputs[remote.owner] = { left = false, right = false, accelerate = false,
+      brake = true, throttleAware = true }
+    race.remoteHeard = { [remote.owner] = GetTime() - 30 }
+    said = {}
+    for _ = 1, math.ceil(4 / FRAME) do Race:Update(FRAME) end
+    assert(remote.abandoned, "a player silent for thirty seconds was still being driven by their last packet")
+    assert(remote.ai, "the abandoned kart was not handed to the AI")
+    assert(saidSomethingAbout("dropped out"), "nothing said the player had dropped out")
+    Race:Stop(true)
+
+    -- 8. ONE PRESS IS ONE ITEM. The last input table a remote player sent
+    --    stays in place until the next one, and physics runs at 120Hz -- so a
+    --    single tap used to fire on every tick until the next packet.
+    Race:Start("quick", { track = "elwynn" })
+    local host = Race.current
+    host.network = { isHost = true, session = "S9", host = "Tester-Testrealm" }
+    local shooter = host.vehicles[3]
+    shooter.owner = "Trigger-Testrealm"
+    shooter.networkId = shooter.owner
+    shooter.item = "triple_green_shell"
+    host.remoteInputs[shooter.owner] = { accelerate = true, throttleAware = true,
+      itemPulse = true }
+    host.remoteHeard = { [shooter.owner] = GetTime() }
+    local fired = 0
+    local realTrigger = AK.TriggerItem
+    AK.TriggerItem = function(selfRef, r, v)
+      if v == shooter then fired = fired + 1 end
+      return realTrigger(selfRef, r, v)
+    end
+    for _ = 1, 8 do Race:Update(FRAME) end
+    AK.TriggerItem = realTrigger
+    assert(fired <= 1,
+      ("one item press fired %d times -- a triple shell empties on a tap"):format(fired))
+    Race:Stop(true)
+
+    -- 9. THE HOST CAN LEAVE, and the client has to notice. Snapshots simply
+    --    stop; there is no goodbye packet and there cannot be one.
+    Race:Start("quick", { track = "elwynn" })
+    local client = Race.current
+    client.network = { isHost = false, session = "S9", host = "Gone-Testrealm" }
+    client.lastSnapshot = GetTime() - 60
+    said = {}
+    Race:Update(FRAME)
+    assert(not (Race.current and Race.current.network),
+      "the host went away and the client raced on against nobody")
+    assert(saidSomethingAbout("lost the host"), "nothing said the host had gone")
+
+    AK.Print = realPrint
+    Net.lobby, Net.availableLobby = nil, nil
+    C_ChatInfo.SendAddonMessage = realSend
+    say("        full grid, double joins, junk packets, a missed start, "
+      .. "a dropout and a vanished host: all handled and all reported")
+  end)
+
+  -- WHAT MULTIPLAYER ACTUALLY PUTS ON THE WIRE, PER SECOND.
+  --
+  -- Addon chat is rate limited by the server, and an addon that ignores that
+  -- does not get an error -- messages are dropped, or the client is
+  -- disconnected for spamming. The community's long-standing safe figure, the
+  -- one ChatThrottleLib is built around, is 800 bytes a second. Nothing here
+  -- had ever counted, so the only way to find out was to hold a race with eight
+  -- karts in it and see whether the host got kicked.
+  ok("the wire stays inside what the addon channel will carry", function()
+    if QUICK then return end
+    local Net, Race = AK.Net, AK.Race
+    local realSend = C_ChatInfo.SendAddonMessage
+    local bytes, count, biggest = 0, 0, 0
+    C_ChatInfo.SendAddonMessage = function(_, message)
+      bytes = bytes + #message
+      count = count + 1
+      biggest = math.max(biggest, #message)
+      return true
+    end
+
+    -- A full grid, hosted, driven for ten seconds of race time.
+    Race:Start("quick", { track = "elwynn" })
+    local race = Race.current
+    race.network = { isHost = true, session = "1731020304123456", host = "Host-Testrealm" }
+    for index, vehicle in ipairs(race.vehicles) do
+      vehicle.ai = vehicle.ai or AK.AI:CreatePersonality(9)
+      -- Worst case on the wire: every kart owned by a real player, so every
+      -- networkId is a full "Name-Realm" rather than the three bytes an AI
+      -- filler costs.
+      vehicle.owner = ("Aaaaaaaaaaaa%d-Proudmoore"):format(index)
+      vehicle.networkId = vehicle.owner
+      vehicle.item = vehicle.item or "triple_green_shell"
+    end
+    race.byNetworkId = {}
+    for _, vehicle in ipairs(race.vehicles) do
+      race.byNetworkId[vehicle.networkId] = vehicle
+    end
+
+    local SECONDS = 10
+    for _ = 1, math.ceil(SECONDS / FRAME) do Race:Update(FRAME) end
+    local hostRate = bytes / SECONDS
+    local hostMsgs = count / SECONDS
+    Race:Stop(true)
+
+    -- And a client, which whispers its input to the host.
+    bytes, count = 0, 0
+    Race:Start("quick", { track = "elwynn" })
+    local client = Race.current
+    client.network = { isHost = false, session = "1731020304123456", host = "Host-Testrealm" }
+    Race.controls.accelerate = true
+    for _ = 1, math.ceil(SECONDS / FRAME) do Race:Update(FRAME) end
+    Race.controls.accelerate = false
+    local clientRate = bytes / SECONDS
+    local clientMsgs = count / SECONDS
+    Race:Stop(true)
+    C_ChatInfo.SendAddonMessage = realSend
+
+    say(("        host %.0f B/s in %.1f msg/s (largest %d B); "
+      .. "each client %.0f B/s in %.1f msg/s")
+      :format(hostRate, hostMsgs, biggest, clientRate, clientMsgs))
+
+    -- 255 is a hard limit: a longer addon message is dropped silently.
+    assert(biggest <= 255,
+      ("a %d byte packet goes on the wire; anything over 255 is dropped silently")
+        :format(biggest))
+    -- 800 B/s is the safe sustained rate. The host is the one at risk: it is
+    -- the only machine sending to everybody.
+    assert(hostRate <= 800,
+      ("the host sends %.0f bytes a second, which is over what the addon "
+        .. "channel will carry"):format(hostRate))
+    assert(clientRate <= 800,
+      ("a client sends %.0f bytes a second"):format(clientRate))
   end)
 
   -- EVERY COMMAND THE HELP TEXT ADVERTISES HAS TO BE A COMMAND.

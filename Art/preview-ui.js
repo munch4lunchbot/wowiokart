@@ -604,6 +604,85 @@ if (process.env.SCREEN === "tracks") {
   }
 }
 
+// ---- the lobby: SCREEN=multiplayer -------------------------------------------
+//
+// The screen two people stare at while working out whether they are in the same
+// race, and the last player-facing screen with no picture. Five actions down
+// the left and a live roster on the right, both of which grow -- the actions
+// grew from four the day this was written, and the roster grows every time
+// somebody joins. Either one running into the note along the bottom is exactly
+// the failure nobody notices until a test night.
+if (process.env.SCREEN === "multiplayer") {
+  for (let i = 0; i < W * H; i++) { fb[i*3] = 0.030; fb[i*3+1] = 0.040; fb[i*3+2] = 0.070; }
+  panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);
+
+  const num = (re, d) => { const m = MENU_LUA.match(re); return m ? +m[1] : d; };
+  const PW = 680, PH = 400;
+  const px = Math.round(OX + CW / 2 - PW / 2);
+  const py = Math.round(OY - 40 + CH / 2 - PH / 2 - 8);
+  label(OX + CW / 2, OY - 5, "PARTY & RAID RACING", 20, GOLD, "center");
+  panel(px, py, PW, PH, [0.055, 0.10, 0.17], 0.98);
+
+  labelWrapped(px + PW / 2, py + 36,
+    "Race with people in your current party or raid who also have Azeroth Kart installed.",
+    12, PALE, PW - 70);
+
+  // Straight off MainMenu, so a sixth action or a taller row shows up here.
+  const ROW_H = num(/local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = (\d+)/, 36);
+  const PITCH = num(/local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = \d+, (\d+)/, 42);
+  const FIRST = num(/local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = \d+, \d+, (\d+)/, 108);
+  const ACTIONS = [...MENU_LUA.slice(MENU_LUA.indexOf("local ACTIONS = {"),
+    MENU_LUA.indexOf("for index, action in ipairs(ACTIONS)"))
+    .matchAll(/\{ "([A-Z /]+)",/g)].map((m) => m[1]);
+  if (!ACTIONS.length) throw new Error("preview-ui: parsed no multiplayer actions");
+  ACTIONS.forEach((text, i) => {
+    const by = py + FIRST + i * PITCH;
+    slice(tex.btn, px + 25, by, 280, ROW_H, i === 0 ? [0.42, 0.31, 0.08] : REST, 1);
+    if (textWidth(text, 13) > 280 - 16) {
+      throw new Error(`preview-ui: "${text}" does not fit a 280px lobby button`);
+    }
+    label(px + 25 + 140, by + (ROW_H - 13) / 2, text, 13, i === 0 ? LIT : GOLD, "center");
+  });
+  const actionsBottom = FIRST + (ACTIONS.length - 1) * PITCH + ROW_H;
+
+  // The live column: heading, rule, then the grid by name.
+  label(px + 332, py + 112, "LOBBY", 10, GOLD, "left");
+  blitUV(tex.hairline, px + 330, py + 128, PW - 355, 2, 0, 1, 0, 1, [1, .78, .30], 0.35);
+  const STATUS = [
+    "HOSTING  --  ELWYNN SPRINT",
+    "4 of 8 on the grid",
+    "",
+    "Grimtusk (you)",
+    "  Mordenna",
+    "  Sableflank",
+    "  Wrynnbourne",
+  ];
+  let sy = py + 140;
+  for (const line of STATUS) {
+    if (line === "") { sy += 20; continue; }
+    const mine = line.endsWith("(you)");
+    if (textWidth(line, 13) > PW - 355) {
+      throw new Error(`preview-ui: the lobby line "${line}" is wider than its column`);
+    }
+    label(px + 330, sy, line, 13, mine ? GOLD : MUTED, "left");
+    sy += 20;
+  }
+
+  // The note along the bottom, and the two things that must clear it.
+  const noteTop = PH - 25 - 34;
+  labelWrapped(px + PW / 2, py + noteTop,
+    "Multiplayer fills empty grid spots with AI racers. Results and unlocks are saved locally.",
+    12, MUTED, PW - 70);
+  if (actionsBottom > noteTop - 6) {
+    throw new Error("preview-ui: the lobby's actions run into the note by "
+      + Math.ceil(actionsBottom - noteTop + 6) + "px");
+  }
+  if (sy - py > noteTop - 6) {
+    throw new Error("preview-ui: the lobby roster runs into the note by "
+      + Math.ceil((sy - py) - noteTop + 6) + "px");
+  }
+}
+
 // ---- the trophy room, on demand: SCREEN=trophies -----------------------------
 //
 // The last player-facing screen with no picture. Fourteen achievements in a

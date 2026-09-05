@@ -69,6 +69,21 @@ function RNG:New(seed)
 end
 
 --- Seed derived from the clock, but recorded so a race can be replayed exactly.
+--- A seed derived from a string, identically on every machine.
+---
+--- Multiplayer needs every client to roll the same grid, and the only value
+--- they all provably agree on is the session id. Any stable string hash does;
+--- this is the usual multiply-and-add over the bytes, kept inside the same
+--- 32-bit range FreshSeed returns.
+function RNG:SeedFrom(text)
+  local hash = 5381
+  text = tostring(text)
+  for i = 1, #text do
+    hash = (hash * 33 + text:byte(i)) % 4294967296
+  end
+  return hash
+end
+
 function RNG:FreshSeed()
   return math.floor(GetTime() * 1000) % 4294967296
 end

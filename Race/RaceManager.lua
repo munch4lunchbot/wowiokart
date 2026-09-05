@@ -1,5 +1,22 @@
 local _, AK = ...
 
+-- DECLARED AT THE TOP, because a Lua local is invisible to every function
+-- defined above it. Both of these were written next to Race:Step, which is near
+-- the bottom of the file, and both are read from UpdateRacing, which is not --
+-- so both were nil at the moment they mattered, and the comparison against them
+-- threw. A file-level constant used across a file belongs at the top of it.
+--
+--- How long a remote player can say nothing before their kart is handed to the
+--- AI. Input arrives every 0.09s, so three seconds is thirty missed packets --
+--- comfortably past a hitch or a loading screen, and well short of a lap.
+local REMOTE_SILENCE = 3.0
+--- And how long a CLIENT waits on the host before calling it. Snapshots arrive
+--- several times a second; eight seconds of nothing is the host gone.
+local HOST_SILENCE = 8.0
+--- How fast a remote kart slides to the lateral position the host reported.
+--- 6 per second settles a correction in about a sixth of a second.
+local LATERAL_CATCH = 6.0
+
 -- `throttleAware` marks a control table that actually reports its throttle.
 -- The player's does; the AI's does not, and neither does a bare {} used for a
 -- remote racer. Physics needs to tell those apart, because "no accelerate
@@ -135,7 +152,21 @@ function Race:BuildRace(mode, options)
   -- Separate streams so an extra AI decision cannot shift the item sequence.
   -- The seed is recorded, which is what makes a race reproducible for ghosts
   -- and for chasing down a physics bug.
-  race.seed = options.seed or AK.RNG:FreshSeed()
+  -- ONE SEED FOR THE WHOLE GRID, OR EVERY SCREEN SHOWS A DIFFERENT RACE.
+  --
+  -- Every client called this with no seed, so every client rolled its own --
+  -- and `rngAI` is what shuffles the filler bots that fill the empty grid
+  -- slots. Two people and six AI meant SIX DIFFERENT AI on each machine: the
+  -- host's snapshots kept the positions in step, because a filler is addressed
+  -- by its slot, but the name, kart, colour and model in that slot came from
+  -- whatever each client had shuffled into it. You and your friend watched the
+  -- same race with a different field in it.
+  --
+  -- The session id is the one value every client in a race provably shares, so
+  -- the seed comes from that. An explicit `seed` still wins, which is what the
+  -- START packet now carries and what a ghost replay hands in.
+  race.seed = options.seed or (options.session and AK.RNG:SeedFrom(options.session))
+    or AK.RNG:FreshSeed()
   race.rngItems = AK.RNG:New(race.seed)
   race.rngAI = AK.RNG:New(race.seed + 0x9E3779B9)
   local localName = race.network and AK.Net:PlayerName() or "player"
@@ -464,6 +495,12 @@ function Race:NextGrandPrix()
 end
 
 function Race:Stop(showMenu)
+  -- Say goodbye before tearing down, so nobody has to wait out the silence
+  -- timeout to find out the host has gone.
+  if self.current and self.current.network and self.current.network.isHost
+    and AK.Net.AnnounceHostLeft then
+    AK.Net:AnnounceHostLeft(self.current)
+  end
   if self.updateFrame then self.updateFrame:Hide() end
   self.current = nil
   AK.RaceUI:Hide()
@@ -1434,6 +1471,15 @@ end
 function Race:DeadReckon(race, vehicle, dt)
   vehicle.remote = true
   vehicle.distance = vehicle.distance + (vehicle.speed or 0) * dt
+  -- Slide toward the last lateral the host reported rather than snapping to it
+  -- the instant the packet lands. LATERAL_CATCH is a rate, so the correction
+  -- takes about a sixth of a second however far it has to travel -- which is
+  -- roughly one snapshot interval, so the kart is always arriving just as the
+  -- next instruction turns up.
+  if vehicle.netLateral then
+    vehicle.lateral = vehicle.lateral
+      + (vehicle.netLateral - vehicle.lateral) * math.min(1, dt * LATERAL_CATCH)
+  end
   -- Recompute progress, lap and odometer from the new distance, so standings
   -- and the minimap keep moving between packets instead of stepping too.
   AK.Physics:UpdateRoute(race, vehicle)
@@ -1468,7 +1514,38 @@ function Race:UpdateRacing(race, dt)
         end
       elseif vehicle.owner then
         if hostOrSolo then
-          AK.Physics:UpdateVehicle(race, vehicle, race.remoteInputs[vehicle.owner] or {}, dt)
+          -- NOBODY HOME. An `or {}` here is not a neutral default: physics
+          -- reads a control table with no `accelerate` in it as the throttle
+          -- HELD, so a player who alt-tabbed, disconnected or walked out of
+          -- range left a kart flooring it into the scenery for the rest of the
+          -- race, steering frozen at whatever they last pressed. After a few
+          -- seconds of silence the AI takes the wheel, which is what every
+          -- other unattended kart on the grid already gets.
+          local heard = race.remoteHeard and race.remoteHeard[vehicle.owner]
+          local input = race.remoteInputs[vehicle.owner]
+          if input and heard and (GetTime() - heard) < REMOTE_SILENCE then
+            AK.Physics:UpdateVehicle(race, vehicle, input, dt)
+            -- AN ITEM PRESS IS AN EDGE, AND THE HOST HELD IT DOWN.
+            --
+            -- The last input table a remote player sent stays in place until
+            -- the next one arrives, ninety milliseconds later -- and physics
+            -- runs a hundred and twenty times a second, so one press fired
+            -- TriggerItem on eleven consecutive ticks. A single shell survived
+            -- that (the first shot consumes it), but a triple shell emptied all
+            -- three barrels on one tap and a held shield was thrown the instant
+            -- it was deployed. The local player's press is cleared the same way
+            -- a few lines further down; the remote one never was.
+            input.itemPulse = false
+            vehicle.abandoned = nil
+          else
+            if not vehicle.abandoned and heard then
+              vehicle.abandoned = true
+              AK:Print(("%s dropped out -- their kart is on autopilot.")
+                :format(tostring(vehicle.owner)))
+            end
+            vehicle.ai = vehicle.ai or AK.AI:CreatePersonality(#race.vehicles)
+            AK.Physics:UpdateVehicle(race, vehicle, AK.AI:Controls(race, vehicle, dt), dt)
+          end
         else
           self:DeadReckon(race, vehicle, dt)
         end
@@ -1901,9 +1978,35 @@ end
 --- Frame entry point. Physics advances in fixed slices so that drift charge,
 --- acceleration curves and collision windows behave identically at 30fps and
 --- 144fps; only rendering runs per frame.
+--- THE HOST CAN LEAVE. If they quit, alt-F4 or lose their connection, the
+--- snapshots simply stop -- and a client had no idea: every other kart
+--- dead-reckoned on forever, nothing could ever finish the race, and the only
+--- way out was ESC.
+---
+--- Checked here rather than in UpdateRacing, which is where it was first
+--- written and which only runs once the lights are green -- so a host who
+--- vanished during the three seconds on the grid was never noticed at all, and
+--- that is exactly when a host is most likely to still be fiddling with
+--- something. Once a frame is also plenty; UpdateRacing runs a hundred and
+--- twenty times a second.
+function Race:CheckHostAlive(race)
+  if not race.network or race.network.isHost then return false end
+  -- Once the flag is out there is nothing left to wait for, and the host has
+  -- every reason to stop sending. Calling that "lost the host" would throw the
+  -- results screen away eight seconds after a perfectly normal finish.
+  if race.state == AK.RACE_STATES.FINISHED then return false end
+  race.lastSnapshot = race.lastSnapshot or GetTime()
+  if GetTime() - race.lastSnapshot <= HOST_SILENCE then return false end
+  AK:Print("|cffff5555Lost the host.|r Returning to the garage.")
+  AK.RaceUI:Announce("HOST LEFT THE RACE", AK.COLORS.danger)
+  self:Stop(true)
+  return true
+end
+
 function Race:Update(elapsed)
   local race = self.current
   if not race then return end
+  if race.network and self:CheckHostAlive(race) then return end
   race.clock = race.clock or AK.FixedStep:New()
   AK.FixedStep:Advance(race.clock, elapsed, function(dt)
     if self.current == race then self:Step(race, dt) end

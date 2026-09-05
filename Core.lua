@@ -65,6 +65,11 @@ SlashCmdList["AZEROTHKART"] = function(message)
     AK:UnmuteAll()
   elseif message == "debug" then
     AK.Debug:Toggle()
+  elseif message == "mp" or message == "lobby" then
+    -- Straight to PARTY & RAID RACING. Two menus deep is two menus too many
+    -- when eight people are waiting on you to open a lobby.
+    AK.Menu:Show()
+    AK.Menu:ShowMultiplayer()
   elseif message == "battle" then
     AK.Race:StartBattle()
   elseif message == "trial" then
@@ -76,7 +81,7 @@ SlashCmdList["AZEROTHKART"] = function(message)
     -- reload. Whatever looks good can be pasted into Data\Racers.lua.
     AK:PreviewNPC(tonumber(message:match("(%d+)")))
   elseif message == "help" then
-    AK:Print("/kart - garage  |  race  |  stop  |  tune - live render tuning  |  roster  |  debug  |  battle  |  trial  |  beats - replay every race moment  |  npc <id> - preview a creature model")
+    AK:Print("/kart - garage  |  race  |  stop  |  mp - party racing  |  tune - live render tuning  |  roster  |  debug  |  battle  |  trial  |  beats - replay every race moment  |  npc <id> - preview a creature model")
     AK:Print("race: |cffffd100aireport|r what the AI field actually did (read it at the results screen)  |  |cffffd100beats|r - replay every race moment")
     AK:Print("sound: |cffffd100sound|r the editor  |  |cffffd100sfx|r audition every cue  |  |cffffd100sfx <cue>|r one cue  |  |cffffd100sfxrate <cue>|r hear it 8x at its real density -- the only way to judge 'repetitive'")
     AK:Print("sound: |cffffd100sfxid <fileID>|r try any game sound  |  |cffffd100sfxset <cue> <fileID>|r bind it  |  |cffffd100sfxclear <cue>|r  |  |cffffd100sfxreport|r what resolved")
