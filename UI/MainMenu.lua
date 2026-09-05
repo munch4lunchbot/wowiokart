@@ -1097,7 +1097,26 @@ end
 
 function Menu:ShowSelection(kind)
   self:HideDynamic()
-  local page = self:Page("select:" .. kind, function(page) self:BuildSelection(page, kind) end)
+  -- A page built before the workshop added or removed a racer is the wrong
+  -- SHAPE, not merely out of date: the grid's column count, card size and card
+  -- list were all decided from the entry count at build time, so a twelfth
+  -- racer has no card to refresh. Throw it away and build again.
+  --
+  -- Only for a shape change. An edited model, name or stat is akRefresh's job
+  -- -- rebuilding a grid of eleven 3D portraits every time a slider moves is
+  -- the stutter that keeping the page was meant to avoid.
+  -- A FRAME IS FOREVER, so the page that is dropped is hidden and abandoned
+  -- rather than destroyed -- WoW has no way to destroy one. That is the same
+  -- trade the note on AddDynamic describes, and it is only paid when somebody
+  -- adds or removes a racer in the workshop, which is not something that
+  -- happens in a loop.
+  local key = "select:" .. kind
+  local cached = self.pages and self.pages[key]
+  if cached and cached.akRosterShape ~= (AK.Roster and AK.Roster.shape or 0) then
+    cached:Hide()
+    self.pages[key] = nil
+  end
+  local page = self:Page(key, function(page) self:BuildSelection(page, kind) end)
   page:Show()
 end
 
@@ -1385,6 +1404,7 @@ function Menu:BuildSelection(page, kind)
       -- about 155px at 11pt and the card is 131 wide, so it wrapped wherever
       -- the client felt like -- usually leaving a single orphaned "DRF 6" on
       -- the second line. Broken deliberately down the middle instead.
+      cards[index].detail = detail
       detail:SetText(("SPD %d   ACC %d\nHND %d   DRF %d"):format(
         entry.speed, entry.acceleration, entry.handling, entry.drift))
     elseif kind == "kart" then
@@ -1435,20 +1455,67 @@ function Menu:BuildSelection(page, kind)
   --- a creature that took 1.1s to resolve on the first ever visit would show
   --- its icon for the rest of the session. Asked again on the way in, and once
   --- more a second later to catch what is still in flight.
+  --- Returns true while anything is still streaming.
   local function settleModels()
+    local pending = false
     for _, slot in ipairs(cards) do
       if slot.model then
         local ready = AK.Model:IsReady(slot.model)
         slot.model:SetShown(ready)
         slot.icon:SetShown(not ready)
+        if not ready then pending = true end
       end
     end
+    return pending
   end
+
+  --- KEEP ASKING UNTIL THEY ARE ALL IN.
+  ---
+  --- Two samples -- on the way in and a second later -- is not enough for a
+  --- creature the client has never streamed before, and a card that loses that
+  --- race shows its flat icon for the whole visit. Backing off 0.5, 1, 2, 4
+  --- covers a cold load and stops the moment nothing is outstanding, so the
+  --- common case is one extra call and the worst case is four.
+  local function settleSoon(delay)
+    C_Timer.After(delay, function()
+      if not settleModels() then return end
+      if delay < 4 then settleSoon(delay * 2) end
+    end)
+  end
+
+  -- The roster SHAPE this page was built against. ShowSelection compares it and
+  -- rebuilds rather than refreshing when a racer has come or gone; an edited
+  -- field is akRefresh's job and does not cost a rebuild.
+  page.akRosterShape = AK.Roster and AK.Roster.shape or 0
 
   --- Everything that can have changed since the last visit.
   function page:akRefresh()
-    settleModels()
-    C_Timer.After(1, settleModels)
+    for _, slot in ipairs(cards) do
+      -- RE-READ THE RACER, do not trust the card.
+      --
+      -- A model chosen in the workshop reached the track -- a race reads the
+      -- racer table at the flag -- and reached nothing here, because the
+      -- portrait was specced once when the card was made and the page is kept
+      -- for the session. The same went for a renamed racer and for stats
+      -- nudged on the sliders. Roster:Set edits the racer table in place, so
+      -- the entry is already right; it is the widget that has to be told.
+      if slot.model then
+        local racer = AK:GetRacer(slot.entry.id) or slot.entry
+        AK.Model:SetSpec(slot.model, racer.model)
+        -- The portrait dial is live in the workshop too, and the racer's own
+        -- scale decides whether a gnome or a tauren fills the slot.
+        slot.model.akZoom = AK.Model:PortraitZoom()
+        slot.model.akSeatScale = racer.seatScale or 1
+        AK.Model:Reframe(slot.model)
+        slot.icon:SetTexture(racer.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+        slot.name:SetText(racer.name)
+        if slot.detail then
+          slot.detail:SetText(("SPD %d   ACC %d\nHND %d   DRF %d"):format(
+            racer.speed, racer.acceleration, racer.handling, racer.drift))
+        end
+      end
+    end
+    if settleModels() then settleSoon(0.5) end
     for _, slot in ipairs(cards) do
       local chosen = AK.db.selection[kind] == slot.entry.id
       -- The unchosen colour is NewButton's own default, not a second copy of

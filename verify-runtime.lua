@@ -1028,6 +1028,80 @@ if loadFailures == 0 then
     AK.Menu:Hide()
   end)
 
+  -- AND A WORKSHOP EDIT HAS TO REACH THE CARD.
+  --
+  -- The other half of keeping the pages: a card built once is a snapshot, and
+  -- every edit made after it was built used to reach the RACE -- which reads
+  -- the racer table at the flag -- and nothing on CHOOSE YOUR RACER. You could
+  -- give a racer a new model, watch it drive past on the track, and still see
+  -- the old one on the card you picked them from.
+  ok("a workshop edit reaches the racer cards", function()
+    AK.Menu:Build()
+    AK.Menu:Show()
+    AK.Menu:ShowSelection("racer")
+    local page = AK.Menu.pages["select:racer"]
+    assert(page, "no racer page was built")
+
+    --- Every portrait belonging to the LIVE page, found by walking each
+    --- widget's parents up to it. The stub keeps one flat list of everything
+    --- ever created, and a page that has been dropped and rebuilt leaves its
+    --- old portraits in it -- counting those would let a page that never
+    --- rebuilt pass.
+    local function specs()
+      local found = {}
+      for _, w in ipairs(everyWidget) do
+        if w.akKind == "PlayerModel" then
+          local parent, guard = w.akParent, 0
+          while parent and guard < 8 do
+            if parent == page then found[#found + 1] = w break end
+            parent, guard = parent.akParent, guard + 1
+          end
+        end
+      end
+      return found
+    end
+
+    local before = specs()
+    assert(#before >= #AK.Racers,
+      ("%d portraits on a page of %d racers"):format(#before, #AK.Racers))
+
+    -- Give a racer a model nothing else is using, then come back to the page
+    -- the way a player does: workshop, close, CHOOSE YOUR RACER.
+    local target = AK.Racers[3]
+    local WANTED = 987654
+    AK.Roster:Set("racers", target.id, "model", WANTED)
+    assert(target.model and target.model.creature == WANTED,
+      "the roster did not take the new model")
+    AK.Menu:ShowHome()
+    AK.Menu:ShowSelection("racer")
+    page = AK.Menu.pages["select:racer"]
+
+    local showing = false
+    for _, model in ipairs(specs()) do
+      if model.akSpec and model.akSpec.creature == WANTED then showing = true end
+    end
+    assert(showing,
+      "a model chosen in the workshop never reached the racer card")
+
+    -- And a racer ADDED afterwards is not merely stale, it has no card at all:
+    -- the grid's columns, card size and card list were all decided from the
+    -- entry count when the page was built.
+    local countBefore = #AK.Racers
+    local added = AK.Roster:AddRacer()
+    assert(added, "the workshop could not add a racer")
+    AK.Menu:ShowHome()
+    AK.Menu:ShowSelection("racer")
+    page = AK.Menu.pages["select:racer"]
+    assert(#AK.Racers == countBefore + 1, "the roster did not grow")
+    assert(#specs() >= #AK.Racers,
+      ("a racer was added and the page still has %d portraits for %d racers")
+        :format(#specs(), #AK.Racers))
+    say(("        %s took the new model; the page rebuilt for %d racers")
+      :format(target.name, #AK.Racers))
+    AK.Roster:RemoveRacer(added.id)
+    AK.Menu:Hide()
+  end)
+
   -- NOTHING MAY BE PRINTED THROUGH ANYTHING ELSE.
   --
   -- The race HUD has verify-hud, which walks a layout table at eight

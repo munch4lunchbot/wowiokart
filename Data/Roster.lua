@@ -70,6 +70,7 @@ Roster.Find = function(_, domain, id) return find(domain, id) end
 --- Apply everything saved. Called once at load, before the menu or a race can
 --- read the roster.
 function Roster:Apply()
+  self:Reshape()
   local saved = store()
 
   -- Custom racers first: an override may target one of them.
@@ -118,7 +119,39 @@ function Roster:IsChanged(domain, id, key)
   return byId and byId[id] ~= nil and byId[id][key] ~= nil
 end
 
+-- WHAT THE MENU WATCHES.
+--
+-- The selection screens are built once and kept -- rebuilding a grid of eleven
+-- 3D portraits on every visit is exactly the stutter that keeping them was
+-- meant to avoid -- so a card is a snapshot of the roster at the moment the
+-- page was first opened. Every edit made in the workshop after that reached
+-- the race (which reads the racer table at the flag) and reached nothing on
+-- CHOOSE YOUR RACER: you could give Leeroy a new model, watch it drive past on
+-- the track, and still see the old one on the card you picked him from.
+--
+-- Anything that changes the roster bumps `revision`; only something that
+-- changes its SHAPE -- a racer added or removed -- bumps `shape`.
+--
+-- The difference decides how hard the menu has to work. An edited field is a
+-- refresh: the card exists, it just has to re-read the racer. A racer that has
+-- come or gone is a rebuild, because the grid's column count, card size and
+-- card list were all settled from the entry count. Bumping one number for both
+-- would rebuild eleven 3D portraits every time somebody nudged a stat slider,
+-- which is exactly the stutter keeping the pages was meant to avoid.
+Roster.revision = 0
+Roster.shape = 0
+
+function Roster:Touch()
+  self.revision = (self.revision or 0) + 1
+end
+
+function Roster:Reshape()
+  self.shape = (self.shape or 0) + 1
+  self:Touch()
+end
+
 function Roster:Set(domain, id, key, value)
+  self:Touch()
   local saved = store()
   saved[domain] = saved[domain] or {}
   saved[domain][id] = saved[domain][id] or {}
@@ -141,6 +174,7 @@ end
 --- the data file's own table -- which is why RESET says it needs a reload for
 --- anything it cannot restore in place.
 function Roster:Clear(domain, id)
+  self:Touch()
   local saved = store()
   if saved[domain] then saved[domain][id] = nil end
   AK:Print("Reset " .. id .. " -- /reload to see the shipped values restored.")
@@ -189,6 +223,7 @@ function Roster:Hazards()
 end
 
 function Roster:SetHazardModel(name, creatureID)
+  self:Touch()
   local saved = store()
   saved.hazards = saved.hazards or {}
   saved.hazards[name] = creatureID
@@ -211,6 +246,7 @@ end
 --- Append a racer. Deliberately middling and model-less: it is a blank to be
 --- filled in on the MODELS tab, not a guess at what somebody wanted.
 function Roster:AddRacer()
+  self:Reshape()
   local saved = store()
   local n = #saved.custom + 1
   local id = "custom" .. n
@@ -222,6 +258,7 @@ function Roster:AddRacer()
 end
 
 function Roster:RemoveRacer(id)
+  self:Reshape()
   local saved = store()
   for index, spec in ipairs(saved.custom) do
     if spec.id == id then
