@@ -86,6 +86,11 @@ local CUES = {
   boost       = { kit = { "IG_SPELLBOOK_OPEN", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
   megaBoost   = { kit = { "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP", "LEVELUPSOUND" }, pri = PRI.HIGH, cd = 0.35 },
   dash        = { kit = { "UI_WORLDQUEST_START", "IG_SPELLBOOK_OPEN" }, pri = PRI.NORMAL, cd = 0.40 },
+  -- A launch was playing "boost" -- the same cue as a mushroom and a
+  -- mini-turbo, on the one event in the game that throws you off the ground.
+  -- Two of the three most emphatic things that can happen to you sounded
+  -- identical, and the third was the landing they both led into.
+  jump        = { kit = { "UI_PET_BATTLE_START", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
   landing     = { kit = { "IG_ABILITY_ICON_DROP", "IG_MAINMENU_CLOSE" }, pri = PRI.NORMAL, cd = 0.40 },
 
   -- ENGINE. Its own lane -- see UpdateEngine. These never route through

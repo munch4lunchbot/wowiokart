@@ -169,6 +169,37 @@ function widget:SetTexCoord(...) self.akTexCoord = { ... } return self end
 -- things on the same frame sit on top of each other" unanswerable -- and that
 -- is the one question a window nobody can screenshot most needs asked.
 function widget:CreateTexture(...) return newWidget("Texture", nil, self) end
+--- The line primitive the road's kerbs are drawn with. Its two endpoints are
+--- recorded into the same akX/akY/akWidth/akHeight box every other region uses,
+--- so a check that asks "where did that strip end up" gets the same answer
+--- whichever primitive the renderer chose.
+function widget:CreateLine(...)
+  local line = newWidget("Line", nil, self)
+  function line:SetThickness(t) self.akThickness = t return self end
+  function line:GetThickness() return self.akThickness or 1 end
+  function line:SetStartPoint(_, _, x, y)
+    self.akStartX, self.akStartY = x, y
+    self:akMeasure()
+    return self
+  end
+  function line:SetEndPoint(_, _, x, y)
+    self.akEndX, self.akEndY = x, y
+    self:akMeasure()
+    return self
+  end
+  function line:akMeasure()
+    local x0, y0 = self.akStartX, self.akStartY
+    local x1, y1 = self.akEndX, self.akEndY
+    if not (x0 and x1) then return end
+    local half = (self.akThickness or 1) * 0.5
+    self.akAnchor = "BOTTOM"
+    self.akX = (x0 + x1) * 0.5
+    self.akY = math.min(y0, y1)
+    self.akWidth = math.abs(x1 - x0) + half * 2
+    self.akHeight = math.max(1, math.abs(y1 - y0))
+  end
+  return line
+end
 function widget:CreateFontString(...) return newWidget("FontString", nil, self) end
 function widget:CreateAnimationGroup(...) return newWidget("AnimGroup") end
 function widget:CreateAnimation(...) return newWidget("Anim") end

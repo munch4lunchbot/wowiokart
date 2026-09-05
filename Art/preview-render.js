@@ -29,6 +29,41 @@ function rect(x0, y0, w, h, r, g, b, a = 1) {
   const ys = Math.max(0, Math.round(y0)), ye = Math.min(H, Math.round(y0 + h));
   for (let y = ys; y < ye; y++) for (let x = xs; x < xe; x++) blend(x, y, r, g, b, a);
 }
+/**
+ * An edge piece covering `width` pixels HORIZONTALLY along its whole run --
+ * the mirror of UI/RaceUI.lua's `setEdge`, which uses WoW's CreateLine so a
+ * road edge is drawn as the diagonal it is instead of as a staircase.
+ *
+ * Screen coordinates, y measured DOWNWARD, unlike the road plane's. The ends
+ * are cut horizontally rather than perpendicular to the run: consecutive pieces
+ * share an endpoint, and a horizontal cut is what makes them meet without a
+ * notch. The horizontal span is anti-aliased by coverage, which is the whole
+ * point -- a hard-edged diagonal is just a staircase with extra steps.
+ */
+function edge(x0, y0, x1, y1, width, r, g, b, a = 1) {
+  const dy = y1 - y0, dx = x1 - x0;
+  const yTop = Math.min(y0, y1), yBot = Math.max(y0, y1);
+  // A strip less than a pixel high has no diagonal in it -- one scanline, and a
+  // rectangle is what one scanline of a diagonal is. Mirrors setEdge.
+  if (!(Math.abs(dy) >= 1)) {
+    const lo = Math.min(x0, x1) - width / 2, hi = Math.max(x0, x1) + width / 2;
+    rect(lo, yTop, Math.max(1, hi - lo), Math.max(1, yBot - yTop), r, g, b, a);
+    return;
+  }
+  const ys = Math.max(0, Math.floor(yTop)), ye = Math.min(H, Math.ceil(yBot));
+  const run = yBot - yTop, half = width / 2;
+  for (let y = ys; y < ye; y++) {
+    const t = clamp01((y + 0.5 - yTop) / run);
+    const cx = (y0 <= y1 ? x0 + dx * t : x1 - dx * t);
+    const lo = cx - half, hi = cx + half;
+    const xs = Math.max(0, Math.floor(lo)), xe = Math.min(W, Math.ceil(hi));
+    for (let x = xs; x < xe; x++) {
+      const cover = Math.min(x + 1, hi) - Math.max(x, lo);
+      if (cover > 0) blend(x, y, r, g, b, a * Math.min(1, cover));
+    }
+  }
+}
+const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
 
 // ---------- TGA loading ----------
 function loadTGA(name) {
@@ -626,7 +661,7 @@ const detailZ = tailCount > 0 ? DETAIL_Z : FAR_Z;
 const nu = 1 / nearZ, fu = 1 / detailZ, step = (nu - fu) / Math.max(1, nearCount - 1);
 const tailStep = tailCount > 0 ? (FAR_Z - detailZ) / tailCount : 0;
 const rows = [];
-let pX = null, pY = null, pW = null, pZ = null, pCeil = null;
+let pX = null, pY = null, pW = null, pZ = null, pCeil = null, pPPM = null;
 for (let i = 0; i < SEGMENTS; i++) {
   const dz = i < nearCount ? 1 / (nu - i * step) : detailZ + tailStep * (i - nearCount + 1);
   const segZ = camZ + dz;
@@ -634,25 +669,58 @@ for (let i = 0; i < SEGMENTS; i++) {
   const hwPx = ppm * T.roadHalf * roadWidth(segZ);
   if (pY !== null && y > pY) {
     rows.push({ y: pY, h: Math.max(1, y - pY), midX: (x + pX) / 2, midHalf: (hwPx + pW) / 2,
+      // The strip's own near and far edges, which the kerb spans -- see
+      // RaceUI:RenderRoad. Without them the kerb is a rectangle at the midpoint
+      // and comes apart into dashes on a bend.
+      nearX: pX, nearHalf: pW, farX: x, farHalf: hwPx, nearPPM: pPPM,
       segZ, prevZ: pZ, dz, ppm,
       cover: tunnelDepth(segZ), ceilY: project(dz, bend(dz), roadHeight(segZ) + TUNNEL_HEIGHT)[1],
       prevCeilY: pCeil });
   }
-  pX = x; pY = y; pW = hwPx; pZ = segZ; pCeil = project(dz, bend(dz), roadHeight(segZ) + TUNNEL_HEIGHT)[1];
+  pX = x; pY = y; pW = hwPx; pZ = segZ; pPPM = ppm;
+  pCeil = project(dz, bend(dz), roadHeight(segZ) + TUNNEL_HEIGHT)[1];
 }
-// far to near, so crests occlude
+// THREE PASSES, BECAUSE THE CLIENT HAS THREE DRAW LAYERS.
+//
+// Every strip's grass is BACKGROUND sublevel 5, every tunnel wall is
+// BACKGROUND 7, and the whole road plane -- tarmac, kerbs, lane, shading -- is
+// ARTWORK. A layer wins over creation order, so in the game EVERY wall is above
+// EVERY patch of grass and EVERY kerb is above EVERY wall, whichever strip each
+// belongs to. Walking the rows once and drawing all three per row instead let
+// the NEAREST wall -- a quad reaching from the floor to the ceiling, so it
+// covers a third of the screen -- paint over the kerbs of every strip beyond
+// it, and cut the kerb's clean diagonal back into a staircase. That staircase
+// only ever existed in this file, which is the worst kind of mirror bug: it
+// sends you hunting through a renderer that is already right.
+//
+// Within a pass it is still far to near, so crests occlude.
+for (let pass = 0; pass < 3; pass++)
 for (let r = rows.length - 1; r >= 0; r--) {
   const row = rows[r];
   const fog = clamp(1 - (row.dz / HAZE_Z) * T.fogStrength, .22, 1) * roadLight;
   const mix = hazeCap * Math.pow(clamp(row.dz / HAZE_Z, 0, 1), 0.85);
   const idx = Math.floor(row.segZ / STRIPE), dark = idx % 2 === 0;
   const rz=((row.segZ%track.length)+track.length)%track.length;
-  const onRamp = track._ramps.some(r=>rz>=r[0]&&rz<=r[1]);
+  const rampSpan = track._ramps.find(r=>rz>=r[0]&&rz<=r[1]);
+  const onRamp = !!rampSpan;
+  const toLip = rampSpan ? rampSpan[1] - rz : null;
   const yTop = SY(row.y + row.h), hpx = row.h + 1;
+  // The road quad at the NARROWEST of its two edges, never the average -- see
+  // the note in RaceUI:RenderRoad. It can then only fall short of the true
+  // edge, and the kerb drawn along that edge is the one thing covering it.
+  let quadLo = Math.max(row.nearX - row.nearHalf, row.farX - row.farHalf);
+  let quadHi = Math.min(row.nearX + row.nearHalf, row.farX + row.farHalf);
+  // Beyond this the strip turns further than it is wide -- one pixel of road
+  // near the horizon -- and both the quad and its edges collapse to the
+  // midpoint. A diagonal drawn between the true edges there is a red rule
+  // across the frame, not a kerb. Mirrors quadNarrow in RaceUI:RenderRoad.
+  const quadNarrow = (quadHi - quadLo) >= 2;
+  if (!quadNarrow) { quadLo = row.midX - row.midHalf; quadHi = row.midX + row.midHalf; }
+  const quadX = (quadLo + quadHi) / 2, quadHalf = (quadHi - quadLo) / 2;
   const v0 = row.prevZ, v1 = row.segZ;
   const vSpanCap = Math.max(0.08, row.h / MIN_TEXEL);
 
-  if (tex.grass) {
+  if (pass === 0 && tex.grass) {
     if (row.ppm * GRASS_TILE < MIN_TEXEL) {
       // One repeat is now smaller than MIN_TEXEL pixels: flat colour with the
       // texture's mean folded in, because there is nothing left to tile but a
@@ -668,58 +736,15 @@ for (let r = rows.length - 1; r >= 0; r--) {
         aerial(verge, (dark ? T.grassContrast : 1) * roadLight, mix), 1);
     }
   }
-  if (tex.road) {
-    const uR = T.roadHalf / ROAD_TILE;
-    const band = Math.floor(row.segZ / 2.2) % 2 === 0;
-    // Mirrors RaceUI:RenderRoad -- a surface painted on the road is drawn.
-    const lapZ = ((row.segZ % track.length) + track.length) % track.length;
-    const zone = (track._painted || []).find(z => lapZ >= z.from && lapZ <= z.to);
-    // Ramped at the ends of the zone, mirroring Terrain.PAINT_FADE. Without
-    // this the join is a hard line straight across the road -- which is exactly
-    // what a preview render of Zangarmarsh's water crossing used to show.
-    const fade = zone ? Math.min(12, (zone.to - zone.from) * 0.5) : 0;
-    const reach = zone
-      ? 0.72 * (fade > 0 ? clamp(Math.min(lapZ - zone.from, zone.to - lapZ) / fade, 0, 1) : 1)
-      : 0;
-    const base = (zone && PAINT[zone.mat])
-      ? track.road.map((c, k) => c + (PAINT[zone.mat][k] - c) * reach)
-      : track.road;
-    const flatRoad = row.ppm * ROAD_TILE < MIN_TEXEL;
-    const meanFix = flatRoad ? ROAD_MEAN : 1;
-    const tint = onRamp
-      ? aerial([1.0, 0.74, 0.16], (band ? 1.0 : 0.55) * tarmacLight * meanFix, mix)
-      : aerial(legible(base, tarmacLight), (dark ? .96 : 1) * meanFix, mix);
-    if (flatRoad) {
-      rect(SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx, ...tint, 1);
-    } else {
-      const rv0 = v0 / ROAD_TILE;
-      const rv1 = Math.min(v1 / ROAD_TILE, rv0 + vSpanCap);
-      blit(tex.road, SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx,
-        -uR, uR, rv0, rv1, tint, 1);
-    }
-    if (tex.roadshade)
-      blit(tex.roadshade, SX(row.midX - row.midHalf), yTop, row.midHalf * 2, hpx,
-        0, 1, 0, 1, [0, 0, 0], 0.85 * (1 - mix));
-  }
-  const rw = clamp(row.midHalf * (track.style === "oribos" ? .055 : .05), 1, 20);
-  let rr, rg, rb;
-  if (track.style === "oribos") {
-    const pulse = .55 + .45 * Math.sin(row.segZ * .28);
-    [rr, rg, rb] = dark ? [1 * pulse, .72 * pulse, .28 * pulse] : [.30 * pulse, .82 * pulse, 1 * pulse];
-  } else [rr, rg, rb] = dark ? [.95,.95,.96] : [.82,.22,.18];
-  if(onRamp){ const fl=0.8; rr=1.0*fl; rg=0.85*fl; rb=0.25*fl; }
-  // Kerbs are part of the road surface: they take the tarmac's lighting, not
-  // the rock's. In a tunnel they are the only thing marking where the edge is.
-  const rc = aerial([rr, rg, rb], tarmacLight, mix);
-  rect(SX(row.midX - row.midHalf - rw), yTop, rw, hpx, rc[0], rc[1], rc[2], 1);
-  rect(SX(row.midX + row.midHalf), yTop, rw, hpx, rc[0], rc[1], rc[2], 1);
-  if (idx % 4 < 2 && row.midHalf > 6) {
-    const lw = clamp(row.midHalf * .04, 1, 14);
-    const lc = aerial([.96, .95, .82], tarmacLight, mix);
-    rect(SX(row.midX - lw / 2), yTop, lw, hpx, lc[0], lc[1], lc[2], .75);
-  }
-
-  if (row.cover > 0 && row.prevCeilY !== null && tex.rock) {
+  // COVER IS DRAWN BEFORE THE ROAD, NOT AFTER IT.
+  //
+  // In the client the walls are BACKGROUND and the road and its kerbs are
+  // ARTWORK, so the tarmac is painted over the rock however the two overlap.
+  // Drawing them last here instead put the wall's own axis-aligned base on
+  // top of the kerb's diagonal and cut it back into a staircase -- a
+  // staircase that exists in the mirror and nowhere else, which is the worst
+  // kind: it sends you looking for a bug in the renderer that is right.
+  if (pass === 1 && row.cover > 0 && row.prevCeilY !== null && tex.rock) {
     const ceilTop = Math.max(row.prevCeilY, row.ceilY + 1);
     const wallOut = row.midHalf * 1.4;
     const wallH = Math.max(1, ceilTop - row.y);
@@ -737,20 +762,103 @@ for (let r = rows.length - 1; r >= 0; r--) {
       1.6, 0, v0, v1, tint, 1);
     const ch = Math.max(1, ceilTop - row.ceilY);
     const uC = T.roadHalf / TUNNEL_TILE;
-    blit(tex.rock, SX(row.midX - row.midHalf - wallOut), SY(row.ceilY + ch),
-      (row.midHalf + wallOut) * 2, ch, -uC, uC, v0, v1, ctint, 1);
-  } else if (onRamp) {
+    blit(tex.rock, SX(quadLo - wallOut), SY(row.ceilY + ch),
+      (quadHalf + wallOut) * 2, ch, -uC, uC, v0, v1, ctint, 1);
+  } else if (pass === 1 && onRamp) {
     // Side rails along a launch ramp. Physics:VergeHasWall walls exactly
     // tunnels and ramps, so these are the other place a barrier exists and the
     // player has to be able to see it.
     // Metres, projected -- see the note in RaceUI: sizing off midHalf made the
     // near-field rails span half the screen.
+    // Spanning and continuous -- see RenderRoad. One rect per strip at that
+    // strip's own edge turned the barrier into a picket fence wherever the road
+    // widened or the hill pitched, which is every ramp in the game.
     const railH = Math.max(2, row.ppm * 1.15);
-    const railW = Math.max(1, row.ppm * 0.40);
+    const nearH = Math.max(2, (row.nearPPM || row.ppm) * 1.15);
+    const thick = Math.max(1, Math.max(row.ppm, row.nearPPM || row.ppm) * 0.40);
+    const top = Math.max(row.h + nearH, railH);
     const c = [0.95 * fog, 0.80 * fog, 0.26 * fog];
-    rect(SX(row.midX - row.midHalf - railW), SY(row.y + railH), railW, railH, ...c, 1);
-    rect(SX(row.midX + row.midHalf), SY(row.y + railH), railW, railH, ...c, 1);
+    const nl = row.nearX - row.nearHalf, fl = row.farX - row.farHalf;
+    const nr = row.nearX + row.nearHalf, fr = row.farX + row.farHalf;
+    const lo = Math.min(nl, fl) - thick, hi = Math.max(nl, fl);
+    rect(SX(lo), SY(row.y + top), hi - lo, top, ...c, 1);
+    const lo2 = Math.min(nr, fr), hi2 = Math.max(nr, fr) + thick;
+    rect(SX(lo2), SY(row.y + top), hi2 - lo2, top, ...c, 1);
   }
+  if (pass !== 2) continue;
+  if (tex.road) {
+    const uR = T.roadHalf / ROAD_TILE;
+    // Mirrors RaceUI:RenderRoad -- a surface painted on the road is drawn.
+    const lapZ = ((row.segZ % track.length) + track.length) % track.length;
+    const zone = (track._painted || []).find(z => lapZ >= z.from && lapZ <= z.to);
+    // Ramped at the ends of the zone, mirroring Terrain.PAINT_FADE. Without
+    // this the join is a hard line straight across the road -- which is exactly
+    // what a preview render of Zangarmarsh's water crossing used to show.
+    const fade = zone ? Math.min(12, (zone.to - zone.from) * 0.5) : 0;
+    const reach = zone
+      ? 0.72 * (fade > 0 ? clamp(Math.min(lapZ - zone.from, zone.to - lapZ) / fade, 0, 1) : 1)
+      : 0;
+    const base = (zone && PAINT[zone.mat])
+      ? track.road.map((c, k) => c + (PAINT[zone.mat][k] - c) * reach)
+      : track.road;
+    const flatRoad = row.ppm * ROAD_TILE < MIN_TEXEL;
+    const meanFix = flatRoad ? ROAD_MEAN : 1;
+    // Hazard gold against near-black, and a white lip -- see RenderRoad. One
+    // gold tint at two brightnesses is a road that has turned mustard.
+    let rampPaint = null;
+    if (onRamp) {
+      rampPaint = (Math.floor(row.segZ / 2.4) % 2 === 0)
+        ? [1.00, 0.78, 0.10] : [0.13, 0.10, 0.06];
+      if (toLip !== null && toLip < 2.2) rampPaint = [1.00, 0.97, 0.88];
+    }
+    const tint = rampPaint
+      ? aerial(rampPaint, tarmacLight * meanFix, mix)
+      : aerial(legible(base, tarmacLight), (dark ? .96 : 1) * meanFix, mix);
+    if (flatRoad) {
+      rect(SX(quadX - quadHalf), yTop, quadHalf * 2, hpx, ...tint, 1);
+    } else {
+      const rv0 = v0 / ROAD_TILE;
+      const rv1 = Math.min(v1 / ROAD_TILE, rv0 + vSpanCap);
+      blit(tex.road, SX(quadX - quadHalf), yTop, quadHalf * 2, hpx,
+        -uR, uR, rv0, rv1, tint, 1);
+    }
+    if (tex.roadshade)
+      blit(tex.roadshade, SX(quadX - quadHalf), yTop, quadHalf * 2, hpx,
+        0, 1, 0, 1, [0, 0, 0], 0.85 * (1 - mix));
+  }
+  const rw = clamp(row.midHalf * (track.style === "oribos" ? .055 : .05), 1, 20);
+  let rr, rg, rb;
+  if (track.style === "oribos") {
+    const pulse = .55 + .45 * Math.sin(row.segZ * .28);
+    [rr, rg, rb] = dark ? [1 * pulse, .72 * pulse, .28 * pulse] : [.30 * pulse, .82 * pulse, 1 * pulse];
+  } else [rr, rg, rb] = dark ? [.95,.95,.96] : [.82,.22,.18];
+  if(onRamp){ const fl=0.8; rr=1.0*fl; rg=0.85*fl; rb=0.25*fl; }
+  // Kerbs are part of the road surface: they take the tarmac's lighting, not
+  // the rock's. In a tunnel they are the only thing marking where the edge is.
+  const rc = aerial([rr, rg, rb], tarmacLight, mix);
+  // The kerb IS the edge: a diagonal from this strip's near edge to its far
+  // edge, exactly as RaceUI:RenderRoad draws it. See `edge` above.
+  {
+    // Outer lip on the true edge at a constant width; inner lip pushed onto the
+    // tarmac by the strip's lateral travel, which is exactly how far the narrow
+    // quad above can fall short. See RaceUI:RenderRoad.
+    let nl = row.nearX - row.nearHalf, fl = row.farX - row.farHalf;
+    let nr = row.nearX + row.nearHalf, fr = row.farX + row.farHalf;
+    if (!quadNarrow) { nl = fl = quadLo; nr = fr = quadHi; }
+    const travelL = Math.abs(fl - nl);
+    edge(SX(nl + (travelL - rw) / 2), SY(row.y), SX(fl + (travelL - rw) / 2),
+      SY(row.y + row.h), rw + travelL, rc[0], rc[1], rc[2], 1);
+    const travelR = Math.abs(fr - nr);
+    edge(SX(nr - (travelR - rw) / 2), SY(row.y), SX(fr - (travelR - rw) / 2),
+      SY(row.y + row.h), rw + travelR, rc[0], rc[1], rc[2], 1);
+  }
+  if (idx % 4 < 2 && row.midHalf > 6) {
+    const lw = clamp(row.midHalf * .04, 1, 14);
+    const lc = aerial([.96, .95, .82], tarmacLight, mix);
+    const ln = quadNarrow ? row.nearX : row.midX, lf = quadNarrow ? row.farX : row.midX;
+    edge(SX(ln), SY(row.y), SX(lf), SY(row.y + row.h), lw, lc[0], lc[1], lc[2], .75);
+  }
+
 }
 
 // ---------- the fork ribbon ----------
@@ -828,7 +936,8 @@ if (!process.env.NOFORK) {
         const hwPx = ppm * T.roadHalf * bWidth(bd);
         if (pY !== null && y > pY) {
           ribs.push({ y: pY, h: Math.max(1, y - pY), midX: (x + pX) / 2,
-            midHalf: (hwPx + pW) / 2, dz, bd, ppm });
+            midHalf: (hwPx + pW) / 2, nearX: pX, nearHalf: pW, farX: x, farHalf: hwPx,
+            dz, bd, ppm });
         }
         pX = x; pY = y; pW = hwPx;
       }
@@ -840,14 +949,19 @@ if (!process.env.NOFORK) {
         // pale slab laid across the road instead of as more tarmac.
         const flatRibbon = rib.ppm * ROAD_TILE < MIN_TEXEL;
         const tint = aerialAt(track.road, 0.94 * light * (flatRibbon ? ROAD_MEAN : 1), rib.dz);
-        const rw = Math.max(2, rib.midHalf * 2);
+        // Narrowest of the two edges, never the average -- see RenderRoad.
+        let qLo = Math.max(rib.nearX - rib.nearHalf, rib.farX - rib.farHalf);
+        let qHi = Math.min(rib.nearX + rib.nearHalf, rib.farX + rib.farHalf);
+        const qNarrow = (qHi - qLo) >= 2;
+        if (!qNarrow) { qLo = rib.midX - rib.midHalf; qHi = rib.midX + rib.midHalf; }
+        const rw = Math.max(2, qHi - qLo);
         if (flatRibbon || !tex.road) {
-          rect(SX(rib.midX - rib.midHalf), SY(rib.y + rib.h), rw, rib.h + 1, ...tint, 1);
+          rect(SX(qLo), SY(rib.y + rib.h), rw, rib.h + 1, ...tint, 1);
         } else {
           const uR = T.roadHalf / ROAD_TILE;
           const v0 = (rib.bd - span / FORK_SEGMENTS) / ROAD_TILE;
           const v1 = Math.min(rib.bd / ROAD_TILE, v0 + Math.max(0.08, rib.h / MIN_TEXEL));
-          blit(tex.road, SX(rib.midX - rib.midHalf), SY(rib.y + rib.h), rw, rib.h + 1,
+          blit(tex.road, SX(qLo), SY(rib.y + rib.h), rw, rib.h + 1,
             -uR, uR, v0, v1, tint, 1);
         }
         // Bright rails, so the alternate line reads as a road and not as a
@@ -855,8 +969,18 @@ if (!process.env.NOFORK) {
         const rail = clamp(rib.midHalf * 0.055, 2.5, 18);
         const glow = 0.75 + 0.25 * Math.sin(-rib.bd * 0.2);
         const rc = aerialAt([0.48 * glow, 1.0 * glow, 0.30 * glow], light, rib.dz);
-        rect(SX(rib.midX - rib.midHalf), SY(rib.y + rib.h), rail, rib.h + 1, ...rc, 1);
-        rect(SX(rib.midX + rib.midHalf), SY(rib.y + rib.h), rail, rib.h + 1, ...rc, 1);
+        // Diagonals on the ribbon's true edge -- see `edge`. A branch is at
+        // its most oblique exactly where it leaves the road, so its rails were
+        // the worst staircase on screen, on the one piece of geometry whose
+        // whole job is to be read at a glance from a long way off.
+        let nl = rib.nearX - rib.nearHalf, fl = rib.farX - rib.farHalf;
+        let nr = rib.nearX + rib.nearHalf, fr = rib.farX + rib.farHalf;
+        if (!qNarrow) { nl = fl = qLo; nr = fr = qHi; }
+        const tL = Math.abs(fl - nl), tR = Math.abs(fr - nr);
+        edge(SX(nl + (tL - rail) / 2), SY(rib.y), SX(fl + (tL - rail) / 2),
+          SY(rib.y + rib.h), rail + tL, ...rc, 1);
+        edge(SX(nr - (tR - rail) / 2), SY(rib.y), SX(fr - (tR - rail) / 2),
+          SY(rib.y + rib.h), rail + tR, ...rc, 1);
       }
     }
 

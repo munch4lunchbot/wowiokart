@@ -274,8 +274,10 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
     vehicle.airMax = vehicle.air
     if vehicle == race.player then
       AK.RaceUI:Announce("JUMP!", AK.COLORS.gold)
-      AK.RaceUI:Shake(10)
-      if AK.PlaySfx then AK:PlaySfx("boost") end
+      -- The shake, the shove and the burst all live in RaceUI:FeelLaunch, which
+      -- fires off the same rising edge the landing's dip fires off. Shaking
+      -- from here as well double-counted it.
+      if AK.PlaySfx then AK:PlaySfx("jump") end
     end
   elseif not ramp then
     if vehicle.launched and (vehicle.air or 0) <= 0 then
