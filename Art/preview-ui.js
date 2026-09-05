@@ -110,6 +110,17 @@ function backButton() {
   return { x: OX + 25, y: OY - 20, w: 120, h: 32 };
 }
 
+/** How many lines labelWrapped would use, without drawing any of them. */
+function wrapCount(str, size, maxWidth) {
+  const words = str.split(" ");
+  let lines = 0, line = "";
+  for (const word of words) {
+    const candidate = line ? line + " " + word : word;
+    if (textWidth(candidate, size) > maxWidth && line) { lines++; line = word; }
+    else line = candidate;
+  }
+  return lines + (line ? 1 : 0);
+}
 function labelWrapped(cx, y, str, size, colour, maxWidth) {
   const words = str.split(" ");
   const lines = [];
@@ -606,7 +617,11 @@ if (process.env.SCREEN === "tracks") {
     let worst = null, cupPlan = 44;
     entries.forEach((e, i) => {
       const col = i % columns, row = Math.floor(i / columns);
-      const x = OX + MARGIN + col * (cardW + GAP), y = OY - 40 + top + row * (cardH + GAP);
+      // A short last row is centred -- see Menu:BuildSelection.
+      const inRow = Math.min(columns, entries.length - row * columns);
+      const rowInset = Math.floor((columns - inRow) * (cardW + GAP) / 2);
+      const x = OX + MARGIN + rowInset + col * (cardW + GAP);
+      const y = OY - 40 + top + row * (cardH + GAP);
       const chosen = i === 0;
       slice(tex.btn, x, y, cardW, cardH, chosen ? [0.44, 0.33, 0.09] : REST, 1);
       if (chosen && tex.chevron) blitUV(tex.chevron, x + 9, y + 9, 12, 16, 0, 1, 0, 1, LIT, 1);
@@ -655,7 +670,19 @@ if (process.env.SCREEN === "tracks") {
       const nameTop = KIND === "racers" ? PORTRAIT + 8
         : KIND === "cups" ? cupPlan + 18 : KIND === "karts" ? 84 : 72;
       const nameSize = KIND === "racers" ? 14 : 16;
-      let ny = labelWrapped(x + cardW / 2, y + nameTop, e.name, nameSize,
+      // A racer's name is hung ABOVE the stats rather than pinned under the
+      // portrait, so the gap under it is the same on every card whether it
+      // wrapped or not -- see Menu:BuildSelection.
+      let nameY = y + nameTop;
+      if (KIND === "racers") {
+        const lines = wrapCount(e.name, nameSize, cardW - 14);
+        nameY = y + cardH - 48 - lines * Math.round(nameSize * 1.45);
+        if (nameY < y + nameTop - 14) {
+          throw new Error(`preview-ui: ${e.id}'s name runs into the portrait by `
+            + Math.ceil((y + nameTop - 14) - nameY) + "px");
+        }
+      }
+      let ny = labelWrapped(x + cardW / 2, nameY, e.name, nameSize,
         chosen ? LIT : GOLD, cardW - 14);
       ny += 7;
       const size = KIND === "racers" ? 11 : 12;
@@ -917,7 +944,16 @@ if (process.env.SCREEN === "results") {
   panel(stx, sty, BLOCK, 62, [0.04, 0.065, 0.11], 0.96);
   label(stx + BLOCK / 2, sty + 12, "TOP SPEED  188 KM/H       DRIFTING  22.4S       HITS TAKEN  3",
     12, PALE, "center");
-  label(stx + BLOCK / 2, sty + 38, "L1 34.02     L2 33.46     L3 36.73", 10, MUTED, "center");
+  // Labelled, and the quickest lap picked out -- see Results:Show. An
+  // unlabelled row of three grey numbers hid the one worth looking at.
+  {
+    const parts = [["LAPS   ", MUTED], ["L1 34.02", MUTED], ["     ", MUTED],
+      ["L2 33.46", GOLD], ["     ", MUTED], ["L3 36.73", MUTED]];
+    let wsum = 0;
+    for (const [t, ] of parts) wsum += textWidth(t, 10);
+    let lx = stx + BLOCK / 2 - wsum / 2;
+    for (const [t, c] of parts) { label(lx, sty + 38, t, 10, c); lx += textWidth(t, 10); }
+  }
   label(W / 2, sty + 78, "+49 RACE TOKENS   /   GARAGE TOTAL: 289", 12, LIME, "center");
 
   const by2 = sty + 106;
@@ -942,13 +978,44 @@ if (process.env.SCREEN === "settings") {
     const column = +((chunk.match(/column = (\d)/) || [])[1] || 1);
     const rows = [];
     for (const rowChunk of chunk.split(/\{ key = "/).slice(1)) {
+      const key = rowChunk.slice(0, rowChunk.indexOf('"'));
       const name = (rowChunk.match(/name = "([^"]+)"/) || [])[1] || "";
       const blurb = (rowChunk.match(/blurb = "([^"]+)"/) || [])[1] || "";
       const labels = [...rowChunk.matchAll(/label = "([^"]+)"/g)].map((m) => m[1]);
-      rows.push({ name, blurb, labels });
+      // The value each choice writes, so the sheet can light the one a NEW
+      // PLAYER gets rather than always lighting the last.
+      const values = [...rowChunk.matchAll(/value = (false|true|"[^"]*"|[\d.]+)/g)]
+        .map((m) => m[1]);
+      // A stepper's own format, so the sheet shows what the row actually reads
+      // -- "7 RIVALS" for the field size, not the "100%" every stepper here
+      // used to be drawn with regardless of what it counts.
+      const fmt = (rowChunk.match(/format = function\(value\) return ([^\n]+?) end/) || [])[1];
+      const head = rowChunk.slice(0, rowChunk.indexOf("choices") + 1 || rowChunk.length);
+      rows.push({ key, name, blurb, labels, values, format: fmt || null,
+        tuning: /tuning = true/.test(head) });
     }
     groups.push({ title, column, rows });
   }
+  // THE SHIPPED DEFAULTS, out of Database.lua. The sheet used to light the LAST
+  // choice in every row, so it showed a settings page nobody has ever seen:
+  // reduced effects on, road detail High, the speedometer forced on. The one
+  // question this screen most needs to answer is what a player who has never
+  // touched it is playing with.
+  const DB = fs.readFileSync(path.join(__dirname, "..", "Database.lua"), "utf8");
+  const defaultsBlock = DB.slice(DB.indexOf("settings = {"), DB.indexOf("sfxOverride"));
+  // Two rows -- the camera and the HUD size -- are tuning dials rather than
+  // settings, and their defaults live in Tuning.lua. Looking only in
+  // Database.lua meant the camera row fell through to the fallback and the
+  // sheet showed FAR when the game ships STANDARD.
+  const TUNING = fs.readFileSync(path.join(__dirname, "..", "Tuning.lua"), "utf8");
+  const defaultOf = (key, tuning) => {
+    if (tuning) {
+      const m = TUNING.match(new RegExp('key = "' + key + '"[^\\n]*default = ([\\d.]+)'));
+      return m ? m[1] : null;
+    }
+    const m = defaultsBlock.match(new RegExp("\\b" + key + " = (false|true|\"[^\"]*\"|[\\d.]+)"));
+    return m ? m[1] : null;
+  };
   const g = (re, d) => { const m = src.match(re); return m ? +m[1] : d; };
   const ROW_H = g(/local ROW_H, GROUP_GAP, COLUMN_W = (\d+)/, 44);
   const GROUP_GAP = g(/local ROW_H, GROUP_GAP, COLUMN_W = \d+, (\d+)/, 18);
@@ -984,9 +1051,15 @@ if (process.env.SCREEN === "settings") {
       // The control: a segmented picker, or a stepper.
       const cw = 168, cx = x + COLUMN_W - cw, cy = rowTop + 4;
       if (row.labels.length) {
+        const want = defaultOf(row.key, row.tuning);
+        // Fall back to the last choice only when the key has no default to
+        // read -- never silently, so a renamed key shows up as a wrong picture
+        // rather than as no picture at all.
+        let pick = row.values.indexOf(want);
+        if (pick < 0) pick = row.labels.length - 1;
         const gap = 4, cell = (cw - gap * (row.labels.length - 1)) / row.labels.length;
         row.labels.forEach((lab, k) => {
-          const on = k === row.labels.length - 1;
+          const on = k === pick;
           slice(tex.btn, cx + k * (cell + gap), cy, cell, 22,
             on ? [0.55, 0.42, 0.10] : [0.07, 0.11, 0.18], 1);
           label(cx + k * (cell + gap) + cell / 2, cy + 7, lab, 9,
@@ -1002,7 +1075,15 @@ if (process.env.SCREEN === "settings") {
         slice(tex.btn, cx + cw - 22, cy, 22, 22, [0.18, 0.28, 0.42], 1);
         blitUV(tex.chevron, cx + cw - 15, cy + 6, 7, 10, 0, 1, 0, 1, GOLD, 1);
         slice(tex.btn, cx + (cw - (cw - 52)) / 2, cy, cw - 52, 22, [0.07, 0.11, 0.18], 1);
-        label(cx + cw / 2, cy + 7, "100%", 9, [1, 0.94, 0.72], "center");
+        const raw = defaultOf(row.key, row.tuning);
+        let shown = raw === null ? "--" : raw.replace(/"/g, "");
+        if (raw !== null && row.format) {
+          const suffix = (row.format.match(/value \.\. "([^"]*)"/) || [])[1];
+          if (/value \* 100/.test(row.format)) shown = Math.round(+raw * 100) + "%";
+          else if (suffix !== undefined) shown = raw + suffix;
+          else if (/%%/.test(row.format)) shown = Math.round(+raw) + "%";
+        }
+        label(cx + cw / 2, cy + 7, shown, 9, [1, 0.94, 0.72], "center");
       }
     });
     yTop[col] = y + 24 + group.rows.length * ROW_H + GROUP_GAP;

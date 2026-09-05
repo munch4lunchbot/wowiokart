@@ -1148,7 +1148,14 @@ function Menu:BuildSelection(page, kind)
     end)
     cards[index] = { card = card, entry = entry }
     local col, row = (index - 1) % columns, math.floor((index - 1) / columns)
-    card:SetPoint("TOPLEFT", MARGIN + col * (cardWidth + GAP), -top - row * (cardHeight + GAP))
+    -- A SHORT LAST ROW IS CENTRED. Eleven racers at six columns is six and
+    -- then five, and the five sat hard against the left edge with a card-sized
+    -- hole at the right -- which reads as a card that failed to draw rather
+    -- than as a roster with an odd number in it.
+    local inRow = math.min(columns, #entries - row * columns)
+    local rowInset = math.floor((columns - inRow) * (cardWidth + GAP) / 2)
+    card:SetPoint("TOPLEFT", MARGIN + rowInset + col * (cardWidth + GAP),
+      -top - row * (cardHeight + GAP))
     -- A KART CARD IS A PICTURE OF A KART. Every card in this grid was given a
     -- 50px icon regardless of how much room it had: on a 205x199 kart card that
     -- is a stamp in the middle of an empty top third, with the text crammed
@@ -1240,8 +1247,20 @@ function Menu:BuildSelection(page, kind)
       -- card now, so a hand-counted 58 would sit on top of them.
       or (kind == "cup" and (cupPlan + 18))
       or (kind == "kart" and 84) or 72
-    name:SetPoint("TOPLEFT", 7, -nameTop)
-    name:SetPoint("TOPRIGHT", -7, -nameTop)
+    if kind == "racer" then
+      -- BOTTOM-ANCHORED, so the gap under the name is the same on every card.
+      -- Six of the eleven names fit on one line and five wrap to two; pinned to
+      -- the top, the one-liners left twice as much air under them as the
+      -- two-liners, so the grid read as a set of cards with different amounts
+      -- of nothing in them. Hung above the stats instead, a second line grows
+      -- up into the space the portrait leaves rather than down into the space
+      -- the numbers need.
+      name:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 7, 48)
+      name:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -7, 48)
+    else
+      name:SetPoint("TOPLEFT", 7, -nameTop)
+      name:SetPoint("TOPRIGHT", -7, -nameTop)
+    end
     -- A gold card IS the selection. Printing the word "SELECTED" under it as
     -- well is a caption on a picture of itself; a mark in the corner is how a
     -- game says it. Built for every card and SHOWN for the chosen one, because

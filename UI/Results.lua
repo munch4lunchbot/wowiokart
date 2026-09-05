@@ -391,11 +391,22 @@ function Results:Show(race)
     AK:ColorHex(AK.COLORS.gold), math.floor((player.topSpeed or 0) * 2.2),
     AK:ColorHex(AK.COLORS.gold), player.driftTime or 0,
     AK:ColorHex(AK.COLORS.gold), player.hazardHits or 0))
-  local splits = {}
+  -- LAPS, AND WHICH ONE WAS THE GOOD ONE. This was an unlabelled row of
+  -- "L1 34.02  L2 33.46  L3 36.73" in muted grey under the stat line, so the
+  -- one number on it worth looking at -- your quickest lap of the race -- was
+  -- the same colour and size as the two either side of it.
+  local splits, quickest = {}, nil
   for lap, split in ipairs(player.lapTimes or {}) do
-    table.insert(splits, ("L%d %s"):format(lap, AK.RaceUI:FormatTime(split)))
+    if not quickest or split < player.lapTimes[quickest] then quickest = lap end
   end
-  self.splits:SetText(table.concat(splits, "     "))
+  for lap, split in ipairs(player.lapTimes or {}) do
+    local text = ("L%d %s"):format(lap, AK.RaceUI:FormatTime(split))
+    if lap == quickest and #(player.lapTimes or {}) > 1 then
+      text = ("|cff%s%s|r"):format(AK:ColorHex(AK.COLORS.gold), text)
+    end
+    table.insert(splits, text)
+  end
+  self.splits:SetText(#splits > 0 and ("LAPS   " .. table.concat(splits, "     ")) or "")
   self.reward:SetTextColor(unpack(AK.COLORS.lime))
   self.reward:SetText(("+%d RACE TOKENS   /   GARAGE TOTAL: %d"):format(
     race.rewardCoins or 0, AK.db.progress.coins))
@@ -403,7 +414,11 @@ function Results:Show(race)
   if race.grandPrix then
     local gp = race.grandPrix
     local isFinal = gp.index >= #gp.cup.tracks
-    self.primary.label:SetText(isFinal and "CLAIM TROPHY" or "NEXT RACE")
+    -- NOT "CLAIM TROPHY". The final race's button promised a trophy before the
+    -- standings had been shown, on a cup the player may well have lost -- the
+    -- same lie the trophy screen behind it used to tell, one screen earlier.
+    -- What the button actually does is show you the championship.
+    self.primary.label:SetText(isFinal and "FINAL STANDINGS" or "NEXT RACE")
     self.cupLine:SetText(cupStandingLine(gp, race.player))
     self.cupLine:Show()
   elseif race.mode == "multiplayer" then
