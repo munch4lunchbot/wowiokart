@@ -3441,9 +3441,18 @@ function RaceUI:RenderProps(race, camX, camZ)
         frame.art:SetVertexColor(self:Aerial(tint[1], tint[2], tint[3], shade, dz))
         -- A contact shadow is what stops a sprite looking pasted onto the
         -- grass; without one everything hovers.
+        --
+        -- SIZED OFF THE FOOTPRINT, NOT THE HEIGHT. A shadow's extent is what
+        -- the thing COVERS, and this took its ellipse height from the sprite's
+        -- own height -- so a squat boulder, which is half again as wide as it
+        -- is tall, got a thinner shadow than a sixteen-metre tree standing on a
+        -- trunk. Worse, the sprite is drawn over the top half of its own
+        -- shadow, so at 0.14 of height there were about three pixels of it left
+        -- showing under a boulder: photographed on Ironforge snow, where a
+        -- shadow should be unmissable, there was a smudge.
         frame.shadow:ClearAllPoints()
         frame.shadow:SetPoint("CENTER", frame, "BOTTOM", 0, height * 0.02)
-        frame.shadow:SetSize(width * 1.15, math.max(1, height * 0.14))
+        frame.shadow:SetSize(width * 1.20, math.max(1, width * 0.30))
         frame.shadow:SetVertexColor(0, 0, 0, 0.34 * fog)
         -- Props had NO edge fade and were drawn out to 2.2 half-widths off
         -- axis, which is well past the display -- so a tree the corner had

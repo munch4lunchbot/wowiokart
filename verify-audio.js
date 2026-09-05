@@ -278,6 +278,56 @@ check(!worst || worst[1] / LAP <= 1.2,
     "every cue leads with a sound of its own (" + clashes.length + " clash(es))");
 }
 
+// A CUE NAME THAT IS NOT IN THE TABLE IS SILENCE.
+//
+// PlaySfx looks the name up and returns quietly when it misses, so a typo does
+// not error, does not warn, and does not play -- the beat simply never happens
+// and nothing anywhere says so. That is how `/kart sfxset driftTier1` came to
+// match nothing for a while. Every literal cue name in the addon is resolved
+// against the table here: the direct calls, the per-item mapping, and the drift
+// ladder, which is built by concatenation and so has to be named explicitly.
+{
+  const defined = new Set();
+  {
+    const table = SRC.slice(SRC.indexOf("local CUES = {"),
+      SRC.indexOf("\n}\n", SRC.indexOf("local CUES = {")));
+    for (const m of table.matchAll(/^\s{2}(\w+)\s*=\s*\{/gm)) defined.add(m[1]);
+  }
+  const used = new Map();          // cue -> where it was written
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === "Art" || e.name === ".git" || e.name === "node_modules") continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(full); continue; }
+      if (!e.name.endsWith(".lua")) continue;
+      const text = fs.readFileSync(full, "utf8");
+      const where = path.relative(__dirname, full);
+      // The closing quote must be followed by a comma or a bracket: a name
+      // built by concatenation -- PlaySfx("driftTier" .. tier) -- is not a
+      // literal, and matching its first half would report the prefix as a
+      // missing cue forever.
+      for (const m of text.matchAll(/Play(?:Sfx|SfxNear|Stinger)\(\s*"(\w+)"\s*[,)]/g)) {
+        if (!used.has(m[1])) used.set(m[1], where);
+      }
+    }
+  };
+  walk(__dirname);
+  // The per-item mapping, which is where most item cues are named.
+  const items = fs.readFileSync(path.join(__dirname, "Data", "Items.lua"), "utf8");
+  const map = items.slice(items.indexOf("AK.ITEM_SOUND = {"));
+  for (const m of map.slice(0, map.indexOf("\n}")).matchAll(/=\s*"(\w+)"/g)) {
+    if (!used.has(m[1])) used.set(m[1], "Data/Items.lua (ITEM_SOUND)");
+  }
+  // Built as "driftTier" .. tier, so the concatenated names never appear whole.
+  for (const tier of [1, 2, 3]) used.set("driftTier" + tier, "Physics (drift ladder)");
+  const silent = [...used].filter(([cue]) => !defined.has(cue));
+  for (const [cue, where] of silent) {
+    console.log("        " + where + " plays \"" + cue + "\", which is not a cue");
+  }
+  check(silent.length === 0,
+    "every cue the game asks for exists (" + used.size + " names resolved)");
+}
+
 console.log("");
 console.log(bad ? "FAIL (" + bad + " problem(s))" : "PASS");
 process.exit(bad ? 1 : 0);

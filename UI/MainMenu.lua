@@ -1103,6 +1103,24 @@ function Menu:BuildSelection(page, kind)
     icon:SetSize(iconSize, iconSize)
     icon:SetPoint("TOP", 0, kind == "kart" and -10 or -15)
     icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_Map_01")
+    if kind == "kart" then
+      -- CHOOSE YOUR KART SHOULD SHOW THE KARTS.
+      --
+      -- Every kart carries a WoW ability icon: a rhino for the Battering Ram,
+      -- a rifle bullet for the Mining Cart, an engineering gizmo for the
+      -- Mechano-Kart. Meanwhile Art/ holds kart-<id>.tga for all eight -- the
+      -- actual body the game draws on the track, drawn for this game -- and
+      -- the one screen whose entire job is choosing between them showed the
+      -- spellbook instead. The card now shows the thing you will be driving,
+      -- in its own colour, exactly as the road does.
+      --
+      -- 256x160 art, so the card slot is widened to match rather than squashing
+      -- a kart into a square meant for an icon.
+      icon:SetTexture(ART .. "kart-" .. entry.id .. ".tga")
+      icon:SetSize(iconSize * 1.6, iconSize)
+      local colour = entry.color or { 1, 1, 1 }
+      icon:SetVertexColor(colour[1], colour[2], colour[3])
+    end
     if kind == "track" then
       -- The circuit itself, not a map icon shared with nine other circuits.
       icon:Hide()

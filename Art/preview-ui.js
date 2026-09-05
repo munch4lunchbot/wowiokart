@@ -502,7 +502,9 @@ if (process.env.SCREEN === "tracks") {
       for (const b of read("Karts.lua").split(/\n  \{ id = "/).slice(1)) {
         const id = b.slice(0, b.indexOf('"'));
         const g = (re, d) => { const m = b.match(re); return m ? m[1] : d; };
+        const col = b.match(/color = \{ ([\d.]+), ([\d.]+), ([\d.]+) \}/);
         entries.push({ id, name: g(/name = "([^"]+)"/, id),
+          colour: col ? [+col[1], +col[2], +col[3]] : [1, 1, 1],
           lines: [
             g(/description = "([^"]+)"/, ""),
             "SPD " + g(/speed = (\d+)/, "0") + "  ACC " + g(/acceleration = (\d+)/, "0")
@@ -579,9 +581,18 @@ if (process.env.SCREEN === "tracks") {
               blend(sx + dx - (size >> 1), sy + dy - (size >> 1), col[0], col[1], col[2], 0.95);
           }
         });
+      } else if (KIND === "karts") {
+        // THE ACTUAL KART, in its own colour -- see Menu:BuildSelection. The
+        // card used to show a WoW ability icon and this sheet drew a grey box,
+        // so neither the game nor the picture of it showed the thing being
+        // chosen between.
+        const size = 68, art = tex["kart-" + e.id] || tex.kart;
+        if (art) {
+          blitUV(art, x + cardW / 2 - size * 0.8, y + 10, size * 1.6, size,
+            0, 1, 0, 1, e.colour || [1, 1, 1], 1);
+        }
       } else {
-        // The kart icon is 68 where the others are 50; see Menu:ShowSelection.
-        const size = KIND === "karts" ? 68 : 50, top = KIND === "karts" ? 10 : 15;
+        const size = 50, top = 15;
         for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++)
           blend(x + cardW / 2 - size / 2 + dx, y + top + dy, 0.30, 0.36, 0.46, 0.30);
       }

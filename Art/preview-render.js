@@ -971,7 +971,8 @@ const PROP_KINDS = (() => {
     // from here at all.
     const fog = clamp(1 - (dz / HAZE_Z) * T.fogStrength, 0.20, 1) * light;
     if (tex.shadow) {
-      const sw = width * 1.15, sh = Math.max(1, height * 0.14);
+      // Off the footprint, not the height -- see RaceUI:RenderProps.
+      const sw = width * 1.20, sh = Math.max(1, width * 0.30);
       blit(tex.shadow, SX(x - sw / 2), SY(y) - sh / 2, sw, sh, 0, 1, 0, 1,
         [0, 0, 0], 0.34 * fog);
     }
