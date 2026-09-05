@@ -284,6 +284,11 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
       vehicle.launched = false
       -- Clean landing pays out a short boost.
       vehicle.boostTime = math.max(vehicle.boostTime or 0, 0.8)
+      -- The kart takes the impact, not just the camera. Its own channel rather
+      -- than the lightning squash: that one flattens you to half height, which
+      -- is being hit by something, not landing on your suspension.
+      vehicle.land = 0.20
+      vehicle.landMax = 0.20
       if vehicle == race.player then
         AK.RaceUI:Announce("CLEAN LANDING!", AK.COLORS.lime)
         AK.RaceUI:Shake(14)
@@ -297,6 +302,7 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
   vehicle.spin = math.max(0, (vehicle.spin or 0) - dt)
   vehicle.hop = math.max(0, (vehicle.hop or 0) - dt)
   vehicle.squash = math.max(0, (vehicle.squash or 0) - dt)
+  vehicle.land = math.max(0, (vehicle.land or 0) - dt)
   vehicle.driftHop = math.max(0, (vehicle.driftHop or 0) - dt)
   vehicle.hopAir = math.max(0, (vehicle.hopAir or 0) - dt)
   vehicle.immune = math.max(0, (vehicle.immune or 0) - dt)

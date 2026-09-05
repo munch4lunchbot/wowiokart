@@ -948,7 +948,17 @@ if (!process.env.NOFORK) {
         // mirror-only shortcut and it showed: the near ribbon came out as a
         // pale slab laid across the road instead of as more tarmac.
         const flatRibbon = rib.ppm * ROAD_TILE < MIN_TEXEL;
-        const tint = aerialAt(track.road, 0.94 * light * (flatRibbon ? ROAD_MEAN : 1), rib.dz);
+        // A branch can be a ramp too -- four of them are -- and every one was
+        // painted the same tarmac as the road it leaves. Same bands and same
+        // white lip as the main road. Mirrors DrawRibbon.
+        let ribPaint = track.road;
+        const ribRamp = B._ramps.find(r => rib.bd >= r[0] && rib.bd <= r[1]);
+        if (ribRamp) {
+          ribPaint = (Math.floor(rib.bd / 2.4) % 2 === 0)
+            ? [1.00, 0.78, 0.10] : [0.13, 0.10, 0.06];
+          if (ribRamp[1] - rib.bd < 2.2) ribPaint = [1.00, 0.97, 0.88];
+        }
+        const tint = aerialAt(ribPaint, 0.94 * light * (flatRibbon ? ROAD_MEAN : 1), rib.dz);
         // Narrowest of the two edges, never the average -- see RenderRoad.
         let qLo = Math.max(rib.nearX - rib.nearHalf, rib.farX - rib.farHalf);
         let qHi = Math.min(rib.nearX + rib.nearHalf, rib.farX + rib.farHalf);

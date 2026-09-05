@@ -793,6 +793,13 @@ function RaceUI:FeelLanding(airtime)
   local weight = AK.Math.Clamp((airtime or 0) / 1.1, 0.15, 1)
   self:Feel("dip", 1.5 * weight)
   self:Shake(6 + 10 * weight)
+  -- Something hits the ground. A dip and a shake are what the CAMERA does about
+  -- it; without a shockwave under the wheels there is nothing at the point of
+  -- contact, and a two-second jump ended with the picture wobbling for no
+  -- visible reason.
+  local x, y, width = self.playerX or 0, self.playerY or 0, self.playerWidth or 60
+  self:PlayEffect("shock", x, y + width * 0.08, width * (0.9 + weight * 0.9),
+    { 0.92, 0.86, 0.70 })
 end
 
 --- Leaving the lip. The landing had a whole beat of its own and the LAUNCH had
@@ -3671,10 +3678,28 @@ function RaceUI:DrawRibbon(race, route, from, startDz, centre, baseY, offset, sp
         strip.road:ClearAllPoints()
         strip.road:SetPoint("BOTTOM", self.frame, "CENTER", quadX, previousY)
         strip.road:SetSize(math.max(2, quadHalf * 2), height)
+        -- A BRANCH CAN BE A RAMP TOO. Four of them are -- Ridge Drop and Rim
+        -- Gap are launches you can miss, which is the whole point of taking
+        -- them -- and every one was painted the same tarmac as the road it
+        -- leaves, so the one shortcut in the game you can fail by being too
+        -- slow gave you nothing to aim at. Same hazard bands and same white
+        -- lip as the main road, from the same table.
+        local rampR, rampG, rampB = roadColor[1], roadColor[2], roadColor[3]
+        local ribbonRamp = AK.TrackBuilder:RampAt(route, from + bd)
+        if ribbonRamp then
+          if math.floor((from + bd) / 2.4) % 2 == 0 then
+            rampR, rampG, rampB = 1.00, 0.78, 0.10
+          else
+            rampR, rampG, rampB = 0.13, 0.10, 0.06
+          end
+          if ribbonRamp.to - AK.TrackBuilder:At(route, from + bd) < 2.2 then
+            rampR, rampG, rampB = 1.00, 0.97, 0.88
+          end
+        end
         -- The same wash the main road gets. Fogging the ribbon by
         -- brightness alone while the tarmac beside it recedes toward the
         -- horizon made the shortcut read as a decal laid over the scene.
-        strip.road:SetVertexColor(self:Aerial(roadColor[1], roadColor[2], roadColor[3],
+        strip.road:SetVertexColor(self:Aerial(rampR, rampG, rampB,
           0.94 * light * (flatRibbon and ROAD_MEAN or 1), dz))
         setShown(strip.road, true)
 
@@ -5169,9 +5194,13 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       end
       -- Ramp airtime: a long, high arc, well above the blast hop.
       local air = vehicle.air or 0
+      -- +1 leaving the lip, 0 at the top, -1 coming down. Used again below to
+      -- stretch the kart on the way up and gather it on the way down.
+      local airRise = 0
       if air > 0 then
         local t = 1 - air / math.max(0.01, vehicle.airMax or 1)
         bounce = bounce + math.sin(t * math.pi) * width * 2.1
+        airRise = math.cos(t * math.pi)
       end
 
       -- The world yaws around the player, so take most of the yaw back off
@@ -5245,6 +5274,23 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
         local t = squash / math.max(0.01, vehicle.squashMax or 1)
         bodyWidth = bodyWidth * (1 + t * 0.35)
         bodyHeight = bodyHeight * (1 - t * 0.45)
+      end
+      -- AIRBORNE. A sprite that only translates upward is a sprite sliding up
+      -- the screen; the shadow says it is high, and this says it is FLYING.
+      -- Stretched as it leaves the lip, gathered as it comes down -- the same
+      -- squash-and-stretch every hand-drawn jump in the genre has, and free,
+      -- because the arc phase is already computed for the bounce.
+      if airRise ~= 0 then
+        bodyHeight = bodyHeight * (1 + airRise * 0.10)
+        bodyWidth = bodyWidth * (1 - airRise * 0.05)
+      end
+      -- And the compression at the bottom of it, on the suspension's own
+      -- channel: a fifth of the lightning squash, over a fifth of a second.
+      local land = vehicle.land or 0
+      if land > 0 then
+        local t = land / math.max(0.01, vehicle.landMax or 1)
+        bodyWidth = bodyWidth * (1 + t * 0.14)
+        bodyHeight = bodyHeight * (1 - t * 0.18)
       end
       -- A spin-out narrows the kart as it turns side-on to the camera.
       if spinTurns > 0 then
