@@ -171,7 +171,7 @@ AK.Tracks = {
     weather = "ember", light = 0.92,
     hazardPlan = {
       { kind = "static", name = "Lava Vent", count = 4, at = 0.12, spacing = 160, lateral = 0.5, radius = 3.4, slow = 1.4,
-        icon = "Interface\\Icons\\Spell_Fire_Volcano" },
+        art = "burst.tga" },
     },
     offroad = "SAND",
     surfaces = {
@@ -314,7 +314,7 @@ AK.Tracks = {
     weather = "snow", light = 0.95,
     hazardPlan = {
       { kind = "traffic", name = "Mine Cart", count = 3, at = 0.10, spacing = 240, speed = 34, lateral = -0.4, radius = 3.6,
-        icon = "Interface\\Icons\\INV_Crate_02" },
+        art = "kart-minecart.tga" },
     },
     offroad = "SNOW",
     surfaces = {
@@ -384,9 +384,9 @@ AK.Tracks = {
     weather = "none", light = 0.72,
     hazardPlan = {
       { kind = "traffic", name = "Mine Cart", count = 3, at = 0.08, spacing = 190, speed = 42, lateral = 0.3, radius = 3.6,
-        icon = "Interface\\Icons\\INV_Crate_02" },
+        art = "kart-minecart.tga" },
       { kind = "static", name = "Falling Rock", count = 3, at = 0.55, spacing = 90, lateral = -0.55, radius = 3.0,
-        icon = "Interface\\Icons\\INV_Stone_15" },
+        art = "boulder.tga" },
     },
     offroad = "SCREE",
     surfaces = {
@@ -530,7 +530,7 @@ AK.Tracks = {
     weather = "none", light = 0.96,
     hazardPlan = {
       { kind = "static", name = "Rockslide", count = 3, at = 0.30, spacing = 150, lateral = -0.4, radius = 3.2, slow = 1.3,
-        icon = "Interface\\Icons\\INV_Stone_15" },
+        art = "boulder.tga" },
     },
     offroad = "SAND",
     surfaces = {
@@ -594,7 +594,7 @@ AK.Tracks = {
     weather = "rain", light = 0.86,
     hazardPlan = {
       { kind = "static", name = "Spore Cloud", count = 4, at = 0.24, spacing = 170, lateral = 0.45, radius = 3.0, slow = 1.2,
-        icon = "Interface\\Icons\\Spell_Nature_Regenerate" },
+        art = "sporecap.tga" },
     },
     offroad = "WATER",
     surfaces = {

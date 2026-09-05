@@ -68,31 +68,31 @@ local CUES = {
   -- ticks. If a name does not exist on a given client, nothing breaks, the next
   -- one is tried, and `/kart sfxreport` says what actually resolved.
   item        = { kit = { "UI_TOYBOX_TABS", "UI_EPICLOOT_TOAST", "IG_BACKPACK_COIN_UP" }, pri = PRI.HIGH, cd = 0.20 },
-  itemUse     = { kit = { "UI_TRANSMOG_ITEM_CLICK", "IG_SPELLBOOK_CLOSE" }, pri = PRI.HIGH, cd = 0.20 },
+  itemUse     = { kit = { "IG_SPELLBOOK_CLOSE", "UI_TRANSMOG_ITEM_CLICK" }, pri = PRI.HIGH, cd = 0.20 },
   throw       = { kit = { "UI_PVP_KILLBLOW", "IG_MAINMENU_OPEN" }, pri = PRI.NORMAL },
-  throwHoming = { kit = { "UI_WORLDQUEST_START", "GS_CHARACTER_SELECTION_ENTER_WORLD", "IG_MAINMENU_OPEN" }, pri = PRI.NORMAL },
-  throwHeavy  = { kit = { "UI_RAID_BOSS_DEFEATED", "IG_MAINMENU_QUIT", "IG_PLAYER_INVITE_DECLINE" }, pri = PRI.NORMAL },
-  drop        = { kit = { "UI_ETHEREAL_WINDOW_CLOSE", "IG_BACKPACK_COIN_DOWN" }, pri = PRI.NORMAL },
+  throwHoming = { kit = { "GS_CHARACTER_SELECTION_ENTER_WORLD", "UI_WORLDQUEST_START" }, pri = PRI.NORMAL },
+  throwHeavy  = { kit = { "IG_MAINMENU_QUIT", "UI_RAID_BOSS_DEFEATED" }, pri = PRI.NORMAL },
+  drop        = { kit = { "IG_BACKPACK_COIN_DOWN", "UI_ETHEREAL_WINDOW_CLOSE" }, pri = PRI.NORMAL },
   deploy      = { kit = { "UI_VOID_STORAGE_UNLOCK", "IG_CHARACTER_INFO_TAB" }, pri = PRI.NORMAL },
   starPower   = { kit = { "UI_LEGENDARY_LOOT_TOAST", "UI_EPICLOOT_TOAST", "LEVELUPSOUND" }, pri = PRI.HIGH },
   -- The shell has locked onto you. CRITICAL: this is the one warning in the
   -- game where being crowded out costs the player the chance to react.
-  spinyWarn   = { kit = { "RAID_WARNING", "READY_CHECK" }, pri = PRI.CRITICAL },
+  spinyWarn   = { kit = { "READY_CHECK", "RAID_WARNING" }, pri = PRI.CRITICAL },
   -- Landing a shot on somebody is the best moment the genre has. It had no cue
   -- at all, because every hit sound was played to the VICTIM.
   hitConfirm  = { kit = { "UI_RAID_BOSS_DEFEATED", "LOOT_WINDOW_COIN_SOUND" }, pri = PRI.HIGH, cd = 0.25 },
 
   -- Speed. Boosts are earned, so they get to be heard.
-  boost       = { kit = { "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
-  megaBoost   = { kit = { "LEVELUPSOUND", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
-  dash        = { kit = { "IG_SPELLBOOK_OPEN" }, pri = PRI.NORMAL, cd = 0.40 },
-  landing     = { kit = { "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.NORMAL, cd = 0.40 },
+  boost       = { kit = { "IG_SPELLBOOK_OPEN", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
+  megaBoost   = { kit = { "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP", "LEVELUPSOUND" }, pri = PRI.HIGH, cd = 0.35 },
+  dash        = { kit = { "UI_WORLDQUEST_START", "IG_SPELLBOOK_OPEN" }, pri = PRI.NORMAL, cd = 0.40 },
+  landing     = { kit = { "IG_ABILITY_ICON_DROP", "IG_MAINMENU_CLOSE" }, pri = PRI.NORMAL, cd = 0.40 },
 
   -- ENGINE. Its own lane -- see UpdateEngine. These never route through
   -- permitted(), so their pri/cd are documentation rather than gating, and they
   -- must stay LOW so nothing else treats them as meaningful.
-  engineLow    = { kit = { "IG_ABILITY_ICON_DROP", "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 0 },
-  engineHigh   = { kit = { "IG_ABILITY_ICON_PICKUP", "IG_CHARACTER_INFO_TAB" }, pri = PRI.LOW, cd = 0 },
+  engineLow    = { kit = { "IG_CHARACTER_INFO_TAB", "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 0 },
+  engineHigh   = { kit = { "LOOT_WINDOW_COIN_SOUND", "IG_CHARACTER_INFO_TAB" }, pri = PRI.LOW, cd = 0 },
 
   -- THE DRIFT LADDER. One cue per tier, fired once as the charge CROSSES each
   -- threshold rather than repeatedly while it sits there. That is what makes
@@ -103,9 +103,9 @@ local CUES = {
   -- Three rungs that must sound like a RISING set, not three unrelated blips.
   -- Ordered so each tier leads with something brighter and more emphatic than
   -- the one below it, with the old interface tick kept last as a fallback.
-  driftTier1   = { kit = { "UI_TOYBOX_TABS", "IG_ABILITY_ICON_PICKUP" }, pri = PRI.NORMAL, cd = 0.25 },
-  driftTier2   = { kit = { "UI_WORLDQUEST_COMPLETE", "UI_TRANSMOG_ITEM_CLICK", "IG_CHARACTER_INFO_TAB" }, pri = PRI.HIGH, cd = 0.25 },
-  driftTier3   = { kit = { "UI_LEGENDARY_LOOT_TOAST", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.25 },
+  driftTier1   = { kit = { "IG_ABILITY_ICON_PICKUP", "IG_CHARACTER_INFO_TAB" }, pri = PRI.NORMAL, cd = 0.25 },
+  driftTier2   = { kit = { "UI_TRANSMOG_ITEM_CLICK", "UI_WORLDQUEST_COMPLETE" }, pri = PRI.HIGH, cd = 0.25 },
+  driftTier3   = { kit = { "UI_EPICLOOT_TOAST", "UI_LEGENDARY_LOOT_TOAST" }, pri = PRI.HIGH, cd = 0.25 },
 
   -- driftStart is GONE, on density grounds. It fired the moment the drift
   -- engaged, and driftTier1 follows about 0.3s later once the charge crosses
@@ -118,8 +118,8 @@ local CUES = {
   -- entire source of the complaint. Long cooldowns, first to be suppressed.
   bump         = { kit = { "UI_ETHEREAL_WINDOW_CLOSE", "IG_PLAYER_INVITE_DECLINE" }, pri = PRI.LOW, cd = 1.20 },
   -- Being hit has to land like something hit you, not like a window closing.
-  collision    = { kit = { "UI_PVP_KILLBLOW", "UI_RAID_BOSS_DEFEATED", "IG_MAINMENU_CLOSE" }, pri = PRI.NORMAL, cd = 0.70 },
-  blocked      = { kit = { "UI_VOID_STORAGE_UNLOCK", "IG_CHARACTER_NPC_SELECT" }, pri = PRI.LOW, cd = 1.50 },
+  collision    = { kit = { "IG_PLAYER_INVITE_DECLINE", "UI_PVP_KILLBLOW" }, pri = PRI.NORMAL, cd = 0.70 },
+  blocked      = { kit = { "IG_CHARACTER_NPC_SELECT", "UI_VOID_STORAGE_UNLOCK" }, pri = PRI.LOW, cd = 1.50 },
   offroad      = { kit = { "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 1.60 },
   surfaceEnter = { kit = { "IG_MAINMENU_OPTION_CHECKBOX_OFF" }, pri = PRI.LOW, cd = 1.40 },
   overtake     = { kit = { "UI_WORLDQUEST_COMPLETE", "LOOT_WINDOW_COIN_SOUND", "IG_BACKPACK_COIN_UP" }, pri = PRI.NORMAL, cd = 0.80 },
@@ -127,15 +127,15 @@ local CUES = {
   -- was all. Gaining one and losing one are the two halves of the same beat and
   -- a race where only the good half is audible reads as though nothing is at
   -- stake. Deliberately duller and lower than `overtake`.
-  passed       = { kit = { "UI_ETHEREAL_WINDOW_CLOSE", "IG_QUEST_FAILED", "IG_MAINMENU_CLOSE" }, pri = PRI.NORMAL, cd = 0.80 },
+  passed       = { kit = { "IG_CHARACTER_INFO_CLOSE", "IG_QUEST_FAILED" }, pri = PRI.NORMAL, cd = 0.80 },
   -- A green shell ricocheting off the verge. It happens constantly and made no
   -- noise at all, so a shell you fired simply vanished from the world.
-  shellBounce  = { kit = { "UI_PVP_KILLBLOW", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.45 },
+  shellBounce  = { kit = { "IG_MAINMENU_CLOSE", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.45 },
   -- Whoosh as somebody flicks past. Low priority and a long cooldown on purpose
   -- -- in a tight pack this can trigger several times a second, and it is
   -- texture, not information.
-  nearMiss     = { kit = { "IG_MAINMENU_OPTION_CHECKBOX_OFF", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.90 },
-  thunder      = { kit = { "READY_CHECK" }, pri = PRI.LOW, cd = 4.00 },
+  nearMiss     = { kit = { "MAP_PING", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.90 },
+  thunder      = { kit = { "IG_MAINMENU_OPEN", "READY_CHECK" }, pri = PRI.LOW, cd = 4.00 },
 
   -- Menus. Outside a race there is no budget pressure, but the hover cue still
   -- needs its own cooldown or sweeping the mouse across a list machine-guns.

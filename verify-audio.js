@@ -241,6 +241,43 @@ const worst = rows.filter(([c]) => !c.startsWith("engine"))[0];
 check(!worst || worst[1] / LAP <= 1.2,
   "no single meaningful cue dominates (" + (worst ? worst[0] + " at " + (worst[1] / LAP).toFixed(2) + "/s" : "n/a") + ")");
 
+// TWO EVENTS THAT SOUND THE SAME ARE ONE EVENT.
+//
+// The candidate lists are tried in order and the FIRST name that resolves is
+// what the player hears, so what matters is the lead. Twelve pairs of cues led
+// with the same one: firing a shell, being hit by something and a shell
+// ricocheting off the verge were all UI_PVP_KILLBLOW, so the three commonest
+// events in a race were a single noise. Dropping a banana, scraping a wall and
+// losing a place were another. The sound design cannot be judged, let alone
+// improved, while the game is saying the same word for different things.
+//
+// Menu cues are a separate space: they carry `menu = true` and only ever play
+// outside a race, so a menu cue and a race cue sharing a lead is not a
+// collision anybody can hear.
+{
+  const table = SRC.slice(SRC.indexOf("local CUES = {"),
+    SRC.indexOf("\n}\n", SRC.indexOf("local CUES = {")));
+  const leads = { race: {}, menu: {} };
+  let parsed = 0;
+  for (const m of table.matchAll(/^\s{2}(\w+)\s*=\s*\{([^}]*kit = \{ ([^}]*) \}[^}]*)/gm)) {
+    const names = [...m[3].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+    if (!names.length) continue;
+    parsed++;
+    const space = /menu = true/.test(m[2]) ? "menu" : "race";
+    (leads[space][names[0]] = leads[space][names[0]] || []).push(m[1]);
+  }
+  check(parsed > 30, "the cue table parsed (" + parsed + " cues)");
+  const clashes = [];
+  for (const space of ["race", "menu"]) {
+    for (const [name, cues] of Object.entries(leads[space])) {
+      if (cues.length > 1) clashes.push(cues.join(" / ") + " all lead with " + name);
+    }
+  }
+  for (const c of clashes) console.log("        " + c);
+  check(clashes.length === 0,
+    "every cue leads with a sound of its own (" + clashes.length + " clash(es))");
+}
+
 console.log("");
 console.log(bad ? "FAIL (" + bad + " problem(s))" : "PASS");
 process.exit(bad ? 1 : 0);

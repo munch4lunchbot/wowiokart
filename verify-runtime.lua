@@ -1342,6 +1342,76 @@ if loadFailures == 0 then
     C_ChatInfo.SendAddonMessage = realSend
   end)
 
+  -- COMING OUT OF A SHORTCUT MUST NOT BE A CUT.
+  --
+  -- Taking a branch and rejoining swaps `vehicle.route`, and everything the
+  -- renderer draws hangs off that: the centreline, the width, the scenery. The
+  -- geometry is anchored so both ends meet the main line exactly -- verify
+  -- tracks.js has proved that for a while -- but "the junction is in the right
+  -- place" is not the same as "nothing jumps on the frame you cross it", and
+  -- the jump is what was reported. This drives a kart onto a branch, out the
+  -- far end, and measures the road under it on every tick.
+  ok("a shortcut does not jump the world on the way out", function()
+    if QUICK then return end
+    local Race = AK.Race
+    local worstWidth, worstAt = 0, nil
+    local checked = 0
+    for _, id in ipairs({ "elwynn", "durotar", "oribos", "stranglethorn" }) do
+      Race:Start("quick", { track = id })
+      local race = Race.current
+      local track = race.track
+      if track.branches and track.branches[1] then
+        checked = checked + 1
+        local branch = track.branches[1]
+        local player = race.player
+        player.ai = player.ai or AK.AI:CreatePersonality(9)
+        -- Put the kart on the branch directly rather than driving a whole lap
+        -- to the split: what is under test is the far end.
+        player.route = branch
+        player.distance = math.max(0, branch.length - 40)
+        player.lateral = 0.3
+        player.prevDistance, player.prevLateral = player.distance, player.lateral
+        AK.Race.controls.accelerate = true
+
+        -- PURE ROUTE LOOKUPS ONLY. RaceUI:RoadAt runs the answer through
+        -- Bend, which accumulates from the CAMERA along whichever road the
+        -- camera is on -- so comparing it either side of a route change
+        -- compares two different coordinate spaces and means nothing. Width
+        -- and height are properties of the road itself at a distance along it,
+        -- which is exactly what has to line up at a junction.
+        local lastWidth, lastHeight, crossed = nil, nil, false
+        for _ = 1, math.ceil(6 / FRAME) do
+          Race:Update(FRAME)
+          if not Race.current then break end
+          local route = player.route or track
+          local width = AK.Math.RoadWidth(route, player.distance)
+          local height = AK.Math.RoadHeight(route, player.distance)
+          if route == track and not crossed and lastWidth then
+            -- The frame the rejoin happened.
+            crossed = true
+            local jumpW = math.abs(width - lastWidth)
+            if jumpW > worstWidth then worstWidth, worstAt = jumpW, id end
+            -- A step in the road's HEIGHT is a visible drop through the floor.
+            assert(math.abs(height - lastHeight) < 1.2,
+              ("%s: the road height stepped %.2f metres at the rejoin")
+                :format(id, math.abs(height - lastHeight)))
+          end
+          lastWidth, lastHeight = width, height
+        end
+        AK.Race.controls.accelerate = false
+        assert(crossed, id .. ": the kart never came off the branch")
+      end
+      Race:Stop(true)
+    end
+    assert(checked >= 3, "only " .. checked .. " circuits with a branch were exercised")
+    say(("        %d shortcuts rejoined; worst width step %.3f (%s)")
+      :format(checked, worstWidth, tostring(worstAt)))
+    -- A branch is narrower than the road it leaves, so SOME step is expected --
+    -- but the road must not double in width on one tick.
+    assert(worstWidth < 0.45,
+      ("the road width jumped by %.2f at a rejoin (%s)"):format(worstWidth, tostring(worstAt)))
+  end)
+
   -- THE WHOLE HANDSHAKE, HOST AND JOINER, IN ORDER.
   --
   -- The packet check above proves one message parses. It does not prove that

@@ -28,6 +28,13 @@ local TAIL_SEGMENTS = 22
 --- far as the road is; the SIGN and its name are a warning, and a warning has a
 --- range of its own.
 local FORK_NOTICE = 200
+--- How far before the end of a branch the main line starts being drawn coming
+--- back in, and how much of it to draw. Shorter than FORK_NOTICE: a rejoin is
+--- not a decision, it is a thing about to happen to you, so it only has to stop
+--- being a surprise -- and a branch is a couple of hundred metres long, so a
+--- longer notice would simply be on screen for the whole shortcut.
+local REJOIN_NOTICE = 130
+local REJOIN_DRAW = 150
 local TUNNEL_HEIGHT = 7.5        -- metres from road to tunnel ceiling
 local TUNNEL_TILE = 5.0          -- metres per repeat of the rock texture
 local PROPS = 54                 -- roadside scenery frames in flight at once
@@ -155,6 +162,56 @@ local DRIFT_STAGES = {
 --- it is "LAP" and it starts at 52; in an arena the word is "BALLOONS", which
 --- is four times as wide, so the number moves out of its way.
 local LAP_NUMBER_X, BALLOON_NUMBER_X = 52, 100
+-- HOW FAR A TUNNEL WALL SITS FROM THE ROAD IT STANDS BESIDE.
+--
+-- "The walls are hard to see" was reported three times and answered three times
+-- by making them exist, be lit, and not be occluded -- all of which they now
+-- are. What was never done was MEASURING them, and the moment
+-- Art/verify-contrast.js was taught to sample a covered strip the answer was
+-- flat: the walls scored 0.07 to 0.16 against the road, on the same scale where
+-- the verges of those very circuits score 0.25 to 0.47. A wall was about a
+-- third as legible as a grass bank.
+--
+-- It was a FRACTION of the road's light -- half of it -- and a fraction is the
+-- wrong instrument. `rockTint` is derived from the road's own colour and
+-- normalised to carry hue only, so a wall is already the same colour as the
+-- floor; all it has is luminance, and a fraction gives less and less of that
+-- the darker the road is. Measured: taking the fraction from a half down to
+-- three tenths improved the bright circuits and made the dark ones WORSE --
+-- Icecrown fell from 0.112 to 0.044 -- because below a certain level everything
+-- converges on black together.
+--
+-- So the wall is held a fixed DISTANCE from the road instead, and goes brighter
+-- than the floor rather than darker when the floor is already too dark to get
+-- under. Which is also what a shaft actually looks like: cut rock beside a dark
+-- road catches more light than the road does, not less.
+-- Measured, not guessed: the road's luminance deep inside a shaft runs from
+-- 0.095 on Durotar to 0.375 on Oribos. On the dark half of that range there is
+-- no room UNDER the road at all -- which is why a darker fraction made those
+-- circuits worse, not better. So the wall is aimed at a luminance a fixed
+-- distance from the road's, and goes over it when there is no room under.
+local WALL_GAP = 0.23     -- how far a wall's pixel sits from the road's, in luminance
+local WALL_MIN = 0.07     -- below this a wall goes lighter than the road instead
+local WALL_MOUTH = 0.35   -- how much of the gap is given back out at the mouth
+--- The baked mean of rock.tga, so a tint aimed at a luminance lands on it.
+--- ROAD_MEAN above is the same idea for the tarmac.
+local ROCK_MEAN = 0.74
+
+local function luminance(c) return 0.299 * c[1] + 0.587 * c[2] + 0.114 * c[3] end
+
+--- The multiplier a tunnel wall's texture is drawn with, aimed so the PIXEL
+--- lands a readable distance from the road's pixel beside it.
+--- @param roadColour the track's own road colour
+--- @param roadLight the light the road is being drawn at right here
+--- @param tint the rock tint, which carries hue only
+--- @param coverage 0 at the mouth, 1 deep inside
+local function wallLight(roadColour, roadLight, tint, coverage)
+  local roadLum = luminance(roadColour) * roadLight * ROAD_MEAN
+  local gap = WALL_GAP * (1 - WALL_MOUTH * (1 - coverage))
+  local want = roadLum - gap
+  if want < WALL_MIN then want = roadLum + gap end
+  return want / math.max(0.05, luminance(tint) * ROCK_MEAN)
+end
 local PAUSE_W = 320
 local PAUSE_WHERE_Y = 54       -- top of the circuit's name
 local PAUSE_COUNT_Y = 71       -- top of the lap (and heat) count under it
@@ -1792,6 +1849,9 @@ function RaceUI:ApplyTrackPalette(track)
   -- rock a road is cut through is related to the road, and going all the way to
   -- the road's colour would make the walls vanish into the floor.
   local road = track.road or { 0.4, 0.4, 0.44 }
+  -- Kept, because the wall's brightness is aimed relative to the road's own
+  -- pixel rather than at a fraction of the scene light.
+  self.roadColour = road
   local mid = (road[1] + road[2] + road[3]) / 3
   self.rockTint = {
     road[1] * 0.55 + mid * 0.45 + 0.10,
@@ -3385,14 +3445,200 @@ function RaceUI:RenderProps(race, camX, camZ)
   for i = shown + 1, PROPS do setShown(self.props[i], false) end
 end
 
+--- Accumulated lateral offset along `route`, starting `from` metres into it.
+---
+--- The same forward double integral the main road uses, so a ribbon bends by
+--- exactly what the road it stands for bends by. Pulled out of RenderFork
+--- because there are two ribbons now: the branch peeling off the main line at
+--- the split, and the MAIN LINE peeling back in at the rejoin.
+local function bendAlong(route, from)
+  -- Read the tuned gain once per ribbon rather than per step, and from the same
+  -- accessor the main road uses.
+  local gain = bendGain()
+  local cache, lateral, offset, built = {}, 0, 0, 0
+  return function(bd)
+    while built * BEND_STEP <= bd + BEND_STEP do
+      cache[built + 1] = offset
+      lateral = lateral + AK.Math.RoadCurve(route, from + built * BEND_STEP) * gain * BEND_STEP
+      offset = offset + lateral * BEND_STEP
+      built = built + 1
+    end
+    local t = bd / BEND_STEP
+    local index = math.floor(t)
+    local a, b = cache[index + 1] or 0, cache[index + 2] or 0
+    return a + (b - a) * (t - index)
+  end
+end
+
+--- Draw one alternate line as a ribbon of road, and return how many strips it
+--- used.
+---
+--- TWO RIBBONS, NOT ONE. This was inline in RenderFork and drew exactly one
+--- thing: the branch peeling off the main line at the split. The moment you
+--- committed, it stopped -- "once committed to a branch there is no fork left
+--- to advertise" -- which is true of the split and completely wrong about the
+--- REJOIN. The main line you are about to be put back onto was invisible until
+--- the frame you arrived on it, so a shortcut ended with the whole world ahead
+--- being replaced between one frame and the next. That is the "especially
+--- jarring to exit" in the report, and it is the same junction seen from the
+--- other side, so it gets the same ribbon.
+---
+--- @param route the road the ribbon represents
+--- @param from where along `route` the ribbon starts
+--- @param startDz metres from the camera to that point
+--- @param centre the world X the ribbon leaves from -- where the road being
+---   driven has already bent to by the junction
+--- @param baseY the world height at the junction
+--- @param offset how far to the side the ribbon emerges, signed
+--- @param span how much of `route` to draw
+--- @param shown how many fork strips are already in use this frame
+function RaceUI:DrawRibbon(race, route, from, startDz, centre, baseY, offset, span,
+    shown, camX)
+  if span <= 2 then return shown end
+  local tuning = self.T
+  local track = race.track
+  local light = (self.light or 1) * tuning.nightBoost
+  local roadColor = track.road or { .34, .34, .38 }
+  local bend = bendAlong(route, from)
+  local previousX, previousY, previousW
+  for i = 0, FORK_SEGMENTS - 1 do
+    local bd = span * (i / (FORK_SEGMENTS - 1))
+    local dz = startDz + bd
+    if dz > 1.2 then
+      -- Blend the ribbon out of the main road over the first few metres
+      -- so it grows from the tarmac rather than appearing beside it.
+      local emerge = AK.Math.Clamp(bd / 12, 0, 1)
+      -- The ribbon starts where the main road has bent to by the split,
+      -- then accumulates the branch's own curvature from there.
+      local worldX = centre + bend(bd) + offset * emerge
+      -- Height along the ribbon's own route, hung off the junction's height so
+      -- the two roads meet at the same level.
+      local worldY = AK.Math.RoadHeight(route, from + bd) - AK.Math.RoadHeight(route, from)
+        + baseY
+      local x, y, pixelsPerMetre = self:Project(dz, worldX, camX, worldY)
+      local halfWidthPixels = pixelsPerMetre * tuning.roadHalf * AK.Math.RoadWidth(route, from + bd)
+
+      if previousY and y > previousY and shown < FORK_SEGMENTS then
+        shown = shown + 1
+        local strip = self.forkStrips[shown]
+        local height = math.max(1, y - previousY)
+        local midX = (x + previousX) * .5
+        local midHalf = (halfWidthPixels + previousW) * .5
+        -- Same rule as the main road: a texture minified past MIN_TEXEL
+        -- is a moire pattern, so out there the ribbon is flat colour
+        -- with road.tga's own baked mean folded in.
+        local flatRibbon = pixelsPerMetre * ROAD_TILE < MIN_TEXEL
+        if strip.roadFlat ~= flatRibbon then
+          strip.roadFlat = flatRibbon
+          if flatRibbon then
+            strip.road:SetTexture(SOLID)
+            strip.road:SetTexCoord(0, 1, 0, 1)
+          else
+            strip.road:SetTexture(ART .. "road.tga", "REPEAT", "REPEAT")
+          end
+        end
+        if not flatRibbon then
+          local uRoad = tuning.roadHalf / ROAD_TILE
+          local vNear = (bd - span / FORK_SEGMENTS) / ROAD_TILE
+          local vFar = bd / ROAD_TILE
+          local cap = math.max(0.08, height / MIN_TEXEL)
+          if vFar - vNear > cap then vFar = vNear + cap end
+          strip.road:SetTexCoord(-uRoad, uRoad, vNear, vFar)
+        end
+        strip.road:ClearAllPoints()
+        strip.road:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
+        strip.road:SetSize(math.max(2, midHalf * 2), height)
+        -- The same wash the main road gets. Fogging the ribbon by
+        -- brightness alone while the tarmac beside it recedes toward the
+        -- horizon made the shortcut read as a decal laid over the scene.
+        strip.road:SetVertexColor(self:Aerial(roadColor[1], roadColor[2], roadColor[3],
+          0.94 * light * (flatRibbon and ROAD_MEAN or 1), dz))
+        setShown(strip.road, true)
+
+        -- Bright rails so the alternate line reads as a road and not as
+        -- a shadow on the grass.
+        --
+        -- THE FLOOR IS THE POINT. Scaled off the ribbon's own width alone,
+        -- the rails came out at ONE PIXEL between about sixty and a
+        -- hundred and fifty metres -- which is the entire window in which
+        -- the player has to notice a shortcut and decide to take it. By
+        -- the time they were wide enough to see you were already at the
+        -- split. Two and a half pixels is still a hairline on the near
+        -- ribbon and is the difference between a lit alternate line and a
+        -- speckle in the grass at distance.
+        local rail = AK.Math.Clamp(midHalf * 0.055, 2.5, 18)
+        -- LOUD. Photographed thirty metres from Elwynn's river ford, the
+        -- rails came out at RGB (0.21, 0.60, 0.27) -- a mid green on
+        -- brown tarmac, which is a marking, not a signal. The alternate
+        -- line has to be picked out of a scene it is lying directly on
+        -- top of, because a branch leaves from the road's own edge and
+        -- overlaps it for the first fifty metres. The pulse now runs
+        -- between three quarters and full rather than between a little
+        -- over half and full, and the hue is a lime rather than a leaf.
+        local glow = 0.75 + 0.25 * math.sin(race.elapsed * 6 - bd * 0.2)
+        local rr, rg, rb = self:Aerial(0.48 * glow, 1.0 * glow, 0.30 * glow, light, dz)
+        -- Unrolled. This was `ipairs({ { strip.edgeLeft, -1 }, ... })`,
+        -- which allocated three tables per strip per frame -- a hundred
+        -- and twenty pieces of garbage every frame a fork is on screen,
+        -- for a two-element loop.
+        strip.edgeLeft:ClearAllPoints()
+        strip.edgeLeft:SetPoint("BOTTOM", self.frame, "CENTER", midX - midHalf, previousY)
+        strip.edgeLeft:SetSize(rail, height)
+        strip.edgeLeft:SetVertexColor(rr, rg, rb)
+        setShown(strip.edgeLeft, true)
+        strip.edgeRight:ClearAllPoints()
+        strip.edgeRight:SetPoint("BOTTOM", self.frame, "CENTER", midX + midHalf, previousY)
+        strip.edgeRight:SetSize(rail, height)
+        strip.edgeRight:SetVertexColor(rr, rg, rb)
+        setShown(strip.edgeRight, true)
+      end
+      previousX, previousY, previousW = x, y, halfWidthPixels
+    end
+  end
+  return shown
+end
+
 function RaceUI:RenderFork(race, player, camX, camZ)
   local tuning = self.T
   local track = race.track
   local shown = 0
   local signShown = false
 
-  -- Only from the main line: once committed to a branch there is no fork left
-  -- to advertise, and the branch's own road is already the one being drawn.
+  -- FROM THE BRANCH, LOOKING BACK AT THE MAIN LINE.
+  --
+  -- This block did not exist. RenderFork ran only while you were on the main
+  -- line, on the reasoning that a committed kart has no fork left to advertise
+  -- -- which is true of the SPLIT and wrong about the REJOIN. The road you are
+  -- about to be put back onto was drawn nowhere at all until the frame the
+  -- physics moved you onto it, and then the whole world ahead changed between
+  -- two frames: a different centreline, a different width, a different set of
+  -- scenery. That is the "especially jarring to exit" in the report.
+  --
+  -- So the main line gets exactly the ribbon the branch gets, from the other
+  -- side of the same junction: it peels IN toward you over the last stretch of
+  -- the shortcut, so the rejoin is somewhere you can see yourself arriving.
+  local route = player.route or track
+  if route ~= track and route.parent == track then
+    local branch = route
+    local toExit = branch.length - player.distance
+    if toExit > -tuning.camBack and toExit < REJOIN_NOTICE then
+      local exitDz = toExit + tuning.camBack
+      -- Where the BRANCH has bent to by its own end -- the ribbon has to leave
+      -- from there, because that is where the camera's own road finishes.
+      local exitCentre = self:Bend(branch.length)
+      local exitWidth = AK.Math.RoadWidth(branch, branch.length)
+      -- The main line comes back in from the side the branch left on, so from
+      -- inside the branch it appears on the opposite side.
+      local side = -AK.Math.ForkSide(branch)
+      local offset = side * tuning.roadHalf * exitWidth * 0.92
+      local span = math.max(0, math.min(REJOIN_DRAW, FAR_Z - exitDz))
+      shown = self:DrawRibbon(race, track, branch.exit, exitDz, exitCentre,
+        AK.Math.RoadHeight(branch, branch.length), offset, span, shown, camX)
+    end
+  end
+
+  -- Only from the main line: the SPLIT is only ahead of you while you are still
+  -- on the road it leaves.
   if (player.route or track) == track then
     local branch, gap = AK.TrackBuilder:ForkAt(track, player.distance, FAR_Z)
     if branch and gap then
@@ -3405,26 +3651,7 @@ function RaceUI:RenderFork(race, player, camX, camZ)
       local entryWidth = AK.Math.RoadWidth(track, branch.entry)
       -- The branch's own curvature, accumulated along the branch the same way
       -- the main road is accumulated along itself.
-      local branchBend
-      do
-        -- Read the tuned gain once per fork rather than per step, and from the
-        -- same accessor the main road uses -- the branch must bend by exactly
-        -- the amount the road it leaves does, or the ribbon peels away wrong.
-        local gain = bendGain()
-        local cache, lateral, offset, built = {}, 0, 0, 0
-        branchBend = function(bd)
-          while built * BEND_STEP <= bd + BEND_STEP do
-            cache[built + 1] = offset
-            lateral = lateral + AK.Math.RoadCurve(branch, built * BEND_STEP) * gain * BEND_STEP
-            offset = offset + lateral * BEND_STEP
-            built = built + 1
-          end
-          local t = bd / BEND_STEP
-          local index = math.floor(t)
-          local a, b = cache[index + 1] or 0, cache[index + 2] or 0
-          return a + (b - a) * (t - index)
-        end
-      end
+      local branchBend = bendAlong(branch, 0)
       -- The ribbon leaves from the edge of the main road on its own side, then
       -- follows wherever the branch was authored to curve.
       local side = AK.Math.ForkSide(branch)
@@ -3438,103 +3665,8 @@ function RaceUI:RenderFork(race, player, camX, camZ)
       -- camDepth)` that kills the haze under cover, so inside Deadmines the
       -- shortcut ribbon receded toward a SKY that is not there while the tarmac
       -- beside it stayed rock-lit.
-      local previousX, previousY, previousW
-
-      if span > 2 then
-        for i = 0, FORK_SEGMENTS - 1 do
-          local bd = span * (i / (FORK_SEGMENTS - 1))
-          local dz = entryDz + bd
-          if dz > 1.2 then
-            -- Blend the ribbon out of the main road over the first few metres
-            -- so it grows from the tarmac rather than appearing beside it.
-            local emerge = AK.Math.Clamp(bd / 12, 0, 1)
-            -- The ribbon starts where the main road has bent to by the split,
-            -- then accumulates the branch's own curvature from there.
-            local worldX = entryCentre + branchBend(bd) + offset * emerge
-            local worldY = AK.Math.RoadHeight(branch, bd) - AK.Math.RoadHeight(branch, 0)
-              + AK.Math.RoadHeight(track, branch.entry)
-            local x, y, pixelsPerMetre = self:Project(dz, worldX, camX, worldY)
-            local halfWidthPixels = pixelsPerMetre * tuning.roadHalf * AK.Math.RoadWidth(branch, bd)
-
-            if previousY and y > previousY and shown < FORK_SEGMENTS then
-              shown = shown + 1
-              local strip = self.forkStrips[shown]
-              local height = math.max(1, y - previousY)
-              local midX = (x + previousX) * .5
-              local midHalf = (halfWidthPixels + previousW) * .5
-              -- Same rule as the main road: a texture minified past MIN_TEXEL
-              -- is a moire pattern, so out there the ribbon is flat colour
-              -- with road.tga's own baked mean folded in.
-              local flatRibbon = pixelsPerMetre * ROAD_TILE < MIN_TEXEL
-              if strip.roadFlat ~= flatRibbon then
-                strip.roadFlat = flatRibbon
-                if flatRibbon then
-                  strip.road:SetTexture(SOLID)
-                  strip.road:SetTexCoord(0, 1, 0, 1)
-                else
-                  strip.road:SetTexture(ART .. "road.tga", "REPEAT", "REPEAT")
-                end
-              end
-              if not flatRibbon then
-                local uRoad = tuning.roadHalf / ROAD_TILE
-                local vNear = (bd - span / FORK_SEGMENTS) / ROAD_TILE
-                local vFar = bd / ROAD_TILE
-                local cap = math.max(0.08, height / MIN_TEXEL)
-                if vFar - vNear > cap then vFar = vNear + cap end
-                strip.road:SetTexCoord(-uRoad, uRoad, vNear, vFar)
-              end
-              strip.road:ClearAllPoints()
-              strip.road:SetPoint("BOTTOM", self.frame, "CENTER", midX, previousY)
-              strip.road:SetSize(math.max(2, midHalf * 2), height)
-              -- The same wash the main road gets. Fogging the ribbon by
-              -- brightness alone while the tarmac beside it recedes toward the
-              -- horizon made the shortcut read as a decal laid over the scene.
-              strip.road:SetVertexColor(self:Aerial(roadColor[1], roadColor[2], roadColor[3],
-                0.94 * light * (flatRibbon and ROAD_MEAN or 1), dz))
-              setShown(strip.road, true)
-
-              -- Bright rails so the alternate line reads as a road and not as
-              -- a shadow on the grass.
-              --
-              -- THE FLOOR IS THE POINT. Scaled off the ribbon's own width alone,
-              -- the rails came out at ONE PIXEL between about sixty and a
-              -- hundred and fifty metres -- which is the entire window in which
-              -- the player has to notice a shortcut and decide to take it. By
-              -- the time they were wide enough to see you were already at the
-              -- split. Two and a half pixels is still a hairline on the near
-              -- ribbon and is the difference between a lit alternate line and a
-              -- speckle in the grass at distance.
-              local rail = AK.Math.Clamp(midHalf * 0.055, 2.5, 18)
-              -- LOUD. Photographed thirty metres from Elwynn's river ford, the
-              -- rails came out at RGB (0.21, 0.60, 0.27) -- a mid green on
-              -- brown tarmac, which is a marking, not a signal. The alternate
-              -- line has to be picked out of a scene it is lying directly on
-              -- top of, because a branch leaves from the road's own edge and
-              -- overlaps it for the first fifty metres. The pulse now runs
-              -- between three quarters and full rather than between a little
-              -- over half and full, and the hue is a lime rather than a leaf.
-              local glow = 0.75 + 0.25 * math.sin(race.elapsed * 6 - bd * 0.2)
-              local rr, rg, rb = self:Aerial(0.48 * glow, 1.0 * glow, 0.30 * glow, light, dz)
-              -- Unrolled. This was `ipairs({ { strip.edgeLeft, -1 }, ... })`,
-              -- which allocated three tables per strip per frame -- a hundred
-              -- and twenty pieces of garbage every frame a fork is on screen,
-              -- for a two-element loop.
-              strip.edgeLeft:ClearAllPoints()
-              strip.edgeLeft:SetPoint("BOTTOM", self.frame, "CENTER", midX - midHalf, previousY)
-              strip.edgeLeft:SetSize(rail, height)
-              strip.edgeLeft:SetVertexColor(rr, rg, rb)
-              setShown(strip.edgeLeft, true)
-              strip.edgeRight:ClearAllPoints()
-              strip.edgeRight:SetPoint("BOTTOM", self.frame, "CENTER", midX + midHalf, previousY)
-              strip.edgeRight:SetSize(rail, height)
-              strip.edgeRight:SetVertexColor(rr, rg, rb)
-              setShown(strip.edgeRight, true)
-            end
-            previousX, previousY, previousW = x, y, halfWidthPixels
-          end
-        end
-      end
-
+      shown = self:DrawRibbon(race, branch, 0, entryDz, entryCentre,
+        AK.Math.RoadHeight(track, branch.entry), offset, span, shown, camX)
       -- The sign, planted on the branch's side of the split.
       --
       -- NOTICED AT A FIXED DISTANCE, not at the draw distance. Both the gate
@@ -4046,8 +4178,8 @@ function RaceUI:RenderRoad(race, player)
         -- same luminance as a saturated brown floor reads BRIGHTER than it, so
         -- matching the numbers put the walls in front of the road instead of
         -- around it.
-        local rock = roadLight * (0.50 + 0.26 * (1 - coverage))
         local tint = self.rockTint or { 1, 1, 1 }
+        local rock = wallLight(self.roadColour or { .5, .5, .5 }, roadLight, tint, coverage)
         local vNear, vFar = previousZ / TUNNEL_TILE, segZ / TUNNEL_TILE
 
         strip.wallLeft:SetTexCoord(0, 1.6, vNear, vFar)
@@ -4525,14 +4657,32 @@ function RaceUI:RenderHazards(race, camX, camZ)
       -- it with the hazard's own colour at least makes it read as an object in
       -- the world rather than a spellbook button someone dropped.
       frame.icon:SetShown(not ready)
-      local hazardIcon = hazard.icon or "Interface\\Icons\\Spell_Fire_SelfDestruct"
+      -- THIS GAME'S OWN ART FIRST. `art` names a file in Art/, drawn for this
+      -- world; `icon` is the WoW ability icon that was the only option before,
+      -- and is still the fallback for a hazard that has neither a creature nor
+      -- a sprite of its own.
+      local hazardIcon = hazard.art and (ART .. hazard.art)
+        or hazard.icon or "Interface\\Icons\\Spell_Fire_SelfDestruct"
       if frame.iconApplied ~= hazardIcon then
         frame.iconApplied = hazardIcon
         frame.icon:SetTexture(hazardIcon)
+        -- ONLY AN ICON HAS A BORDER TO TRIM. Cropping eight per cent off every
+        -- edge is what makes a WoW icon stop looking like a button; doing it to
+        -- a sprite drawn for this game just cuts the edges off the boulder.
+        if hazard.art then
+          frame.icon:SetTexCoord(0, 1, 0, 1)
+        else
+          frame.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        end
       end
-      frame.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-      local tint = hazard.color or { 1, 1, 1 }
-      frame.icon:SetVertexColor(tint[1], tint[2], tint[3])
+      -- A sprite of the thing carries its own colour; an icon borrowed from the
+      -- spellbook needs the hazard's tint to belong to the scene at all.
+      if hazard.art then
+        frame.icon:SetVertexColor(1, 1, 1)
+      else
+        local tint = hazard.color or { 1, 1, 1 }
+        frame.icon:SetVertexColor(tint[1], tint[2], tint[3])
+      end
       frame.icon:SetSize(size, size)
       setShown(frame, true)
     end

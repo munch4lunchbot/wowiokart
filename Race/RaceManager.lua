@@ -323,6 +323,12 @@ function Race:BuildHazards(track)
         -- client, and the hazard falls back to its icon.
         model = plan.model,
         icon = plan.icon,
+        -- The addon's OWN art, when there is a piece that fits. A hazard with
+        -- no creature behind it was drawing a WoW ability icon on the road --
+        -- a square, bordered piece of inventory UI lying in the world -- while
+        -- Art/ already held a mine cart, a boulder and a spore cap drawn for
+        -- this game.
+        art = plan.art,
       })
     end
   end

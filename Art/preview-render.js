@@ -94,6 +94,23 @@ const SEGMENTS = +(process.env.SEGMENTS || 150), FAR_Z = +(process.env.FAR_Z || 
 // The AIR reaches a fixed distance; only how much of the world you are shown is
 // a setting. Mirrors HAZE_Z in UI/RaceUI.lua -- if these two drift, the preview
 // starts flattering the game again.
+// Read from UI/RaceUI.lua rather than typed here: these are the two numbers
+// Art/verify-contrast.js is measuring, and a mirror with its own copy of them
+// would report the old walls forever.
+const RUI_SRC = fs.readFileSync(path.join(__dirname, "..", "UI", "RaceUI.lua"), "utf8");
+const WALL_GAP = +((RUI_SRC.match(/local WALL_GAP = ([\d.]+)/) || [, 0.20])[1]);
+const WALL_MIN = +((RUI_SRC.match(/local WALL_MIN = ([\d.]+)/) || [, 0.07])[1]);
+const WALL_MOUTH = +((RUI_SRC.match(/local WALL_MOUTH = ([\d.]+)/) || [, 0.35])[1]);
+const ROCK_MEAN = +((RUI_SRC.match(/local ROCK_MEAN = ([\d.]+)/) || [, 0.74])[1]);
+const relLum = (c) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+/** RaceUI's wallLight, to the letter. */
+function wallLight(roadColour, roadLight, tint, coverage) {
+  const roadLum = relLum(roadColour) * roadLight * ROAD_MEAN;
+  const gap = WALL_GAP * (1 - WALL_MOUTH * (1 - coverage));
+  let want = roadLum - gap;
+  if (want < WALL_MIN) want = roadLum + gap;
+  return want / Math.max(0.05, relLum(tint) * ROCK_MEAN);
+}
 const HAZE_Z = 330;
 // Roadside furniture is limited in METRES, not as a fraction of the draw
 // distance. Mirrors `reach` in UI/RaceUI.lua.
@@ -710,7 +727,7 @@ for (let r = rows.length - 1; r >= 0; r--) {
     // scene light after the full cover dimming, so using it here reduced the
     // rock a third time and then the rock texture's own mean reduced it a
     // fourth.
-    const k = tarmacLight * (0.50 + 0.26 * (1 - row.cover));
+    const k = wallLight(track.road || [0.4, 0.4, 0.44], tarmacLight, ROCK_TINT, row.cover);
     const tint = ROCK_TINT.map((c) => k * c);
     const ctint = [k * ROCK_TINT[0] * 0.62, k * ROCK_TINT[1] * 0.60, k * ROCK_TINT[2] * 0.58];
     const v0 = row.prevZ / TUNNEL_TILE, v1 = row.segZ / TUNNEL_TILE;
@@ -1026,8 +1043,14 @@ const objects = (function () {
       const num = (k, d) => { const q = line.match(new RegExp(k + " = (-?[\\d.]+)")); return q ? +q[1] : d; };
       const count = num("count", 1), at = num("at", 0), spacing = num("spacing", 40);
       const lateral = num("lateral", 0);
+      // WHAT THE HAZARD ACTUALLY LOOKS LIKE. Every hazard was drawn here as the
+      // same bomb, so the sheet could not show that five of the twelve were
+      // shipping a bordered WoW ability icon on the road, nor that they are the
+      // game's own sprites now.
+      const art = (line.match(/art = "([^"]+)"/) || [])[1];
       for (let i = 0; i < count; i++) {
-        out.push({ kind: "hazard", distance: at * L + i * spacing, lateral });
+        out.push({ kind: "hazard", distance: at * L + i * spacing, lateral,
+          art: art && art.replace(/\.tga$/, "") });
       }
     }
   }
@@ -1054,7 +1077,10 @@ const visibleObjects = objects.map(o => {
 
 for (const entry of visibleObjects) {
   const o = entry.o, dz = entry.dz;
-  const st = OBJ_STYLE[o.kind] || OBJ_STYLE.hazard;
+  let st = OBJ_STYLE[o.kind] || OBJ_STYLE.hazard;
+  // A hazard drawn from the game's own art carries its own colour; the generic
+  // fallback is tinted because it is standing in for something else.
+  if (o.art && tex[o.art]) st = { tex: o.art, col: [1, 1, 1], size: st.size };
   const az = camZ + dz;
   const [x, y, ppm] = project(dz, bend(dz) + o.lateral * T.roadHalf, roadHeight(az));
   const size = objSize(ppm, st.size);
