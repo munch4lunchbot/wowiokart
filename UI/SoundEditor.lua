@@ -59,8 +59,15 @@ function Editor:Refresh()
         .. (info.plays > 0 and ("  x" .. info.plays) or ""))
         row.state:SetTextColor(unpack(AK.COLORS.gold))
       elseif info.source == "kit" then
-        row.state:SetText("kit " .. tostring(info.id))
-        row.state:SetTextColor(0.55, 0.60, 0.68)
+        -- The NAME, and green when the client's own library supplied it. "kit
+        -- 1234" cannot tell a real crash apart from the interface tick the cue
+        -- falls back on, and that is the only thing worth knowing at a glance.
+        row.state:SetText(info.name or ("kit " .. tostring(info.id)))
+        if info.via == "match" then
+          row.state:SetTextColor(0.42, 0.94, 0.42)
+        else
+          row.state:SetTextColor(0.55, 0.60, 0.68)
+        end
       elseif info.source == "none" then
         row.state:SetText("silent")
         row.state:SetTextColor(0.85, 0.33, 0.33)
@@ -85,9 +92,19 @@ function Editor:Refresh()
       and ("%s  /  min gap %.2fs  /  played %d  (%.1f per min)")
         :format(info.priority, info.cooldown, info.plays, info.perMinute)
       or ("%s  /  min gap %.2fs  /  not played yet"):format(info.priority, info.cooldown))
-    self.detailKit:SetText(info.override
-      and ("bound to file " .. info.override)
-      or ("default: " .. (info.kit ~= "" and info.kit or "none")))
+    -- What it LANDED ON first, then what it was looking for. A cue that found
+    -- something in the library should say so plainly, because that is the
+    -- difference between this game having sound effects and having clicks.
+    if info.override then
+      self.detailKit:SetText("bound to file " .. info.override)
+    elseif info.via == "match" and info.name then
+      self.detailKit:SetText(("|cff6bf06bfound on this client:|r %s"):format(info.name))
+    elseif info.match ~= "" then
+      self.detailKit:SetText(("looking for: %s  --  fallback %s"):format(
+        info.match, info.kit ~= "" and info.kit or "none"))
+    else
+      self.detailKit:SetText("default: " .. (info.kit ~= "" and info.kit or "none"))
+    end
   else
     self.detailTitle:SetText("select a cue")
     self.detailInfo:SetText("")
@@ -143,7 +160,7 @@ function Editor:Build()
 
   local title = UI:NewText(frame, "SOUND EDITOR", 14, AK.COLORS.gold, "CENTER")
   title:SetPoint("TOP", 0, -9)
-  local hint = UI:NewText(frame, "click a cue to select  /  PLAY auditions  /  BIND assigns the id on the right", 10, AK.COLORS.muted, "CENTER")
+  local hint = UI:NewText(frame, "click a cue to hear it  /  SEARCH looks through your client's own sound names  /  BIND assigns", 10, AK.COLORS.muted, "CENTER")
   hint:SetPoint("TOP", title, "BOTTOM", 0, -2)
 
   -- ---- cue list ----
@@ -254,19 +271,44 @@ function Editor:Build()
   mute:SetPoint("TOPLEFT", dx + 186, -122)
   mute.tooltip = "Silence this cue. Press again to bring it back."
 
-  -- ---- file id browser ----
-  -- -148, NOT -132. The HEAR IT REPEATED button above is twenty tall at -122,
-  -- so it ends at 142 -- and an eleven-point heading starting at 132 was
-  -- printed straight through it. Everything below moved down with it.
+  -- ---- the game's audio library ----
+  --
+  -- Reordered so the tool that answers the question comes first. Searching two
+  -- hundred numbers and listening to every hit was the ONLY way in here, and
+  -- the kit space is named -- somebody hunting for a crash should be able to
+  -- type "CRASH" rather than sweep ids until one sounds like one. The numeric
+  -- scan stays underneath for the FileDataID space, which has no names.
   local browseTitle = UI:NewText(frame, "GAME AUDIO LIBRARY", 11, AK.COLORS.blue, "LEFT")
   browseTitle:SetPoint("TOPLEFT", dx, -148)
+
+  local findBox = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
+  findBox:SetSize(140, 20)
+  findBox:SetPoint("TOPLEFT", dx + 6, -164)
+  findBox:SetAutoFocus(false)
+  findBox:SetMaxLetters(24)
+  self.findBox = findBox
+
+  local function search()
+    local text = findBox:GetText()
+    self.found = AK:FindKitSounds(text)
+    self.foundIndex = 0
+    AK:Print(("Named sounds matching |cffffd100%s|r: |cff6bf06b%d|r.")
+      :format(tostring(text), #self.found))
+    if #self.found > 0 then self:ShowFound(1) else self:Refresh() end
+  end
+  findBox:SetScript("OnEnterPressed", function(box) box:ClearFocus() search() end)
+  findBox:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
+
+  local find = UI:NewButton(frame, "SEARCH", 100, 20, search)
+  find:SetPoint("TOPLEFT", dx + 152, -164)
+  find.tooltip = "Search the client's own sound names.\nTry ENGINE, IMPACT, CRASH, WHOOSH, GRAVEL, THUNDER.\nResults step through with PREV and NEXT below."
 
   -- The three sit in a 250px strip: box 92, PLAY ID 84, BIND 56, with six
   -- pixels between each. PLAY ID needs 83 at its font (check.js measures it),
   -- so the room came off the box, which only ever holds six or seven digits.
   local idBox = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
   idBox:SetSize(92, 20)
-  idBox:SetPoint("TOPLEFT", dx + 6, -166)
+  idBox:SetPoint("TOPLEFT", dx + 6, -188)
   idBox:SetAutoFocus(false)
   idBox:SetNumeric(true)
   idBox:SetText("566000")
@@ -281,7 +323,7 @@ function Editor:Build()
     local id = self:CurrentID()
     if id then AK:TrySoundFile(id) end
   end)
-  tryButton:SetPoint("TOPLEFT", dx + 104, -166)
+  tryButton:SetPoint("TOPLEFT", dx + 104, -188)
 
   local bind = UI:NewButton(frame, "BIND", 56, 20, function()
     local id = self:CurrentID()
@@ -292,8 +334,8 @@ function Editor:Build()
       AK:Print("Pick a cue on the left first.")
     end
   end)
-  bind:SetPoint("TOPLEFT", dx + 194, -166)
-  bind.tooltip = "Bind the id on the left to the cue selected in the list."
+  bind:SetPoint("TOPLEFT", dx + 194, -188)
+  bind.tooltip = "Bind the id on the left to the cue selected in the list.\nA search result puts its id in that box, so this binds what you are hearing."
 
   -- Scanning turns "guess a number" into "here are the real ones".
   local scan = UI:NewButton(frame, "SCAN 200 FROM HERE", 194, 20, function()
@@ -304,22 +346,22 @@ function Editor:Build()
     AK:Print(("Scanned %d-%d: |cff6bf06b%d|r playable."):format(start, start + 199, #self.found))
     if #self.found > 0 then self:ShowFound(1) else self:Refresh() end
   end)
-  scan:SetPoint("TOPLEFT", dx + 6, -192)
+  scan:SetPoint("TOPLEFT", dx + 6, -212)
   scan.tooltip = "Probes 200 ids from the box above and keeps the ones that exist.\nEach hit is cut off immediately, so this is a short flurry, not 200 full sounds."
 
   self.scanLabel = UI:NewText(frame, "no scan yet", 10, AK.COLORS.muted, "LEFT")
-  self.scanLabel:SetPoint("TOPLEFT", dx + 6, -216)
+  self.scanLabel:SetPoint("TOPLEFT", dx + 6, -236)
 
   local prev = UI:NewButton(frame, "< PREV", 84, 20, function()
     self:ShowFound((self.foundIndex or 0))
   end)
-  prev:SetPoint("TOPLEFT", dx + 6, -232)
+  prev:SetPoint("TOPLEFT", dx + 6, -252)
   local next_ = UI:NewButton(frame, "NEXT >", 84, 20, function()
     self:ShowFound((self.foundIndex or 0) + 2)
   end)
-  next_:SetPoint("TOPLEFT", dx + 94, -232)
-  prev.tooltip = "Step back through the scan results, playing each."
-  next_.tooltip = "Step forward through the scan results, playing each."
+  next_:SetPoint("TOPLEFT", dx + 94, -252)
+  prev.tooltip = "Step back through the results, playing each."
+  next_.tooltip = "Step forward through the results, playing each."
 
   -- ---- footer ----
   local report = UI:NewButton(frame, "PRINT BINDINGS", 170, 22, function() AK:DebugSfx() end)

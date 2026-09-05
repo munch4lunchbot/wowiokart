@@ -69,10 +69,10 @@ local CUES = {
   -- one is tried, and `/kart sfxreport` says what actually resolved.
   item        = { kit = { "UI_TOYBOX_TABS", "UI_EPICLOOT_TOAST", "IG_BACKPACK_COIN_UP" }, pri = PRI.HIGH, cd = 0.20 },
   itemUse     = { kit = { "IG_SPELLBOOK_CLOSE", "UI_TRANSMOG_ITEM_CLICK" }, pri = PRI.HIGH, cd = 0.20 },
-  throw       = { kit = { "UI_PVP_KILLBLOW", "IG_MAINMENU_OPEN" }, pri = PRI.NORMAL },
-  throwHoming = { kit = { "GS_CHARACTER_SELECTION_ENTER_WORLD", "UI_WORLDQUEST_START" }, pri = PRI.NORMAL },
-  throwHeavy  = { kit = { "IG_MAINMENU_QUIT", "UI_RAID_BOSS_DEFEATED" }, pri = PRI.NORMAL },
-  drop        = { kit = { "IG_BACKPACK_COIN_DOWN", "UI_ETHEREAL_WINDOW_CLOSE" }, pri = PRI.NORMAL },
+  throw       = { match = { "SWOOSH", "WHOOSH", "THROW" }, kit = { "UI_PVP_KILLBLOW", "IG_MAINMENU_OPEN" }, pri = PRI.NORMAL },
+  throwHoming = { match = { "MISSILE", "SWOOSH", "WHOOSH" }, kit = { "GS_CHARACTER_SELECTION_ENTER_WORLD", "UI_WORLDQUEST_START" }, pri = PRI.NORMAL },
+  throwHeavy  = { match = { "CANNON", "SIEGE", "HEAVY" }, kit = { "IG_MAINMENU_QUIT", "UI_RAID_BOSS_DEFEATED" }, pri = PRI.NORMAL },
+  drop        = { match = { "DROP", "PLACE" }, kit = { "IG_BACKPACK_COIN_DOWN", "UI_ETHEREAL_WINDOW_CLOSE" }, pri = PRI.NORMAL },
   deploy      = { kit = { "UI_VOID_STORAGE_UNLOCK", "IG_CHARACTER_INFO_TAB" }, pri = PRI.NORMAL },
   starPower   = { kit = { "UI_LEGENDARY_LOOT_TOAST", "UI_EPICLOOT_TOAST", "LEVELUPSOUND" }, pri = PRI.HIGH },
   -- The shell has locked onto you. CRITICAL: this is the one warning in the
@@ -80,24 +80,24 @@ local CUES = {
   spinyWarn   = { kit = { "READY_CHECK", "RAID_WARNING" }, pri = PRI.CRITICAL },
   -- Landing a shot on somebody is the best moment the genre has. It had no cue
   -- at all, because every hit sound was played to the VICTIM.
-  hitConfirm  = { kit = { "UI_RAID_BOSS_DEFEATED", "LOOT_WINDOW_COIN_SOUND" }, pri = PRI.HIGH, cd = 0.25 },
+  hitConfirm  = { match = { "KILLBLOW", "CRIT", "IMPACT" }, kit = { "UI_RAID_BOSS_DEFEATED", "LOOT_WINDOW_COIN_SOUND" }, pri = PRI.HIGH, cd = 0.25 },
 
   -- Speed. Boosts are earned, so they get to be heard.
-  boost       = { kit = { "IG_SPELLBOOK_OPEN", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
-  megaBoost   = { kit = { "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP", "LEVELUPSOUND" }, pri = PRI.HIGH, cd = 0.35 },
-  dash        = { kit = { "UI_WORLDQUEST_START", "IG_SPELLBOOK_OPEN" }, pri = PRI.NORMAL, cd = 0.40 },
+  boost       = { match = { "BOOST", "SPEED", "RUSH" }, kit = { "IG_SPELLBOOK_OPEN", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
+  megaBoost   = { match = { "TURBO", "BOOST", "SPEED" }, kit = { "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP", "LEVELUPSOUND" }, pri = PRI.HIGH, cd = 0.35 },
+  dash        = { match = { "DASH", "RUSH", "SPEED" }, kit = { "UI_WORLDQUEST_START", "IG_SPELLBOOK_OPEN" }, pri = PRI.NORMAL, cd = 0.40 },
   -- A launch was playing "boost" -- the same cue as a mushroom and a
   -- mini-turbo, on the one event in the game that throws you off the ground.
   -- Two of the three most emphatic things that can happen to you sounded
   -- identical, and the third was the landing they both led into.
-  jump        = { kit = { "UI_PET_BATTLE_START", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
-  landing     = { kit = { "IG_ABILITY_ICON_DROP", "IG_MAINMENU_CLOSE" }, pri = PRI.NORMAL, cd = 0.40 },
+  jump        = { match = { "JUMP", "LAUNCH", "SPRING" }, kit = { "UI_PET_BATTLE_START", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
+  landing     = { match = { "IMPACT", "THUD", "LAND" }, kit = { "IG_ABILITY_ICON_DROP", "IG_MAINMENU_CLOSE" }, pri = PRI.NORMAL, cd = 0.40 },
 
   -- ENGINE. Its own lane -- see UpdateEngine. These never route through
   -- permitted(), so their pri/cd are documentation rather than gating, and they
   -- must stay LOW so nothing else treats them as meaningful.
-  engineLow    = { kit = { "IG_CHARACTER_INFO_TAB", "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 0 },
-  engineHigh   = { kit = { "LOOT_WINDOW_COIN_SOUND", "IG_CHARACTER_INFO_TAB" }, pri = PRI.LOW, cd = 0 },
+  engineLow    = { match = { "ENGINE", "MOTOR", "MACHINE", "VEHICLE" }, kit = { "IG_CHARACTER_INFO_TAB", "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 0 },
+  engineHigh   = { match = { "TURBINE", "ENGINE", "MOTOR", "MACHINE" }, matchSkip = 1, kit = { "LOOT_WINDOW_COIN_SOUND", "IG_CHARACTER_INFO_TAB" }, pri = PRI.LOW, cd = 0 },
 
   -- THE DRIFT LADDER. One cue per tier, fired once as the charge CROSSES each
   -- threshold rather than repeatedly while it sits there. That is what makes
@@ -121,11 +121,11 @@ local CUES = {
 
   -- Incidental texture. Everything below fires many times a lap and is the
   -- entire source of the complaint. Long cooldowns, first to be suppressed.
-  bump         = { kit = { "UI_ETHEREAL_WINDOW_CLOSE", "IG_PLAYER_INVITE_DECLINE" }, pri = PRI.LOW, cd = 1.20 },
+  bump         = { match = { "SCRAPE", "THUD", "BUMP" }, kit = { "UI_ETHEREAL_WINDOW_CLOSE", "IG_PLAYER_INVITE_DECLINE" }, pri = PRI.LOW, cd = 1.20 },
   -- Being hit has to land like something hit you, not like a window closing.
-  collision    = { kit = { "IG_PLAYER_INVITE_DECLINE", "UI_PVP_KILLBLOW" }, pri = PRI.NORMAL, cd = 0.70 },
-  blocked      = { kit = { "IG_CHARACTER_NPC_SELECT", "UI_VOID_STORAGE_UNLOCK" }, pri = PRI.LOW, cd = 1.50 },
-  offroad      = { kit = { "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 1.60 },
+  collision    = { match = { "CRASH", "IMPACT", "KILLBLOW" }, kit = { "IG_PLAYER_INVITE_DECLINE", "UI_PVP_KILLBLOW" }, pri = PRI.NORMAL, cd = 0.70 },
+  blocked      = { match = { "DEFLECT", "SHIELD", "BLOCK" }, kit = { "IG_CHARACTER_NPC_SELECT", "UI_VOID_STORAGE_UNLOCK" }, pri = PRI.LOW, cd = 1.50 },
+  offroad      = { match = { "GRAVEL", "DIRT", "GRASS", "ROUGH" }, kit = { "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 1.60 },
   surfaceEnter = { kit = { "IG_MAINMENU_OPTION_CHECKBOX_OFF" }, pri = PRI.LOW, cd = 1.40 },
   overtake     = { kit = { "UI_WORLDQUEST_COMPLETE", "LOOT_WINDOW_COIN_SOUND", "IG_BACKPACK_COIN_UP" }, pri = PRI.NORMAL, cd = 0.80 },
   -- Losing a place was completely silent -- the banner changed colour and that
@@ -135,12 +135,12 @@ local CUES = {
   passed       = { kit = { "IG_CHARACTER_INFO_CLOSE", "IG_QUEST_FAILED" }, pri = PRI.NORMAL, cd = 0.80 },
   -- A green shell ricocheting off the verge. It happens constantly and made no
   -- noise at all, so a shell you fired simply vanished from the world.
-  shellBounce  = { kit = { "IG_MAINMENU_CLOSE", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.45 },
+  shellBounce  = { match = { "RICOCHET", "BOUNCE", "DEFLECT" }, kit = { "IG_MAINMENU_CLOSE", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.45 },
   -- Whoosh as somebody flicks past. Low priority and a long cooldown on purpose
   -- -- in a tight pack this can trigger several times a second, and it is
   -- texture, not information.
-  nearMiss     = { kit = { "MAP_PING", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.90 },
-  thunder      = { kit = { "IG_MAINMENU_OPEN", "READY_CHECK" }, pri = PRI.LOW, cd = 4.00 },
+  nearMiss     = { match = { "WHOOSH", "SWOOSH" }, kit = { "MAP_PING", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.90 },
+  thunder      = { match = { "THUNDER", "STORM", "LIGHTNING" }, kit = { "IG_MAINMENU_OPEN", "READY_CHECK" }, pri = PRI.LOW, cd = 4.00 },
 
   -- Menus. Outside a race there is no budget pressure, but the hover cue still
   -- needs its own cooldown or sweeping the mouse across a list machine-guns.
@@ -156,6 +156,84 @@ local CUES = {
   uiOpen      = { kit = { "IG_CHARACTER_INFO_OPEN" }, pri = PRI.NORMAL, cd = 0, menu = true },
   uiClose     = { kit = { "IG_CHARACTER_INFO_CLOSE" }, pri = PRI.NORMAL, cd = 0, menu = true },
 }
+
+--- Every SOUNDKIT entry, sorted by id. Built once.
+---
+--- This is the space worth searching. FileDataIDs are sparse -- the vast
+--- majority of numbers are not sounds at all -- so stepping through them is
+--- hunting for needles, and every sound in this addon that has ever actually
+--- worked is a SOUNDKIT id played through PlaySound. The kit table is dense,
+--- every entry is real, and each one has a NAME, which turns "step a number and
+--- hope" into browsing a labelled library.
+local kitList
+local function kitEntries()
+  if kitList then return kitList end
+  kitList = {}
+  for name, id in pairs(SOUNDKIT or {}) do
+    if type(id) == "number" then kitList[#kitList + 1] = { name = name, id = id } end
+  end
+  table.sort(kitList, function(a, b) return a.id < b.id end)
+  return kitList
+end
+
+-- ---------------------------------------------------------------------------
+-- ASKING THE CLIENT WHAT IT HAS, INSTEAD OF GUESSING WHAT IT HAS
+--
+-- Every round of this file so far picked SOUNDKIT constants by writing names
+-- down from memory. A name that is not in the table resolves to nil and falls
+-- through in silence, so the cue table kept quietly ending up back on the
+-- interface tick at the end of each list no matter what was put in front of it.
+-- From the outside that is indistinguishable from "the sounds did not change",
+-- which is exactly the report that keeps coming back.
+--
+-- The client knows its own library. SOUNDKIT is a name -> id table with a
+-- couple of thousand entries, every one of them real on this machine, and the
+-- names are descriptive. So a cue can ask for a KIND of sound -- "something
+-- with IMPACT in its name" -- and be answered out of what is actually there.
+-- That is how a cue reaches the parts of the library that are not checkbox
+-- ticks without anybody guessing an id, and it adapts to whatever client it is
+-- installed on rather than to the one I imagined.
+--
+-- Nothing here is trusted on faith: a match is still proven by playing it, and
+-- `/kart sfxreport` prints the NAME each cue landed on, so a bad pick is
+-- visible and one click in the sound editor replaces it.
+-- ---------------------------------------------------------------------------
+
+-- Names to refuse however well they match. These are the long entries -- music
+-- beds, ambience, voice -- and a one-shot cue that lands on a ninety-second
+-- ambience loop is worse than no sound at all, because it keeps playing after
+-- whatever caused it has been forgotten.
+local SKIP_NAME = {
+  "MUSIC", "AMBIENC", "AMB_", "LOOP", "_LP", "VO_", "SPEECH", "NARRAT",
+  "CINEMATIC", "INTRO", "GLUESCREEN", "SOUNDTRACK", "STINGER_LONG",
+}
+
+local function longWinded(name)
+  for _, bad in ipairs(SKIP_NAME) do
+    if name:find(bad, 1, true) then return true end
+  end
+  return false
+end
+
+--- Kit entries whose name contains `needle`, in id order, long ones dropped.
+local function kitMatches(needle)
+  local out = {}
+  for _, entry in ipairs(kitEntries()) do
+    if entry.name:find(needle, 1, true) and not longWinded(entry.name) then
+      out[#out + 1] = entry
+    end
+  end
+  return out
+end
+
+--- Does this cue have anything to match against on THIS client? Asked without
+--- playing anything, which is the only question that can be answered silently.
+local function hasMatch(def)
+  for _, needle in ipairs(def and def.match or {}) do
+    if #kitMatches(needle) > 0 then return true end
+  end
+  return false
+end
 
 -- What each cue settled on, once proven to actually make a noise.
 local chosen = {}
@@ -233,26 +311,47 @@ local function playCue(cue, def)
   -- played silence.
   if override then
     if emit("kit", override) then
-      chosen[cue] = { source = "kit", id = override }
+      chosen[cue] = { source = "kit", id = override, via = "override" }
       return true
     end
     if emit("file", override) then
-      chosen[cue] = { source = "file", id = override }
+      chosen[cue] = { source = "file", id = override, via = "override" }
       return true
     end
   end
 
   for _, id in ipairs(def.file or {}) do
     if emit("file", id) then
-      chosen[cue] = { source = "file", id = id }
+      chosen[cue] = { source = "file", id = id, via = "file" }
       return true
+    end
+  end
+
+  -- ASK THE CLIENT BEFORE FALLING BACK ON THE WRITTEN-DOWN NAMES. A cue that
+  -- declares `match` wants a kind of sound rather than a particular one, and
+  -- the kit list under it is the safety net for a client where nothing of that
+  -- kind exists. Searching costs nothing audible: a candidate that does not
+  -- play makes no noise, and the loop stops on the first one that does.
+  --
+  -- matchSkip exists for the two engine notes. Both want an engine, and the
+  -- crossfade between them is pointless if they resolve to the same entry, so
+  -- the high note starts one further down the list.
+  for _, needle in ipairs(def.match or {}) do
+    local hits = kitMatches(needle)
+    local from = 1 + math.min(def.matchSkip or 0, math.max(0, #hits - 1))
+    for i = from, #hits do
+      if emit("kit", hits[i].id) then
+        chosen[cue] = { source = "kit", id = hits[i].id, via = "match",
+          name = hits[i].name }
+        return true
+      end
     end
   end
 
   for _, name in ipairs(def.kit or {}) do
     local id = SOUNDKIT and SOUNDKIT[name]
     if id and emit("kit", id) then
-      chosen[cue] = { source = "kit", id = id }
+      chosen[cue] = { source = "kit", id = id, via = "kit", name = name }
       return true
     end
   end
@@ -414,11 +513,21 @@ function AK:UpdateEngine(vehicle, dt)
     if material ~= "ROAD" and material ~= "BOOST" then self:PlaySfx("surfaceEnter") end
   end
 
-  -- Written plainly: the engine is OFF unless switched on. The old double
-  -- negative (`not (engineNote ~= false)`) turned a MISSING setting into "on",
-  -- which is the opposite of the off-by-default this whole section argues for
-  -- -- it only behaved because Database.lua happens to seed the key.
-  if not AK.db.settings.engineNote then return end
+  -- THE ENGINE RUNS ONLY IF THERE IS AN ENGINE.
+  --
+  -- This was off by default and the reasoning was sound: with nothing but
+  -- interface blips to loop, an "engine" is a checkbox tick retriggered four
+  -- times a second, which is worse than silence. But that reasoning was about
+  -- the PALETTE, and the palette is no longer fixed -- engineLow and engineHigh
+  -- now ask the client for something with ENGINE, MOTOR, MACHINE or TURBINE in
+  -- its name, and a client that has one should be driving with one.
+  --
+  -- So the default flipped, and the guard moved from a preference to a fact:
+  -- if nothing engine-shaped exists in this client's kit the layer stays silent
+  -- rather than falling back on the tick. Asked without playing anything --
+  -- hasMatch only reads names -- so a silent client stays silent.
+  if AK.db.settings.engineNote == false then return end
+  if not hasMatch(CUES.engineLow) then return end
   local now = GetTime()
   if now - lastImportant < ENGINE_DUCK then return end
   if now < engineNext then return end
@@ -621,7 +730,14 @@ function AK:CueInfo(cue)
     cooldown = def.cd or DEFAULT_CD[def.pri or PRI.NORMAL],
     source = hit and hit.source or nil,
     id = hit and hit.id or nil,
+    -- WHERE it came from and WHAT IT IS CALLED. A cue that found a real
+    -- library sound by name and a cue that fell back on the interface tick
+    -- both read as "kit 1234" without these, and telling those two apart is
+    -- the whole question this pass is about.
+    via = hit and hit.via or nil,
+    name = hit and hit.name or nil,
     kit = def.kit and table.concat(def.kit, ", ") or "",
+    match = def.match and table.concat(def.match, ", ") or "",
     -- How hard this cue actually worked last race. Min-gap is what the cue is
     -- ALLOWED to do; this is what it DID, which is the number that matters when
     -- deciding whether a sample is too present. Repetition is a rate, and a
@@ -643,23 +759,25 @@ end
 --- everything that does not resolve, silent -- the scan makes noise only when it
 --- finds something, which is the moment it stops. Capped per press so a sparse
 --- stretch of ids cannot lock the client up.
---- Every SOUNDKIT entry, sorted by id. Built once.
+--- Every kit id whose NAME contains `text`, case-insensitively.
 ---
---- This is the space worth searching. FileDataIDs are sparse -- the vast
---- majority of numbers are not sounds at all -- so stepping through them is
---- hunting for needles, and every sound in this addon that has ever actually
---- worked is a SOUNDKIT id played through PlaySound. The kit table is dense,
---- every entry is real, and each one has a NAME, which turns "step a number and
---- hope" into browsing a labelled library.
-local kitList
-local function kitEntries()
-  if kitList then return kitList end
-  kitList = {}
-  for name, id in pairs(SOUNDKIT or {}) do
-    if type(id) == "number" then kitList[#kitList + 1] = { name = name, id = id } end
+--- The editor could search the FileDataID space by NUMBER and could not search
+--- the kit space by NAME -- which is backwards, because the numbers are opaque
+--- and the names are the one part of this library that says what a sound is.
+--- Looking for a crash meant scanning two hundred ids and listening to all of
+--- them; now it means typing "CRASH".
+---
+--- Long entries are kept here, unlike the automatic matcher: a player hunting
+--- for a menu bed may well want the ambience the cue resolver refuses, and the
+--- editor has a STOP SOUND button for when they do not.
+function AK:FindKitSounds(text)
+  local needle = tostring(text or ""):upper()
+  local out = {}
+  if needle == "" then return out end
+  for _, entry in ipairs(kitEntries()) do
+    if entry.name:upper():find(needle, 1, true) then out[#out + 1] = entry.id end
   end
-  table.sort(kitList, function(a, b) return a.id < b.id end)
-  return kitList
+  return out
 end
 
 --- The SOUNDKIT name for an id, when there is one.
@@ -853,7 +971,12 @@ function AK:DebugSfx()
     if override then
       what = "|cffffd100*file " .. override .. "|r"
     elseif hit and hit.source ~= "none" then
+      -- Named, and marked when the name came out of the client's own library
+      -- rather than off the written-down list. That distinction is the point of
+      -- the report: it says whether this machine gave the cue a real sound.
       what = hit.source .. " " .. hit.id
+        .. (hit.name and ("  " .. hit.name) or "")
+        .. (hit.via == "match" and "  |cff6bf06b(found)|r" or "")
     elseif hit then
       what = "|cffff5555unresolved|r"
     else

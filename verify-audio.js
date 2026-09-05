@@ -12,8 +12,11 @@
 //   node verify-audio.js              measure the current set
 //   node verify-audio.js --no-engine  measure with the engine note off
 //
-// The pass condition is a rate band, not a taste judgement: under ~1.2 sounds a
-// second overall and the race is silent; over ~7 and it is a machine gun.
+// The pass condition is a rate band, not a taste judgement, and CUES and the
+// ENGINE are banded separately -- they are not the same kind of sound. Under
+// 0.5 cues a second the race is silent and over 2.5 it is a machine gun; the
+// engine, whose whole job is to be constant, wants 1.2 to 4.5 notes a second
+// and is only measured when it is switched on.
 const fs = require("fs");
 const path = require("path");
 
@@ -208,10 +211,29 @@ for (const [cue, n] of rows) {
     per.toFixed(2).padStart(13) + "   " + (n > 1 ? (LAP / n).toFixed(2) + "s" : "--"));
 }
 
-const perSec = played / LAP;
+// THE ENGINE IS A BED, NOT A CUE, AND HAS TO BE COUNTED SEPARATELY.
+//
+// The 2.5/s ceiling below exists to catch the machine gun -- discrete blips
+// arriving faster than the ear will accept them as separate events. An engine
+// is the opposite thing: a continuous texture whose whole job is to be
+// constant, and which the ear stops hearing as individual notes at all. Adding
+// its note rate to the cue rate compares two quantities that are not the same
+// kind, and the sum then fails the moment the engine is switched on however
+// well behaved every actual cue is.
+//
+// They are measured apart. Cues get the machine-gun ceiling; the engine gets a
+// band of its own -- too slow and it is a metronome rather than a motor, too
+// fast and one-shots start stepping on each other.
+const engineCues = ["engineLow", "engineHigh"];
+const engineHeard = engineCues.reduce((n, c) => n + (counts[c] || 0), 0);
+const cueHeard = played - engineHeard;
+const perSec = cueHeard / LAP;
+const enginePerSec = engineHeard / LAP;
 console.log("");
-console.log("  TOTAL          " + String(played).padStart(6) + perSec.toFixed(2).padStart(13) +
+console.log("  TOTAL          " + String(played).padStart(6) + (played / LAP).toFixed(2).padStart(13) +
   "   one sound every " + (LAP / played).toFixed(2) + "s");
+console.log("  of that, cues  " + String(cueHeard).padStart(6) + perSec.toFixed(2).padStart(13) +
+  "   engine bed " + enginePerSec.toFixed(2) + "/s");
 console.log("");
 
 // Unwired cues are reported but never failed -- plenty exist for the results
@@ -227,7 +249,14 @@ check(perSec >= 0.5, "the race makes a noise at all (" + perSec.toFixed(2) + "/s
 // 7.0 was far too generous. A UI blip every quarter second is a machine gun
 // whatever the rate curve says, and the ceiling has to reflect the palette we
 // actually have rather than the one an engine loop would give us.
-check(perSec <= 2.5, "not a machine gun (" + perSec.toFixed(2) + "/s, want <= 2.5)");
+check(perSec <= 2.5, "not a machine gun (" + perSec.toFixed(2) + "/s of cues, want <= 2.5)");
+// Only meaningful when the engine is actually running; with it off this is 0
+// and the band does not apply.
+if (engineHeard > 0) {
+  check(enginePerSec >= 1.2 && enginePerSec <= 4.5,
+    "the engine reads as a motor, not a metronome (" + enginePerSec.toFixed(2)
+    + "/s, want 1.2-4.5)");
+}
 console.log("        of which " + rivalHeard + " came from the other seven karts ("
   + (rivalHeard / LAP).toFixed(2) + "/s)"
   + (CROWD_GATE ? "" : "   [--no-crowd-gate: every rival, wherever they are]"));
@@ -259,12 +288,25 @@ check(!worst || worst[1] / LAP <= 1.2,
     SRC.indexOf("\n}\n", SRC.indexOf("local CUES = {")));
   const leads = { race: {}, menu: {} };
   let parsed = 0;
-  for (const m of table.matchAll(/^\s{2}(\w+)\s*=\s*\{([^}]*kit = \{ ([^}]*) \}[^}]*)/gm)) {
-    const names = [...m[3].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
-    if (!names.length) continue;
+  // A cue may now declare `match` -- substrings looked up in the client's own
+  // SOUNDKIT names -- before its written-down kit list, and whatever it leads
+  // with is what the player will actually hear. Matching only the kit list
+  // stopped at the match list's closing brace and silently dropped every cue
+  // that had one, which is the majority of the physical ones.
+  for (const m of table.matchAll(/^\s{2}(\w+)\s*=\s*\{(.*)$/gm)) {
+    const rest = m[2];
+    const kitList = (rest.match(/kit = \{ ([^}]*) \}/) || [])[1] || "";
+    const matchList = (rest.match(/match = \{ ([^}]*) \}/) || [])[1] || "";
+    const kitNames = [...kitList.matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+    const matchNames = [...matchList.matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+    if (!kitNames.length) continue;
     parsed++;
-    const space = /menu = true/.test(m[2]) ? "menu" : "race";
-    (leads[space][names[0]] = leads[space][names[0]] || []).push(m[1]);
+    const space = /menu = true/.test(rest) ? "menu" : "race";
+    // The EFFECTIVE lead. A cue with a match list reaches the kit list only on
+    // a client that has nothing of that kind, so the match is what it leads
+    // with -- and two cues hunting the same word land on the same id.
+    const lead = matchNames[0] || kitNames[0];
+    (leads[space][lead] = leads[space][lead] || []).push(m[1]);
   }
   check(parsed > 30, "the cue table parsed (" + parsed + " cues)");
   const clashes = [];

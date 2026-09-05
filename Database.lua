@@ -2,7 +2,7 @@ local _, AK = ...
 
 local defaults = {
   settings = {
-    uiScale = 1, sfx = true, engineNote = false, reducedEffects = false, difficulty = "Normal",
+    uiScale = 1, sfx = true, engineNote = true, reducedEffects = false, difficulty = "Normal",
     aiCount = 7, showSpeed = true, showMinimap = true,
     engineClass = "150cc", mirror = false,
     -- DEVELOPER TOOLS. Off, and off is the shipped game: the pause menu is
@@ -50,9 +50,18 @@ end
 --
 -- The engine note shipped ON for one build. Measured, it was a click every
 -- quarter second, and every player who raced during that build would have kept
--- it for good -- the fix would have looked like it simply did not work.
-local SETTINGS_REV = 1
-local FORCED = { engineNote = false }
+-- it for good -- the fix would have looked like it simply did not work. So
+-- revision 1 forced it back off for everybody who had raced.
+--
+-- Revision 2 turns it back on, because the reason it was bad has gone: the
+-- engine no longer loops an interface tick. engineLow and engineHigh ask the
+-- client's own SOUNDKIT table for something named like an engine, and Audio.lua
+-- keeps the whole layer silent on a client where nothing of the sort exists --
+-- so ON now means "an engine if this machine has one", not "a click either
+-- way". Anyone who turned it off during the bad build had no reason to look at
+-- it again, and would never hear the difference.
+local SETTINGS_REV = 2
+local FORCED = { engineNote = true }
 
 function AK:InitDatabase()
   AzerothKartDB = AzerothKartDB or {}

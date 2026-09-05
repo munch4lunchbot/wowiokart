@@ -215,10 +215,25 @@ function widget:GetNumPoints() return 0 end
 function widget:GetPoint() return "CENTER", nil, "CENTER", 0, 0 end
 --- FrizQt's average uppercase advance is about 0.62 of the point size; see the
 --- CELL note in Art/hud-font.js, which is calibrated against the real thing.
-function widget:GetStringWidth()
-  return #tostring(self.akText or "") * (self.akFontSize or 12) * 0.62
+--- A NEWLINE ENDS A LINE, and a FontString is only as wide as its widest one.
+--- Measuring the whole string as one run made a two-line caption 866px wide --
+--- wider than the window it sits in -- and every control placed to its right
+--- was then reported as printing through it. The bug was in the ruler.
+local function longestLine(text)
+  local widest = 0
+  for line in (tostring(text) .. "\n"):gmatch("([^\n]*)\n") do
+    if #line > widest then widest = #line end
+  end
+  return widest
 end
-function widget:GetStringHeight() return 12 end
+function widget:GetStringWidth()
+  return longestLine(self.akText or "") * (self.akFontSize or 12) * 0.62
+end
+function widget:GetStringHeight()
+  local lines = 1
+  for _ in tostring(self.akText or ""):gmatch("\n") do lines = lines + 1 end
+  return 12 * lines
+end
 function widget:GetScale() return 1 end
 function widget:GetAlpha() return self.akAlpha or 1 end
 function widget:SetAlpha(a) self.akAlpha = a return self end
@@ -259,7 +274,29 @@ function CreateFrame(kind, name, parent, template)
 end
 UISpecialFrames = {}
 STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
-SOUNDKIT = setmetatable({}, { __index = function() return 1 end })
+-- A SOUND LIBRARY WITH SOMETHING IN IT.
+--
+-- This was an empty table with an __index that answered 1 to any name, which
+-- made every SOUNDKIT lookup succeed and every ENUMERATION of the table come
+-- back empty. That is fine for "does the cue resolve" and useless for the
+-- question this pass is actually about -- Audio.lua now searches the client's
+-- own sound NAMES for a cue's match list, and a client with no names is a
+-- client where that code never runs.
+--
+-- So the stub carries a small library shaped like a real one: interface ticks,
+-- a few physical sounds worth finding, and the long entries a one-shot cue must
+-- refuse. The __index stays, so a name written down in the cue table still
+-- resolves the way it did.
+SOUNDKIT = setmetatable({
+  IG_MAINMENU_OPTION = 88, IG_CHARACTER_INFO_TAB = 89, UI_PVP_KILLBLOW = 90,
+  IG_ABILITY_ICON_DROP = 91, IG_MAINMENU_CLOSE = 92,
+  SPELL_FIRE_IMPACT = 1201, ROCK_CRASH_LARGE = 1202, GRAVEL_SCRAPE = 1203,
+  VEHICLE_ENGINE_START = 1204, VEHICLE_ENGINE_IDLE = 1205, TURBINE_SPIN = 1206,
+  THUNDER_CRACK = 1207, ARROW_WHOOSH = 1208,
+  -- Refused however well they match: a cue that lands on one of these keeps
+  -- playing long after the thing that caused it is over.
+  AMB_FOREST_DAY = 1301, MUSIC_TAVERN_01 = 1302, ENGINE_ROOM_LOOP = 1303,
+}, { __index = function() return 1 end })
 function PlaySound() return true, 1 end
 function PlaySoundFile() return true, 0 end
 function StopSound() end
@@ -1215,7 +1252,16 @@ if loadFailures == 0 then
           for _ in text:gmatch("\n") do lines = lines + 1 end
           return w.akWidth, lines * size * 1.2
         end
-        return run, size * 1.2
+        -- AND A NEWLINE IS A LINE BREAK EVEN WITHOUT A WIDTH. Same fault, other
+        -- branch: a two-line caption with no SetWidth measured as one 127
+        -- character run -- 866px, wider than the window -- and reported every
+        -- control placed to its right as printing through it.
+        local widest, lines = 0, 0
+        for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+          if #line > widest then widest = #line end
+          lines = lines + 1
+        end
+        return widest * size * 0.62, math.max(1, lines) * size * 1.2
       end
     end
 
@@ -1351,6 +1397,38 @@ if loadFailures == 0 then
     if AK.npcPreview then AK.npcPreview:Hide() end
     AK.Debug.frame:Hide()
     assert(#hits == 0, #hits .. " controls are misplaced")
+  end)
+
+  -- THE CUES THAT ASK FOR A KIND OF SOUND HAVE TO GET ONE.
+  --
+  -- Four rounds of sound work were spent rearranging SOUNDKIT names, and the
+  -- report each time was that nothing had changed -- correctly, because a name
+  -- written down from memory that is not in the client's table resolves to nil
+  -- and falls silently through to the interface tick at the end of the list.
+  -- The whole set kept collapsing back onto clicks and there was no way to see
+  -- it happening.
+  --
+  -- So the physical cues now describe what they want and the client answers out
+  -- of its own library. This is the check that the answering works: that a hit
+  -- is taken over the written-down fallback, that the long entries are refused,
+  -- and that the two engine notes do not land on the same sound -- a crossfade
+  -- between one sample and itself is a repeat.
+  ok("a cue takes a real sound over the interface tick", function()
+    for _, cue in ipairs({ "landing", "collision", "engineLow", "engineHigh" }) do
+      AK:PreviewCue(cue)
+      local info = AK:CueInfo(cue)
+      assert(info.via == "match",
+        cue .. " fell back to " .. tostring(info.name or info.id))
+      assert(not info.name:find("AMB_") and not info.name:find("MUSIC")
+        and not info.name:find("LOOP"),
+        cue .. " landed on the long entry " .. info.name)
+    end
+    local low, high = AK:CueInfo("engineLow"), AK:CueInfo("engineHigh")
+    assert(low.id ~= high.id,
+      "both engine notes are " .. tostring(low.name))
+    say(("        landing=%s  collision=%s  engine=%s/%s"):format(
+      AK:CueInfo("landing").name, AK:CueInfo("collision").name,
+      low.name, high.name))
   end)
 
   -- A PACKET HAS TO SURVIVE THE ROUND TRIP.

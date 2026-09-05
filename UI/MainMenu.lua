@@ -1658,7 +1658,7 @@ local SETTING_GROUPS = {
         blurb = "Item hits, boosts, the countdown and the flag.",
         choices = { { value = false, label = "OFF" }, { value = true, label = "ON" } } },
       { key = "engineNote", name = "Engine note",
-        blurb = "A revving tone tied to your speed. Repetitive by nature -- off by default.",
+        blurb = "A rev that follows your speed. Silent on clients with no engine sound to use.",
         choices = { { value = false, label = "OFF" }, { value = true, label = "ON" } } },
     },
   },
@@ -1698,7 +1698,7 @@ local SETTING_GROUPS = {
 
 local SETTING_DEFAULTS = {
   engineClass = "150cc", difficulty = "Normal", aiCount = 7, mirror = false,
-  sfx = true, engineNote = false,
+  sfx = true, engineNote = true,
   reducedEffects = false, showSpeed = true, showMinimap = true, uiScale = 1,
   roadDetail = "Balanced", showControls = false, debug = false,
 }
