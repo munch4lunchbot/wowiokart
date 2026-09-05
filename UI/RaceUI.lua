@@ -35,6 +35,9 @@ local FORK_NOTICE = 200
 --- longer notice would simply be on screen for the whole shortcut.
 local REJOIN_NOTICE = 130
 local REJOIN_DRAW = 150
+-- How far the camera climbs at the top of a launch, in metres. The sprite's own
+-- hop is small; this is what makes the world drop away.
+local JUMP_CAMERA = 3.4
 local TUNNEL_HEIGHT = 7.5        -- metres from road to tunnel ceiling
 local TUNNEL_TILE = 5.0          -- metres per repeat of the rock texture
 local PROPS = 54                 -- roadside scenery frames in flight at once
@@ -100,9 +103,71 @@ local GRASS_MEAN = 0.80
 --- an interference pattern rather than as a surface. See the note in the strip
 --- loop -- this is what caps the tiling on a distant strip.
 local MIN_TEXEL = 18
+
+-- HOW MUCH OF A REPEATING PATTERN SURVIVES AT THIS DISTANCE.
+--
+-- Every periodic thing on the road plane is sampled ONCE PER STRIP: the
+-- light/dark paving bands, the red-and-white kerb, the dashed centre line, a
+-- ramp's hazard stripes. Near the camera a stripe spans several strips and the
+-- pattern comes out faithfully. Far away one strip spans several whole stripes,
+-- so which phase it lands on is decided by where that single sample happened to
+-- fall -- and that moves every frame you drive. Measured off a recording of the
+-- Deadmines run, the far road's mean brightness swung forty values in one frame
+-- and thirty back in the next. That is the "strobey" in the report: not a
+-- flicker in the lighting, an ALIAS of the paint.
+--
+-- Which makes it the mip-map argument, and mip-mapping's answer applies: a
+-- pattern finer than the sampling rate has to fade to its own average, because
+-- the average is the only honest thing left to draw. A red-and-white kerb two
+-- hundred metres away IS a pink line.
+--
+-- The measure is the strip's own extent IN METRES OF TRACK, not its height on
+-- screen. Those are wildly different things here: the road is sampled uniformly
+-- in 1/z, which is a singularity at the horizon, so the last strip of the near
+-- band spans FIFTY-FOUR METRES of road in five pixels -- twelve whole paving
+-- stripes in one sample -- and the tail strips beyond it are nine and a half
+-- metres each against a 4.5m stripe. Screen height says those strips are fine.
+-- Track extent says they cannot possibly resolve the pattern, which is the
+-- question actually being asked.
+--
+-- Returns 1 while a period is comfortably longer than the strip that samples
+-- it, and eases to 0 as the two converge.
+local STRIPE_RESOLVE = 2.6
+local function stripeFade(period, dzSpan)
+  return AK.Math.Clamp((period / math.max(0.01, dzSpan) - 1) / STRIPE_RESOLVE, 0, 1)
+end
+
+-- A LINE THINNER THAN A PIXEL MUST NOT BE DRAWN AT FULL STRENGTH.
+--
+-- Differencing two consecutive frames of a real run, the brightest thing on
+-- screen by a wide margin was the kerb -- then the marker posts, then the lane
+-- dashes. All three are thin, bright and clamped to a one-pixel minimum, so out
+-- where their true width falls under a pixel they are drawn at full strength
+-- wherever the rounding happens to put them, and jump a whole pixel between
+-- frames. That is the other half of "strobey", and it is the oldest trick in
+-- rasterisation to fix: keep the minimum width, and give back in ALPHA exactly
+-- what was taken in width, so the line's total ink stays what the geometry
+-- asked for and it fades out instead of flickering.
+local THIN_PIXELS = 1.6
+local function thinLine(width)
+  if width >= THIN_PIXELS then return width, 1 end
+  return THIN_PIXELS, math.max(0, width) / THIN_PIXELS
+end
+
+--- Ease a colour toward the average it shares with its opposite number, by
+--- `keep`. At keep = 1 the colour is itself; at 0 both halves of the pattern
+--- land on the same value and there is nothing left to alias.
+local function towardMean(r, g, b, r2, g2, b2, keep)
+  local mr, mg, mb = (r + r2) * 0.5, (g + g2) * 0.5, (b + b2) * 0.5
+  return mr + (r - mr) * keep, mg + (g - mg) * keep, mb + (b - mb) * keep
+end
 local BOOST_FOV = 0.075
 local SPECTATOR_SPACING = 42
 local SPECTATOR_SLOTS = 6
+-- Metres of clear ground between the edge of the tarmac and a spectator. A
+-- model is drawn about its own centre and is roughly a metre and a half across,
+-- so anything under about two puts an elbow over the kerb.
+local CROWD_CLEAR = 2.6
 --- What the crowd is doing. Resolved lazily -- Constants and Data\Models load
 --- before this file, but reading them at the top of it is still an ordering
 --- dependency nobody should have to remember when moving a file in the .toc.
@@ -918,10 +983,13 @@ function RaceUI:Build()
   --
   -- Two textures meeting at the horizon fade to nothing at BOTH outer edges,
   -- which is what atmosphere actually does.
+  -- Built white; the track's palette tints them and RE-APPLIES the gradient,
+  -- because SetVertexColor and SetGradient are the same state and the second
+  -- one to run wins. See the note where the palette is applied.
   self.hazeBelow = makeTexture(frame, "BORDER", { 1, 1, 1, .32 }, 3)
-  applyGradient(self.hazeBelow, "VERTICAL", 1, 1, 1, 0, 1, 1, 1, .5)
+  applyGradient(self.hazeBelow, "VERTICAL", 1, 1, 1, 0, 1, 1, 1, .3)
   self.hazeAbove = makeTexture(frame, "BORDER", { 1, 1, 1, .32 }, 3)
-  applyGradient(self.hazeAbove, "VERTICAL", 1, 1, 1, .5, 1, 1, 1, 0)
+  applyGradient(self.hazeAbove, "VERTICAL", 1, 1, 1, .3, 1, 1, 1, 0)
 
   -- One strip of textures per road segment, reused every frame.
   -- Built far-to-near: textures in the same layer draw in creation order, and
@@ -3051,8 +3119,23 @@ function RaceUI:RenderSky(race, camX)
 
   -- Enough haze to soften the horizon seam. Too little and ground meets sky on
   -- a hard cut line, which is the strongest "flat 2D" tell in the scene.
-  self.hazeBelow:SetVertexColor(glow[1] * .8, glow[2] * .8, glow[3] * .85, .30)
-  self.hazeAbove:SetVertexColor(glow[1] * .8, glow[2] * .8, glow[3] * .85, .30)
+  --
+  -- SetVertexColor WIPES THE GRADIENT. They are the same per-vertex state, so
+  -- tinting these two here -- which is what the last three lines used to do --
+  -- threw away the fade-to-nothing built onto them at construction and left a
+  -- FLAT translucent slab seventeen per cent of the screen tall, with hard
+  -- edges, laid exactly across the horizon. Photographed off a Deadmines run it
+  -- is a lavender band ruled over the far field, the walls and the sky
+  -- together: the very thing the gradient exists to prevent, and a good part of
+  -- "hard to see in the distance".
+  --
+  -- The colour goes on first so a client without SetGradient still gets a tint,
+  -- and the gradient goes on second carrying the same colour and the fade.
+  local hr, hg, hb = glow[1] * .8, glow[2] * .8, glow[3] * .85
+  self.hazeBelow:SetVertexColor(hr, hg, hb, .30)
+  applyGradient(self.hazeBelow, "VERTICAL", hr, hg, hb, 0, hr, hg, hb, .30)
+  self.hazeAbove:SetVertexColor(hr, hg, hb, .30)
+  applyGradient(self.hazeAbove, "VERTICAL", hr, hg, hb, .30, hr, hg, hb, 0)
   -- Aerial perspective on the ground itself: sky-tinted and pale at the
   -- horizon, full colour at the bottom edge. A flat fill was the single
   -- biggest "the world is a sheet" tell in every screenshot.
@@ -3158,7 +3241,10 @@ function RaceUI:RenderPosts(race, camX, camZ)
       local worldX, worldY = self:RoadAt(self.route or race.track, segZ)
       local x, y, pixelsPerMetre = self:Project(dz, worldX, camX, worldY)
       local halfWidthPixels = pixelsPerMetre * tuning.roadHalf * AK.Math.RoadWidth(self.route or race.track, segZ)
-      local width = math.max(1, pixelsPerMetre * 0.18)
+      -- Posts are the second-brightest flicker in a frame difference: a
+      -- one-pixel white bar, redrawn a whole pixel left or right every frame
+      -- once its true width drops under one. See thinLine.
+      local width, thin = thinLine(pixelsPerMetre * 0.18)
       local height = math.max(2, pixelsPerMetre * 1.15)
       local fog = AK.Math.Clamp(1 - (dz / HAZE_Z) * tuning.fogStrength, 0.22, 1)
       -- Alternating colour so the posts strobe past rather than blur together.
@@ -3176,13 +3262,13 @@ function RaceUI:RenderPosts(race, camX, camZ)
       pair.left:SetSize(width, height)
       pair.left:SetVertexColor(self:Aerial(r, g, b, fog, dz))
       local near = self:DepthFade(dz, postFar)
-      pair.left:SetAlpha(near * self:EdgeFade(x - offset, dz))
+      pair.left:SetAlpha(near * thin * self:EdgeFade(x - offset, dz))
       setShown(pair.left, true)
       pair.right:ClearAllPoints()
       pair.right:SetPoint("BOTTOM", self.frame, "CENTER", x + offset, y)
       pair.right:SetSize(width, height)
       pair.right:SetVertexColor(self:Aerial(r, g, b, fog, dz))
-      pair.right:SetAlpha(near * self:EdgeFade(x + offset, dz))
+      pair.right:SetAlpha(near * thin * self:EdgeFade(x + offset, dz))
       setShown(pair.right, true)
     else
       setShown(pair.left, false)
@@ -3312,11 +3398,35 @@ function RaceUI:RenderSpectators(race, camX, camZ)
     local index = first + slot - 1
     local dz = index * SPECTATOR_SPACING - camZ
     if dz > 4 and dz < crowdFar then
-      local side = (index % 2 == 0) and -1 or 1
-      local lateral = side * (tuning.roadHalf + 1.8 + ((index * 37) % 20) * 0.06)
-      local baseX, worldY = self:RoadAt(self.route or race.track, index * SPECTATOR_SPACING)
+      local route = self.route or race.track
+      local postZ = index * SPECTATOR_SPACING
+      -- OFF THE ROAD, WHICH IS NOT A CONSTANT WIDTH.
+      --
+      -- The offset was roadHalf plus 1.8m -- the NOMINAL half-width, ignoring
+      -- the width multiplier every circuit varies along its length. Elwynn's
+      -- ramp is 1.22 and Deadmines' gallery is wide too, so on exactly the
+      -- sections a crowd is worth having the tarmac reached 8.5m and the
+      -- spectators stood at 8.8: on the kerb, and with the model drawn about
+      -- its own centre, half of them overhanging the racing line. In the video
+      -- there is a tauren standing on the road.
+      --
+      -- Measured against the road's ACTUAL half-width here, with enough
+      -- clearance for the body -- and the jitter pushes further out, never in.
+      local roadEdge = tuning.roadHalf * AK.Math.RoadWidth(route, postZ)
+      -- Clusters rather than a metronome. Strict alternation put one on each
+      -- side every forty-two metres for the whole lap, which reads as fence
+      -- posts; a hash gives runs of two and three on the same side.
+      -- No division in here on purpose: check.js treats a local computed with
+      -- one as world-locked, and `side` is read again by the fork sign's
+      -- texcoords further down, where that would read as a tiling bug.
+      local side = ((index * 3) % 7 < 3) and -1 or 1
+      local lateral = side * (roadEdge + CROWD_CLEAR + ((index * 37) % 23) * 0.11)
+      local baseX, worldY = self:RoadAt(route, postZ)
       local x, y, pixelsPerMetre = self:Project(dz, baseX + lateral, camX, worldY)
-      local size = AK.Math.Clamp(pixelsPerMetre * tuning.specScale, 14, 300)
+      -- A crowd is not one height. Same person, different build, decided by
+      -- the post so a given spot is always the same on every lap.
+      local build = 0.86 + ((index * 53) % 29) * 0.011
+      local size = AK.Math.Clamp(pixelsPerMetre * tuning.specScale * build, 14, 300)
       seat:ClearAllPoints()
       -- Anchored by CENTRE: a model renders about its own origin, so anchoring
       -- the frame's bottom to the road buries the lower half of the body.
@@ -3326,7 +3436,9 @@ function RaceUI:RenderSpectators(race, camX, camZ)
       seat:SetAlpha(self:DepthFade(dz, crowdFar) * self:EdgeFade(x, dz))
       seat.model.akZoom = tuning.specZoom / math.max(0.01, tuning.modelZoom)
       AK.Model:Reframe(seat.model)
-      seat.model:SetFacing(side > 0 and -1.35 or 1.35)
+      -- Turned toward the road, but not all to exactly the same degree.
+      seat.model:SetFacing((side > 0 and -1.35 or 1.35)
+        + (((index * 31) % 17) - 8) * 0.035)
       -- One of four things, decided by WHERE this post is rather than by which
       -- seat frame happens to be drawing it, so a given spot on the road always
       -- has the same person doing the same thing however you approach it.
@@ -3995,9 +4107,30 @@ function RaceUI:RenderRoad(race, player)
   self.camLateralValue =
     AK.Math.Clamp(followed, targetLateral - lagLimit, targetLateral + lagLimit)
   local camX = self.camLateralValue * roadHalf
+  -- THE CAMERA GOES UP WITH YOU.
+  --
+  -- A jump used to be one thing: the kart sprite translating up the screen by
+  -- 2.1 of its own widths. Its own width is enormous in the near field, so at
+  -- 1440p that is most of the screen -- filmed on the Deadmines ramp the kart
+  -- leaves the top of the frame entirely and the JUMP! banner is left pointing
+  -- at empty sky. It does not read as height, it reads as the kart falling out
+  -- of the picture.
+  --
+  -- What a jump looks like is the WORLD dropping away. The camera climbs the
+  -- same arc, so the road recedes, the horizon falls, and the kart stays framed
+  -- where the player can see what it is doing. The sprite's own hop is cut to
+  -- match (see the airRise note in RenderKarts) -- between the two you get the
+  -- height without losing the kart.
+  local airLift = 0
+  local flying = race and race.player
+  if flying and (flying.air or 0) > 0 then
+    local t = 1 - flying.air / math.max(0.01, flying.airMax or 1)
+    airLift = math.sin(t * math.pi) * JUMP_CAMERA
+  end
   -- The camera rides above the road beneath it, so it crests and dips with the
   -- terrain instead of flying level through hills.
-  self.camWorldY = AK.Math.RoadHeight(track, camZ) + tuning.camHeight - (feel.dip or 0)
+  self.camWorldY = AK.Math.RoadHeight(track, camZ) + tuning.camHeight
+    - (feel.dip or 0) + airLift
   local roadColor = track.road or { .34, .34, .38 }
   local grassColor = track.color or { .16, .40, .18 }
   local light = (self.light or 1) * tuning.nightBoost
@@ -4207,6 +4340,10 @@ function RaceUI:RenderRoad(race, player)
       -- rather than sitting still relative to the player.
       local index = math.floor(segZ / STRIPE_LENGTH)
       local dark = (index % 2 == 0)
+      -- How much of the paving/kerb pattern this strip can still resolve. See
+      -- stripeFade: below 1 the pattern is finer than the sampling and every
+      -- periodic thing on this strip has to ease toward its own average.
+      local stripe = stripeFade(STRIPE_LENGTH, segZ - previousZ)
       -- Launch ramps get their own surface. Without this the road just tilted
       -- slightly and you took off with nothing on screen explaining why.
       -- The ramp, and HOW FAR ALONG IT this strip is. The lip -- the last two
@@ -4305,7 +4442,7 @@ function RaceUI:RenderRoad(race, player)
           GRASS_MEAN * light, mix))
       else
         strip.grass:SetVertexColor(aerial(vergeColor[1], vergeColor[2], vergeColor[3],
-          (dark and tuning.grassContrast or 1.0) * light, mix))
+          (dark and (1 - (1 - tuning.grassContrast) * stripe) or 1.0) * light, mix))
       end
       setShown(strip.grass, true)
 
@@ -4325,9 +4462,12 @@ function RaceUI:RenderRoad(race, player)
         -- the one paint scheme that survives being forty metres away, half a
         -- pixel tall and washed toward the horizon, and it is what a launch
         -- ramp is painted in everywhere outside this game.
+        -- 2.4m bands, so they alias sooner than the paving does -- and a ramp
+        -- is most of what you are looking at on the approach. Same easing.
+        local rampStripe = stripeFade(2.4, segZ - previousZ)
         local band = (math.floor(segZ / 2.4) % 2 == 0)
-        local cr, cg, cb = 1.00, 0.78, 0.10
-        if not band then cr, cg, cb = 0.13, 0.10, 0.06 end
+        local cr, cg, cb = towardMean(1.00, 0.78, 0.10, 0.22, 0.16, 0.07, rampStripe)
+        if not band then cr, cg, cb = towardMean(0.22, 0.16, 0.07, 1.00, 0.78, 0.10, rampStripe) end
         -- The lip. Two metres of white, so the exact moment you leave the
         -- ground is a line you can aim at rather than something that happens.
         if toLip and toLip < 2.2 then cr, cg, cb = 1.00, 0.97, 0.88 end
@@ -4368,7 +4508,7 @@ function RaceUI:RenderRoad(race, player)
         -- A strip that has dropped its texture carries the file's mean instead,
         -- so the surface does not brighten as it crosses over.
         strip.road:SetVertexColor(aerial(litR, litG, litB,
-          (dark and 0.96 or 1.0) * (flatRoad and ROAD_MEAN or 1), mix))
+          (dark and (1 - 0.04 * stripe) or 1.0) * (flatRoad and ROAD_MEAN or 1), mix))
       end
       setShown(strip.road, true)
 
@@ -4382,13 +4522,23 @@ function RaceUI:RenderRoad(race, player)
       -- Rumble width is capped: proportional-only made the near strips into
       -- enormous red slabs across the bottom of the screen.
       local rumbleWidth = AK.Math.Clamp(midHalf * (self.style == "oribos" and 0.055 or 0.05), 1, 20)
-      local rr, rg, rb = .82, .22, .18
-      if dark then rr, rg, rb = .95, .95, .96 end
+      -- THE KERB IS THE WORST OF THE ALIASING, because it is the highest
+      -- contrast pattern in the frame: saturated red against near-white, on a
+      -- line one strip wide. Out where a strip spans several stripes it was
+      -- picking one of the two at random every frame -- two flickering rails
+      -- either side of the far road. Eased to the pink they average to, which
+      -- is what a red-and-white kerb looks like from two hundred metres.
+      local rr, rg, rb = towardMean(.82, .22, .18, .95, .95, .96, stripe)
+      if dark then rr, rg, rb = towardMean(.95, .95, .96, .82, .22, .18, stripe) end
       if self.style == "oribos" then
         -- Anima light pulsing along the verge, travelling with the stripes.
-        local pulse = 0.55 + 0.45 * math.sin(segZ * 0.28 - race.elapsed * 5)
-        rr, rg, rb = 0.30 * pulse, 0.82 * pulse, 1.00 * pulse
-        if dark then rr, rg, rb = 1.00 * pulse, 0.72 * pulse, 0.28 * pulse end
+        -- The pulse has a 22m period, so it aliases on the same terms; its
+        -- DEPTH fades rather than its colour, leaving a steady light.
+        local depth = 0.45 * stripeFade(22, segZ - previousZ)
+        local pulse = (1 - depth) + depth * math.sin(segZ * 0.28 - race.elapsed * 5)
+        rr, rg, rb = towardMean(0.30, 0.82, 1.00, 1.00, 0.72, 0.28, stripe)
+        if dark then rr, rg, rb = towardMean(1.00, 0.72, 0.28, 0.30, 0.82, 1.00, stripe) end
+        rr, rg, rb = rr * pulse, rg * pulse, rb * pulse
       end
       if onRamp then
         -- Blazing rails either side of the launch, so it reads from far off.
@@ -4413,6 +4563,10 @@ function RaceUI:RenderRoad(race, player)
       -- lateral travel, which is precisely how far the narrow road quad above
       -- can fall short of that edge. See the quad note: one error, one thing
       -- covering it.
+      -- Sub-pixel kerbs fade rather than flicker -- see thinLine. The alpha is
+      -- applied to both sides, since they are the same width by construction.
+      local kerbShown, kerbAlpha = thinLine(rumbleWidth)
+      rumbleWidth = kerbShown
       local nearLeft, farLeft = previousX - previousW, x - halfWidthPixels
       local nearRight, farRight = previousX + previousW, x + halfWidthPixels
       if not quadNarrow then
@@ -4420,26 +4574,35 @@ function RaceUI:RenderRoad(race, player)
         nearRight, farRight = quadHi, quadHi
       end
       local travelLeft = math.abs(farLeft - nearLeft)
-      strip.rumbleLeft:SetVertexColor(rr, rg, rb, 1)
+      strip.rumbleLeft:SetVertexColor(rr, rg, rb, kerbAlpha)
       setEdge(strip.rumbleLeft, self.frame,
         nearLeft + (travelLeft - rumbleWidth) * 0.5, previousY,
         farLeft + (travelLeft - rumbleWidth) * 0.5, y,
         rumbleWidth + travelLeft)
       setShown(strip.rumbleLeft, true)
       local travelRight = math.abs(farRight - nearRight)
-      strip.rumbleRight:SetVertexColor(rr, rg, rb, 1)
+      strip.rumbleRight:SetVertexColor(rr, rg, rb, kerbAlpha)
       setEdge(strip.rumbleRight, self.frame,
         nearRight - (travelRight - rumbleWidth) * 0.5, previousY,
         farRight - (travelRight - rumbleWidth) * 0.5, y,
         rumbleWidth + travelRight)
       setShown(strip.rumbleRight, true)
 
-      if index % 4 < 2 and midHalf > 6 then
+      -- THE DASHES MERGE INTO A LINE rather than flickering on and off. Their
+      -- period is four stripes -- eighteen metres -- so past the resolve limit
+      -- whether a strip lands on a dash or a gap is a coin toss per frame. Far
+      -- enough away a dashed line IS a faint continuous one, at its own duty
+      -- cycle, which is both what it looks like and the only stable thing to
+      -- draw.
+      local laneFade = stripeFade(STRIPE_LENGTH * 4, segZ - previousZ)
+      local laneAlpha = 0.75 * ((index % 4 < 2) and laneFade or 0)
+        + 0.75 * 0.5 * (1 - laneFade)
+      if laneAlpha > 0.03 and midHalf > 6 then
         -- Also a diagonal. It is thinner than the kerb, so on a bend it came
         -- apart into a dotted line even sooner.
-        local laneWidth = AK.Math.Clamp(midHalf * 0.04, 1, 14)
+        local laneWidth, laneThin = thinLine(AK.Math.Clamp(midHalf * 0.04, 0.2, 14))
         local lr, lg, lb = aerial(.96, .95, .82, roadLight, mix)
-        strip.lane:SetVertexColor(lr, lg, lb, .75)
+        strip.lane:SetVertexColor(lr, lg, lb, laneAlpha * laneThin)
         local laneNear, laneFar = previousX, x
         if not quadNarrow then laneNear, laneFar = midX, midX end
         setEdge(strip.lane, self.frame, laneNear, previousY, laneFar, y, laneWidth)
@@ -4479,7 +4642,24 @@ function RaceUI:RenderRoad(race, player)
         -- around it.
         local tint = self.rockTint or { 1, 1, 1 }
         local rock = wallLight(self.roadColour or { .5, .5, .5 }, roadLight, tint, coverage)
-        local vNear, vFar = previousZ / TUNNEL_TILE, segZ / TUNNEL_TILE
+        -- A WALL'S TEXTURE RUNS UP IT, NOT ALONG THE TRACK.
+        --
+        -- V was previousZ..segZ over TUNNEL_TILE -- the strip's own slice of
+        -- track distance. On a near strip that is half a metre out of a
+        -- five-metre repeat, so a wall four hundred pixels tall was drawn from
+        -- a tenth of one texture row: every slab came out as a single smear of
+        -- vertical streaks, and the tunnel read as a beige curtain rather than
+        -- as rock. Photographed on the Deadmines run it is the most obviously
+        -- wrong surface in the game.
+        --
+        -- A wall is a vertical face. Its V axis is HEIGHT -- one repeat every
+        -- TUNNEL_TILE metres up the rock, so the grain is the size it should be
+        -- and every slab shows a whole texture rather than one row of it. The
+        -- U axis carries the travel instead: the span is fixed so the number of
+        -- repeats across a slab cannot change, and the offset slides with
+        -- distance so the rock still streams past you.
+        local vNear, vFar = 0, TUNNEL_HEIGHT / TUNNEL_TILE
+        local uSlide = segZ / TUNNEL_TILE
 
         -- Standing on the NARROW quad's edge, not the average -- see the note
         -- there. A wall pinned to the average has the same staircase the road
@@ -4487,14 +4667,14 @@ function RaceUI:RenderRoad(race, player)
         -- because the wall is drawn outboard of it. Started from the narrow
         -- edge instead, the wall's own step is tucked under the kerb and what
         -- you see is the kerb's clean diagonal.
-        strip.wallLeft:SetTexCoord(0, 1.6, vNear, vFar)
+        strip.wallLeft:SetTexCoord(uSlide, uSlide + 1.6, vNear, vFar)
         strip.wallLeft:SetPoint("BOTTOM", self.frame, "CENTER",
           quadLo - wallOut * 0.5, previousY)
         strip.wallLeft:SetSize(wallOut, wallHeight)
         strip.wallLeft:SetVertexColor(rock * tint[1], rock * tint[2], rock * tint[3], 1)
         setShown(strip.wallLeft, true)
 
-        strip.wallRight:SetTexCoord(1.6, 0, vNear, vFar)
+        strip.wallRight:SetTexCoord(uSlide + 1.6, uSlide, vNear, vFar)
         strip.wallRight:SetPoint("BOTTOM", self.frame, "CENTER",
           quadHi + wallOut * 0.5, previousY)
         strip.wallRight:SetSize(wallOut, wallHeight)
@@ -4503,8 +4683,13 @@ function RaceUI:RenderRoad(race, player)
 
         -- The ceiling ribbon spans this band's ceiling up to the nearer one,
         -- exactly as the road spans this band's ground down to the nearer one.
+        -- The ceiling IS a floor seen from below, so its V does carry the
+        -- travel -- that is the one surface the old mapping was right for.
         local uCeil = tuning.roadHalf / TUNNEL_TILE
-        strip.ceiling:SetTexCoord(-uCeil, uCeil, vNear, vFar)
+        local ceilHigh = math.max(1, ceilTop - ceilY)
+        local cv0 = previousZ / TUNNEL_TILE
+        local cv1 = math.min(segZ / TUNNEL_TILE, cv0 + math.max(0.08, ceilHigh / MIN_TEXEL))
+        strip.ceiling:SetTexCoord(-uCeil, uCeil, cv0, cv1)
         strip.ceiling:SetPoint("BOTTOM", self.frame, "CENTER", quadX, ceilY)
         strip.ceiling:SetSize(math.max(2, (quadHalf + wallOut) * 2), math.max(1, ceilTop - ceilY))
         -- Overhead is darker than the walls: nothing is lighting it.
@@ -5247,7 +5432,11 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       local airRise = 0
       if air > 0 then
         local t = 1 - air / math.max(0.01, vehicle.airMax or 1)
-        bounce = bounce + math.sin(t * math.pi) * width * 2.1
+        -- 0.8, not 2.1. The camera climbs JUMP_CAMERA metres on the same arc
+        -- now, so the world drops away underneath; the sprite only has to
+        -- separate from the road, not carry the whole jump on its own. At 2.1
+        -- widths it left the top of the screen.
+        bounce = bounce + math.sin(t * math.pi) * width * 0.8
         airRise = math.cos(t * math.pi)
       end
 

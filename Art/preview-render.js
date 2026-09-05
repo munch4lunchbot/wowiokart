@@ -65,6 +65,38 @@ function edge(x0, y0, x1, y1, width, r, g, b, a = 1) {
 }
 const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
 
+/**
+ * How much of a repeating pattern survives at this distance -- the mirror of
+ * `stripeFade` in UI/RaceUI.lua. Every periodic thing on the road plane is
+ * sampled once per strip, so past the point where one period is shorter than
+ * one strip the phase is decided by where the sample lands, and that moves
+ * every frame. Measured off a recording, the far road's mean brightness swung
+ * forty values in one frame. Fading a pattern to its own average is the only
+ * stable thing left to draw.
+ */
+const STRIPE_RESOLVE = 2.6;
+function stripeFade(period, dzSpan) {
+  return clamp01((period / Math.max(0.01, dzSpan) - 1) / STRIPE_RESOLVE);
+}
+/**
+ * A line thinner than a pixel must not be drawn at full strength -- the mirror
+ * of `thinLine` in UI/RaceUI.lua. Keep the minimum width and give back in alpha
+ * exactly what was taken in width, so the ink matches the geometry and the line
+ * fades out instead of jumping a whole pixel between frames.
+ */
+const THIN_PIXELS = 1.6;
+function thinLine(width) {
+  if (width >= THIN_PIXELS) return [width, 1];
+  return [THIN_PIXELS, Math.max(0, width) / THIN_PIXELS];
+}
+/** Ease a colour toward the average it shares with its opposite number. */
+function towardMean(a, b, keep) {
+  return a.map((v, i) => {
+    const m = (v + b[i]) * 0.5;
+    return m + (v - m) * keep;
+  });
+}
+
 // ---------- TGA loading ----------
 function loadTGA(name) {
   const b = fs.readFileSync(path.join(ART, name));
@@ -517,6 +549,33 @@ ridgeLayer(tex.hills, skyline.hill, -camX * 2.0);
   }
 }
 
+// THE HORIZON HAZE, which this sheet had never drawn at all.
+//
+// Two bands straddling the horizon, fading to nothing at their outer edges, so
+// ground meets sky through air rather than on a cut line. They were invisible
+// here -- which is exactly how a bug in them survived: RaceUI tinted them with
+// SetVertexColor AFTER building the gradient, and those are the same per-vertex
+// state, so the fade was thrown away and what shipped was a FLAT translucent
+// slab seventeen per cent of the screen tall with hard edges, laid across the
+// far field. Photographed on the Deadmines run it is a lavender rectangle over
+// the road, the walls and the sky together. A mirror that does not draw a thing
+// cannot catch it being wrong.
+{
+  const hz = [track.glow[0] * .8, track.glow[1] * .8, track.glow[2] * .85];
+  const belowH = Math.round(H * 0.12), aboveH = Math.round(H * 0.05);
+  for (let y = 0; y < belowH; y++) {
+    // Zero at the top of the band, .30 at the horizon.
+    const a = 0.30 * (y / belowH);
+    const yy = horizonPx - belowH + y;
+    if (yy >= 0) for (let x = 0; x < W; x++) blend(x, yy, hz[0], hz[1], hz[2], a);
+  }
+  for (let y = 0; y < aboveH; y++) {
+    const a = 0.30 * (1 - y / aboveH);
+    const yy = horizonPx + y;
+    if (yy < H) for (let x = 0; x < W; x++) blend(x, yy, hz[0], hz[1], hz[2], a);
+  }
+}
+
 // near tree wall, scaled against the screen and tinted per track
 const spirey = track.style === "oribos" || skyline.treeArt === "shard";
 const skyArt = track.style === "oribos" ? tex.spire : (skyline.treeArt && tex[skyline.treeArt]) || tex.tree;
@@ -700,6 +759,9 @@ for (let r = rows.length - 1; r >= 0; r--) {
   const fog = clamp(1 - (row.dz / HAZE_Z) * T.fogStrength, .22, 1) * roadLight;
   const mix = hazeCap * Math.pow(clamp(row.dz / HAZE_Z, 0, 1), 0.85);
   const idx = Math.floor(row.segZ / STRIPE), dark = idx % 2 === 0;
+  // See stripeFade: below 1 the paving pattern is finer than the sampling and
+  // everything periodic on this strip eases toward its own average.
+  const stripe = stripeFade(STRIPE, row.segZ - row.prevZ);
   const rz=((row.segZ%track.length)+track.length)%track.length;
   const rampSpan = track._ramps.find(r=>rz>=r[0]&&rz<=r[1]);
   const onRamp = !!rampSpan;
@@ -733,7 +795,7 @@ for (let r = rows.length - 1; r >= 0; r--) {
       const gv0 = v0 / GRASS_TILE;
       const gv1 = Math.min(v1 / GRASS_TILE, gv0 + vSpanCap);
       blit(tex.grass, 0, yTop, W, hpx, -uG, uG, gv0, gv1,
-        aerial(verge, (dark ? T.grassContrast : 1) * roadLight, mix), 1);
+        aerial(verge, (dark ? 1 - (1 - T.grassContrast) * stripe : 1) * roadLight, mix), 1);
     }
   }
   // COVER IS DRAWN BEFORE THE ROAD, NOT AFTER IT.
@@ -755,15 +817,26 @@ for (let r = rows.length - 1; r >= 0; r--) {
     const k = wallLight(track.road || [0.4, 0.4, 0.44], tarmacLight, ROCK_TINT, row.cover);
     const tint = ROCK_TINT.map((c) => k * c);
     const ctint = [k * ROCK_TINT[0] * 0.62, k * ROCK_TINT[1] * 0.60, k * ROCK_TINT[2] * 0.58];
-    const v0 = row.prevZ / TUNNEL_TILE, v1 = row.segZ / TUNNEL_TILE;
-    blit(tex.rock, SX(row.midX - row.midHalf - wallOut), SY(row.y + wallH), wallOut, wallH,
-      0, 1.6, v0, v1, tint, 1);
-    blit(tex.rock, SX(row.midX + row.midHalf), SY(row.y + wallH), wallOut, wallH,
-      1.6, 0, v0, v1, tint, 1);
+    // A wall's texture runs UP it: V is height, U carries the travel. See the
+    // note in RenderRoad -- mapping V to the strip's own slice of track
+    // distance drew a four-hundred-pixel wall from a tenth of one texture row,
+    // which is why the tunnel was a beige curtain rather than rock.
+    const v0 = 0, v1 = TUNNEL_HEIGHT / TUNNEL_TILE;
+    const uSlide = row.segZ / TUNNEL_TILE;
+    // On the NARROW quad's edge, not the average -- see RenderRoad. A wall
+    // pinned to the average keeps the staircase the road gave up, and it is
+    // the one boundary the kerb cannot hide because the wall is outboard of it.
+    blit(tex.rock, SX(quadLo - wallOut), SY(row.y + wallH), wallOut, wallH,
+      uSlide, uSlide + 1.6, v0, v1, tint, 1);
+    blit(tex.rock, SX(quadHi), SY(row.y + wallH), wallOut, wallH,
+      uSlide + 1.6, uSlide, v0, v1, tint, 1);
     const ch = Math.max(1, ceilTop - row.ceilY);
     const uC = T.roadHalf / TUNNEL_TILE;
+    // The ceiling IS a floor seen from below, so its V does carry the travel.
+    const cv0 = row.prevZ / TUNNEL_TILE;
+    const cv1 = Math.min(row.segZ / TUNNEL_TILE, cv0 + Math.max(0.08, ch / MIN_TEXEL));
     blit(tex.rock, SX(quadLo - wallOut), SY(row.ceilY + ch),
-      (quadHalf + wallOut) * 2, ch, -uC, uC, v0, v1, ctint, 1);
+      (quadHalf + wallOut) * 2, ch, -uC, uC, cv0, cv1, ctint, 1);
   } else if (pass === 1 && onRamp) {
     // Side rails along a launch ramp. Physics:VergeHasWall walls exactly
     // tunnels and ramps, so these are the other place a barrier exists and the
@@ -807,13 +880,17 @@ for (let r = rows.length - 1; r >= 0; r--) {
     // gold tint at two brightnesses is a road that has turned mustard.
     let rampPaint = null;
     if (onRamp) {
+      // 2.4m bands alias sooner than the paving -- and a ramp is most of what
+      // you are looking at on the approach. Same easing. See stripeFade.
+      const rampStripe = stripeFade(2.4, row.segZ - row.prevZ);
       rampPaint = (Math.floor(row.segZ / 2.4) % 2 === 0)
-        ? [1.00, 0.78, 0.10] : [0.13, 0.10, 0.06];
+        ? towardMean([1.00, 0.78, 0.10], [0.22, 0.16, 0.07], rampStripe)
+        : towardMean([0.22, 0.16, 0.07], [1.00, 0.78, 0.10], rampStripe);
       if (toLip !== null && toLip < 2.2) rampPaint = [1.00, 0.97, 0.88];
     }
     const tint = rampPaint
       ? aerial(rampPaint, tarmacLight * meanFix, mix)
-      : aerial(legible(base, tarmacLight), (dark ? .96 : 1) * meanFix, mix);
+      : aerial(legible(base, tarmacLight), (dark ? 1 - 0.04 * stripe : 1) * meanFix, mix);
     if (flatRoad) {
       rect(SX(quadX - quadHalf), yTop, quadHalf * 2, hpx, ...tint, 1);
     } else {
@@ -826,12 +903,20 @@ for (let r = rows.length - 1; r >= 0; r--) {
       blit(tex.roadshade, SX(quadX - quadHalf), yTop, quadHalf * 2, hpx,
         0, 1, 0, 1, [0, 0, 0], 0.85 * (1 - mix));
   }
-  const rw = clamp(row.midHalf * (track.style === "oribos" ? .055 : .05), 1, 20);
+  const [rw, kerbAlpha] = thinLine(
+    clamp(row.midHalf * (track.style === "oribos" ? .055 : .05), 0.2, 20));
   let rr, rg, rb;
   if (track.style === "oribos") {
     const pulse = .55 + .45 * Math.sin(row.segZ * .28);
     [rr, rg, rb] = dark ? [1 * pulse, .72 * pulse, .28 * pulse] : [.30 * pulse, .82 * pulse, 1 * pulse];
-  } else [rr, rg, rb] = dark ? [.95,.95,.96] : [.82,.22,.18];
+  } else {
+    // The kerb is the worst of the aliasing: the highest-contrast pattern in
+    // the frame, on a line one strip wide. Eased to the pink it averages to,
+    // which is what a red-and-white kerb looks like from two hundred metres.
+    [rr, rg, rb] = dark
+      ? towardMean([.95, .95, .96], [.82, .22, .18], stripe)
+      : towardMean([.82, .22, .18], [.95, .95, .96], stripe);
+  }
   if(onRamp){ const fl=0.8; rr=1.0*fl; rg=0.85*fl; rb=0.25*fl; }
   // Kerbs are part of the road surface: they take the tarmac's lighting, not
   // the rock's. In a tunnel they are the only thing marking where the edge is.
@@ -847,16 +932,22 @@ for (let r = rows.length - 1; r >= 0; r--) {
     if (!quadNarrow) { nl = fl = quadLo; nr = fr = quadHi; }
     const travelL = Math.abs(fl - nl);
     edge(SX(nl + (travelL - rw) / 2), SY(row.y), SX(fl + (travelL - rw) / 2),
-      SY(row.y + row.h), rw + travelL, rc[0], rc[1], rc[2], 1);
+      SY(row.y + row.h), rw + travelL, rc[0], rc[1], rc[2], kerbAlpha);
     const travelR = Math.abs(fr - nr);
     edge(SX(nr - (travelR - rw) / 2), SY(row.y), SX(fr - (travelR - rw) / 2),
-      SY(row.y + row.h), rw + travelR, rc[0], rc[1], rc[2], 1);
+      SY(row.y + row.h), rw + travelR, rc[0], rc[1], rc[2], kerbAlpha);
   }
-  if (idx % 4 < 2 && row.midHalf > 6) {
-    const lw = clamp(row.midHalf * .04, 1, 14);
+  // The dashes merge into a faint continuous line rather than flickering on and
+  // off -- their period is eighteen metres, so past the resolve limit whether a
+  // strip lands on a dash or a gap is a coin toss per frame. See RenderRoad.
+  const laneFade = stripeFade(STRIPE * 4, row.segZ - row.prevZ);
+  const laneAlpha = 0.75 * ((idx % 4 < 2) ? laneFade : 0) + 0.75 * 0.5 * (1 - laneFade);
+  if (laneAlpha > 0.03 && row.midHalf > 6) {
+    const [lw, laneThin] = thinLine(clamp(row.midHalf * .04, 0.2, 14));
     const lc = aerial([.96, .95, .82], tarmacLight, mix);
     const ln = quadNarrow ? row.nearX : row.midX, lf = quadNarrow ? row.farX : row.midX;
-    edge(SX(ln), SY(row.y), SX(lf), SY(row.y + row.h), lw, lc[0], lc[1], lc[2], .75);
+    edge(SX(ln), SY(row.y), SX(lf), SY(row.y + row.h), lw, lc[0], lc[1], lc[2],
+      laneAlpha * laneThin);
   }
 
 }
@@ -1138,13 +1229,17 @@ for (let s = 23; s >= 0; s--) {
   const pz = (firstPost + s) * T.postSpacing, dz = pz - camZ;
   if (dz > 1 && dz < furnitureReach(119)) {
     const [x, y, ppm] = project(dz, bend(dz), roadHeight(pz));
-    const hwp = ppm * T.roadHalf, w = Math.max(1, ppm * .18), h = Math.max(2, ppm * 1.15);
+    // Sub-pixel posts fade rather than jump a whole pixel a frame -- see
+    // thinLine. They are the second-brightest flicker in a frame difference.
+    const hwp = ppm * T.roadHalf;
+    const [w, thin] = thinLine(ppm * .18);
+    const h = Math.max(2, ppm * 1.15);
     const fog = clamp(1 - (dz / HAZE_Z) * T.fogStrength, .22, 1);
     const red = (firstPost + s) % 2 === 0;
     const c = aerialAt(red ? [.88, .26, .20] : [.95, .95, .96], fog, dz);
     const off = hwp + w * 2.2;
-    rect(SX(x - off), SY(y) - h, w, h, ...c, 1);
-    rect(SX(x + off), SY(y) - h, w, h, ...c, 1);
+    rect(SX(x - off), SY(y) - h, w, h, ...c, thin);
+    rect(SX(x + off), SY(y) - h, w, h, ...c, thin);
   }
 }
 
