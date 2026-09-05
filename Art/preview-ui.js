@@ -100,6 +100,16 @@ function stretch(t, x0, y0, bw, bh, tint, alpha, mode) {
 const { textWidth, drawText } = require("./hud-font.js");
 /** Wrapped to a width, the way a FontString with two horizontal anchors wraps.
  *  Returns the y just below the last line, so what follows can flow from it. */
+/** The BACK button every page but the home screen carries, at MainMenu's own
+ *  TOPLEFT 25,-25. Drawn here so a mirrored screen accounts for the space it
+ *  takes -- a mirror that omits a control cannot catch anything colliding with
+ *  it, and four of the nine screens were omitting this one. */
+function backButton() {
+  slice(tex.btn, OX + 25, OY - 20, 120, 32, [0.18, 0.28, 0.42], 1);
+  label(OX + 85, OY - 10, "BACK", 12, GOLD, "center");
+  return { x: OX + 25, y: OY - 20, w: 120, h: 32 };
+}
+
 function labelWrapped(cx, y, str, size, colour, maxWidth) {
   const words = str.split(" ");
   const lines = [];
@@ -468,6 +478,7 @@ if (process.env.SCREEN === "tracks") {
   if (KIND === "racers" || KIND === "karts" || KIND === "cups") {
     for (let i = 0; i < W * H; i++) { fb[i*3] = 0.030; fb[i*3+1] = 0.040; fb[i*3+2] = 0.070; }
     panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);
+    backButton();
     const TITLE = { racers: "CHOOSE YOUR RACER", karts: "CHOOSE YOUR KART",
       cups: "CHOOSE YOUR CUP" }[KIND];
     label(OX + CW / 2, OY - 12, TITLE, 20, GOLD, "center");
@@ -621,6 +632,7 @@ if (process.env.SCREEN === "multiplayer") {
   const px = Math.round(OX + CW / 2 - PW / 2);
   const py = Math.round(OY - 40 + CH / 2 - PH / 2 - 8);
   label(OX + CW / 2, OY - 5, "PARTY & RAID RACING", 20, GOLD, "center");
+  backButton();
   panel(px, py, PW, PH, [0.055, 0.10, 0.17], 0.98);
 
   labelWrapped(px + PW / 2, py + 36,
@@ -693,6 +705,7 @@ if (process.env.SCREEN === "trophies") {
   for (let i = 0; i < W * H; i++) { fb[i*3] = 0.030; fb[i*3+1] = 0.040; fb[i*3+2] = 0.070; }
   panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);
   label(OX + CW / 2, OY - 12, "TROPHY ROOM", 20, GOLD, "center");
+  const backBox = backButton();
 
   const ACH = fs.readFileSync(path.join(__dirname, "..", "Data", "Achievements.lua"), "utf8");
   const byId = {};
@@ -707,6 +720,12 @@ if (process.env.SCREEN === "trophies") {
 
   // Mirrors Menu:BuildAchievements.
   const COLUMNS = 2, MARGIN = 40, TOP = 92, GAP = 6;
+  // The grid starts below the BACK button, not beside it -- and the first card
+  // is only fifty pixels under it, so a taller header or a lower grid would put
+  // them into each other with nothing to notice.
+  if (OY - 40 + TOP < backBox.y + backBox.h) {
+    throw new Error("preview-ui: the trophy grid starts under the BACK button");
+  }
   const cardW = Math.floor((CW - MARGIN * 2 - GAP * (COLUMNS - 1)) / COLUMNS);
   const rows = Math.ceil(order.length / COLUMNS);
   const cardH = Math.min(52, Math.floor((CH - TOP - 56 - GAP * (rows - 1)) / Math.max(1, rows)));
@@ -796,7 +815,9 @@ if (process.env.SCREEN === "results") {
   label(tx + 32, by + 6, "POS", 9, [.45, .52, .62]);
   label(tx + 94, by + 6, "RACER", 9, [.45, .52, .62]);
   label(tx + 760 - 34, by + 6, "TIME / GAP TO WINNER", 9, [.45, .52, .62], "right");
-  const NAMES = [["BAINE", "Mechano-Hog", "1:44.21", "best 33.46", 1],
+  // The fastest lap of the race is called out rather than left to be found by
+  // reading eight numbers and comparing them -- see Results:Show.
+  const NAMES = [["BAINE", "Mechano-Hog", "1:44.21", "FASTEST LAP 33.46", 1],
     ["THRALL", "Kodo Cruiser", "+0.42s", "best 33.71", 0],
     ["JAINA", "Rocket 9", "+1.18s", "best 33.90", 0],
     ["YOURSELF", "Mechano-Hog", "+1.93s", "best 33.52", 2],
@@ -815,7 +836,7 @@ if (process.env.SCREEN === "results") {
     label(tx + 94, y + 8, name, 12, PALE);
     label(tx + 94, y + 22, kart, 9, MUTED);
     label(tx + 724, y + 7, time, 12, PALE, "right");
-    label(tx + 724, y + 23, best, 8, MUTED, "right");
+    label(tx + 724, y + 23, best, 8, best.startsWith("FASTEST") ? LIME : MUTED, "right");
   });
 
   const stx = bx, sty = by + 414;
@@ -865,8 +886,7 @@ if (process.env.SCREEN === "settings") {
   }
   panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);
   label(OX + CW / 2, OY - 18, "SETTINGS", 20, GOLD, "center");
-  slice(tex.btn, OX + 25, OY - 20, 120, 32, [0.18, 0.28, 0.42], 1);
-  label(OX + 85, OY - 10, "BACK", 12, GOLD, "center");
+  backButton();
   slice(tex.btn, OX + CW - 25 - 180, OY - 20, 180, 30, [0.13, 0.17, 0.25], 1);
   label(OX + CW - 115, OY - 11, "RESTORE DEFAULTS", 11, MUTED, "center");
 

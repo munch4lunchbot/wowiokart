@@ -3403,9 +3403,24 @@ function RaceUI:RenderProps(race, camX, camZ)
       if height > 2 and x > -self.halfWidth * 2.2 and x < self.halfWidth * 2.2 then
         local kind = prop.kind
         local width = height * (kind.w / kind.h)
+        -- DISTANCE WASHES A TREE OUT; IT DOES NOT PAINT IT BLACK.
+        --
+        -- Two distance treatments were being applied on top of each other and
+        -- they pull opposite ways. `fog` multiplies the colour DOWN, to a floor
+        -- of a fifth, while Aerial blends it TOWARD the haze -- and the haze
+        -- blend is capped at about half. So a prop at the horizon came out at
+        -- roughly 0.15 of its own colour and then only got halfway to the sky:
+        -- a black blob hanging on a pale green skyline, which is the one thing
+        -- on that horizon the eye goes straight to. Photographed on
+        -- Stranglethorn, that is exactly what it was.
+        --
+        -- Aerial is the correct model and already carries the depth cue, so the
+        -- prop's own shade no longer decays with distance. `fog` is kept for
+        -- the contact SHADOW, which genuinely should fade away with the ground
+        -- it is cast on.
         local fog = AK.Math.Clamp(1 - (dz / HAZE_Z) * tuning.fogStrength, 0.20, 1) * light
         local tint = kind.tint
-        local shade = prop.shade * fog
+        local shade = prop.shade * light
 
         frame:ClearAllPoints()
         frame:SetPoint("BOTTOM", self.frame, "CENTER", x, y)

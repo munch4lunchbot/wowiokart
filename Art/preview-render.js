@@ -961,8 +961,20 @@ const PROP_KINDS = (() => {
     const height = ppm * pr.size;
     if (height <= 2 || x < -HW * 2.2 || x > HW * 2.2) continue;
     const width = height * (pr.kind.w / pr.kind.h);
+    // See RaceUI:RenderProps: Aerial carries the distance, so the prop's own
+    // shade must not decay with it as well -- that is what turned a distant
+    // tree into a black blob on a pale horizon.
+    const shade = pr.shade * light;
+    // THE CONTACT SHADOW, which this sheet did not draw and the game does --
+    // so every prop in every photograph looked like a sticker floating above
+    // the ground, and whether the real ones are planted could not be judged
+    // from here at all.
     const fog = clamp(1 - (dz / HAZE_Z) * T.fogStrength, 0.20, 1) * light;
-    const shade = pr.shade * fog;
+    if (tex.shadow) {
+      const sw = width * 1.15, sh = Math.max(1, height * 0.14);
+      blit(tex.shadow, SX(x - sw / 2), SY(y) - sh / 2, sw, sh, 0, 1, 0, 1,
+        [0, 0, 0], 0.34 * fog);
+    }
     blit(art, SX(x - width / 2), SY(y) - height, width, height, 0, 1, 0, 1,
       aerialAt(pr.kind.tint, shade, dz), 1);
   }
@@ -1073,7 +1085,12 @@ const visibleObjects = objects.map(o => {
   if (d < -track.length / 2) d += track.length;
   if (d > track.length / 2) d -= track.length;
   return { o, dz: d };
-}).filter(e => e.dz > 1.5 && e.dz < FAR_Z).sort((a, b) => b.dz - a.dz);
+// THE GAME STOPS DRAWING THESE AT 119 METRES, and this sheet did not -- it drew
+// item boxes and hazards all the way to the draw distance. Combined with the
+// missing aerial pass below, that put a coal-black blob on the horizon of every
+// photograph, which is a defect in the INSTRUMENT: half an hour was spent
+// hunting it in the renderer before the renderer turned out to be right.
+}).filter(e => e.dz > 1.5 && e.dz < furnitureReach(119)).sort((a, b) => b.dz - a.dz);
 
 for (const entry of visibleObjects) {
   const o = entry.o, dz = entry.dz;
@@ -1098,7 +1115,10 @@ for (const entry of visibleObjects) {
   }
 
   if (!t) continue;
-  const c = [st.col[0] * fog, st.col[1] * fog, st.col[2] * fog];
+  // Through the air, like everything else standing in the world. RaceUI does
+  // this (`Aerial(color, fog, dz)`); this file multiplied by fog alone, so a
+  // distant object went to black rather than toward the colour of the sky.
+  const c = aerialAt(st.col, fog, dz);
   if (!OLDOBJ && st.flat) {
     // Painted flat on the tarmac: wide and short, at ground level. The height
     // floor is screen-relative, matching RaceUI -- an absolute 3px floor made a

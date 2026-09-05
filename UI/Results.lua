@@ -325,6 +325,20 @@ function Results:Show(race)
   for _, vehicle in ipairs(race.vehicles) do table.insert(ordered, vehicle) end
   table.sort(ordered, function(a, b) return (race.positions[a] or 99) < (race.positions[b] or 99) end)
 
+  -- THE FASTEST LAP OF THE RACE, which nothing marked.
+  --
+  -- Eight rows each carry a "best 33.46" and the column said nothing about
+  -- which of the eight was quickest -- so the one number on this screen that is
+  -- a distinction rather than a statistic was left for the player to find by
+  -- reading down and comparing. Every racing game marks it, because it is the
+  -- consolation prize for a bad race and the bragging right after a good one.
+  local fastestLap, fastestBy
+  for _, vehicle in ipairs(race.vehicles) do
+    if vehicle.bestLap and (not fastestLap or vehicle.bestLap < fastestLap) then
+      fastestLap, fastestBy = vehicle.bestLap, vehicle
+    end
+  end
+
   local champion = ordered[1]
   -- Whoever actually crossed first, for the gap column below.
   local leader = ordered[1]
@@ -361,7 +375,14 @@ function Results:Show(race)
       else
         row.time:SetText(("+%.2fs"):format(vehicle.finishTime - leadTime))
       end
-      row.best:SetText(vehicle.bestLap and ("best " .. AK.RaceUI:FormatTime(vehicle.bestLap)) or "")
+      if not vehicle.bestLap then
+        row.best:SetText("")
+      elseif vehicle == fastestBy then
+        row.best:SetText(("|cff%sFASTEST LAP %s|r"):format(
+          AK:ColorHex(AK.COLORS.lime), AK.RaceUI:FormatTime(vehicle.bestLap)))
+      else
+        row.best:SetText("best " .. AK.RaceUI:FormatTime(vehicle.bestLap))
+      end
       styleRow(row, place, vehicle == race.player)
       row:Hide()
       row.slide = nil
