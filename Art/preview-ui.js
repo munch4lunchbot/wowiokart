@@ -594,18 +594,18 @@ if (process.env.SCREEN === "tracks") {
     // count until the cards clear MIN_CARD, and gives racers a head start of
     // four columns because their cards carry a model rather than an icon.
     const MARGIN = 42, TOP = 82, BOTTOM = 22, GAP = 18, MIN_CARD = 150, MAX_CARD = 210;
-    const CUP_CARD = +((MENU_LUA.match(/local CUP_CARD = (\d+)/) || [, 248])[1]);
     const availableH = CH - TOP - BOTTOM;
     const rowsFor = n => Math.ceil(entries.length / n);
     const heightFor = n => Math.floor((availableH - GAP * (rowsFor(n) - 1)) / rowsFor(n));
     // Racers are pinned at four; see the note in Menu:ShowSelection.
-    let columns = KIND === "racers" ? 6 : 3;
-    if (KIND !== "racers") while (columns < 5 && heightFor(columns) < MIN_CARD) columns++;
+    // A cup is a full-width ROW -- see Menu:BuildSelection.
+    let columns = KIND === "racers" ? 6 : (KIND === "cups" ? 1 : 3);
+    if (KIND !== "racers" && KIND !== "cups") {
+      while (columns < 5 && heightFor(columns) < MIN_CARD) columns++;
+    }
     const cardW = Math.floor((CW - MARGIN * 2 - GAP * (columns - 1)) / columns);
     // Capped and centred, as Menu:ShowSelection does it.
-    // Cups get a whole row to themselves and a taller card with it -- see
-    // Menu:BuildSelection.
-    const cardH = Math.min(heightFor(columns), KIND === "cups" ? CUP_CARD : MAX_CARD);
+    const cardH = Math.min(heightFor(columns), MAX_CARD);
     // Derived exactly as Menu:BuildSelection derives it, so the picture shrinks
     // with the card instead of the words falling off the bottom of it.
     const RACER_TEXT = +((MENU_LUA.match(/local RACER_TEXT = (\d+)/) || [, 92])[1]);
@@ -615,6 +615,8 @@ if (process.env.SCREEN === "tracks") {
     const top = TOP + Math.max(0, Math.floor((availableH - usedH) / 2));
 
     let worst = null, cupPlan = 44;
+    const CUP_PAD = +((MENU_LUA.match(/local CUP_PAD, CUP_BADGE = (\d+)/) || [, 22])[1]);
+    const CUP_BADGE = +((MENU_LUA.match(/local CUP_PAD, CUP_BADGE = \d+, (\d+)/) || [, 116])[1]);
     entries.forEach((e, i) => {
       const col = i % columns, row = Math.floor(i / columns);
       // A short last row is centred -- see Menu:BuildSelection.
@@ -633,14 +635,12 @@ if (process.env.SCREEN === "tracks") {
         for (let dy = 0; dy < PORTRAIT; dy++) for (let dx = 0; dx < PORTRAIT; dx++)
           blend(x + cardW / 2 - PORTRAIT / 2 + dx, y + 6 + dy, 0.30, 0.36, 0.46, 0.30);
       } else if (KIND === "cups") {
-        // The four circuits, drawn small in a row -- see Menu:ShowSelection.
-        const plan = Math.max(36, Math.min(72,
-          Math.floor((cardW - 18) / Math.max(1, e.plans.length))));
+        // A strip of plans down the LEFT of the row -- see Menu:BuildSelection.
+        const plan = Math.max(40, Math.min(80, cardH - 30));
         cupPlan = plan;
-        const span = e.plans.length * plan;
         e.plans.forEach((path, slot) => {
-          const cx = x + cardW / 2 - span / 2 + plan * (slot + 0.5);
-          const cy = y + 10 + plan / 2, radius = plan * 0.42;
+          const cx = x + CUP_PAD + plan * (slot + 0.5);
+          const cy = y + cardH / 2, radius = plan * 0.42;
           for (let n = 0; n < 56; n++) {
             const [px, py] = path[Math.floor(n / 56 * path.length)];
             const sx = Math.round(cx + px * radius * 2);
@@ -682,6 +682,26 @@ if (process.env.SCREEN === "tracks") {
             + Math.ceil((y + nameTop - 14) - nameY) + "px");
         }
       }
+      // A CUP ROW READS ACROSS: the plans on the left, then the name, the
+      // circuits and the numbers beside them, and the badge at the far right
+      // where the eye lands last. Everything else is a card and reads down.
+      if (KIND === "cups") {
+        const textX = x + CUP_PAD + cupPlan * e.plans.length + 26;
+        const textW = x + cardW - CUP_BADGE - textX;
+        let cy = y + 22;
+        label(textX, cy, e.name, 16, chosen ? LIT : GOLD);
+        cy += Math.round(16 * 1.45) + 8;
+        cy = labelLeftWrapped(textX, cy, e.lines.join("  /  "), 12, MUTED, textW);
+        cy += 8;
+        labelLeftWrapped(textX, cy, e.floor[0], 12, MUTED, textW);
+        label(x + cardW - 24, y + 24, e.floor[1], 13,
+          e.won ? GOLD : [.40, .46, .56], "right");
+        if (cy + 18 > y + cardH - 6) {
+          throw new Error(`preview-ui: ${e.id}'s row overflows by `
+            + Math.ceil(cy + 18 - (y + cardH - 6)) + "px");
+        }
+        return;
+      }
       let ny = labelWrapped(x + cardW / 2, nameY, e.name, nameSize,
         chosen ? LIT : GOLD, cardW - 14);
       ny += 7;
@@ -719,89 +739,89 @@ if (process.env.SCREEN === "tracks") {
 // ---- the lobby: SCREEN=multiplayer -------------------------------------------
 //
 // The screen two people stare at while working out whether they are in the same
-// race, and the last player-facing screen with no picture. Five actions down
-// the left and a live roster on the right, both of which grow -- the actions
-// grew from four the day this was written, and the roster grows every time
-// somebody joins. Either one running into the note along the bottom is exactly
-// the failure nobody notices until a test night.
+// race. Five actions down the left and the eight-slot grid on the right, both of
+// which grow -- the actions grew from four the day this was written, and the
+// grid is as tall as MAX_RACERS. Either one running into the note along the
+// bottom is exactly the failure nobody notices until a test night.
 if (process.env.SCREEN === "multiplayer") {
   for (let i = 0; i < W * H; i++) { fb[i*3] = 0.030; fb[i*3+1] = 0.040; fb[i*3+2] = 0.070; }
   panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);
 
   const num = (re, d) => { const m = MENU_LUA.match(re); return m ? +m[1] : d; };
-  const PW = 680, PH = 400;
-  const px = Math.round(OX + CW / 2 - PW / 2);
-  const py = Math.round(OY - 40 + CH / 2 - PH / 2 - 8);
-  label(OX + CW / 2, OY - 5, "PARTY & RAID RACING", 20, GOLD, "center");
-  backButton();
-  panel(px, py, PW, PH, [0.055, 0.10, 0.17], 0.98);
+  // Page coordinates, because the screen is laid out on the page now rather
+  // than inside a second plate floating in the middle of it.
+  const PX = OX, PY = OY - 40;
+  const MARGIN = 42, TOP = 104;
+  const COLUMN = Math.floor((CW - MARGIN * 2 - 30) / 2);
+  const LEFT = MARGIN, RIGHT = MARGIN + COLUMN + 30;
+  const MAXR = num(/AK\.MAX_RACERS = (\d+)/, 8)
+    || +((fs.readFileSync(path.join(__dirname, "..", "Constants.lua"), "utf8")
+      .match(/MAX_RACERS = (\d+)/) || [, 8])[1]);
 
-  labelWrapped(px + PW / 2, py + 36,
-    "Race with people in your current party or raid who also have Azeroth Kart installed.",
-    12, PALE, PW - 70);
+  label(PX + CW / 2, PY + 28, "PARTY & RAID RACING", 20, GOLD, "center");
+  backButton();
+  labelWrapped(PX + CW / 2, PY + 68,
+    "Race anyone in your party or raid who also has Azeroth Kart installed.",
+    12, PALE, CW - MARGIN * 2);
+
+  const section = (title, x) => {
+    label(PX + x + 2, PY + TOP, title, 10, GOLD);
+    blitUV(tex.hairline, PX + x, PY + TOP + 16, COLUMN, 2, 0, 1, 0, 1, [1, .78, .30], 0.35);
+  };
+  section("LOBBY ACTIONS", LEFT);
+  section("THE GRID", RIGHT);
 
   // Straight off MainMenu, so a sixth action or a taller row shows up here.
-  const ROW_H = num(/local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = (\d+)/, 36);
-  const PITCH = num(/local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = \d+, (\d+)/, 42);
-  const FIRST = num(/local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = \d+, \d+, (\d+)/, 108);
+  const ROW_H = num(/local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = (\d+)/, 42);
+  const PITCH = num(/local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = \d+, (\d+)/, 50);
+  const FIRST = TOP + 26;
   const ACTIONS = [...MENU_LUA.slice(MENU_LUA.indexOf("local ACTIONS = {"),
     MENU_LUA.indexOf("for index, action in ipairs(ACTIONS)"))
     .matchAll(/\{ "([A-Z /]+)",/g)].map((m) => m[1]);
   if (!ACTIONS.length) throw new Error("preview-ui: parsed no multiplayer actions");
   ACTIONS.forEach((text, i) => {
-    const by = py + FIRST + i * PITCH;
-    slice(tex.btn, px + 25, by, 280, ROW_H, i === 0 ? [0.42, 0.31, 0.08] : REST, 1);
-    if (textWidth(text, 13) > 280 - 16) {
-      throw new Error(`preview-ui: "${text}" does not fit a 280px lobby button`);
+    const by = PY + FIRST + i * PITCH;
+    slice(tex.btn, PX + LEFT, by, COLUMN, ROW_H, i === 0 ? [0.42, 0.31, 0.08] : REST, 1);
+    if (textWidth(text, 14) > COLUMN - 16) {
+      throw new Error(`preview-ui: "${text}" does not fit a ${COLUMN}px lobby button`);
     }
-    label(px + 25 + 140, by + (ROW_H - 13) / 2, text, 13, i === 0 ? LIT : GOLD, "center");
+    label(PX + LEFT + COLUMN / 2, by + (ROW_H - 14) / 2, text, 14,
+      i === 0 ? LIT : GOLD, "center");
   });
   const actionsBottom = FIRST + (ACTIONS.length - 1) * PITCH + ROW_H;
 
-  // The live column: heading, rule, then the grid by name.
-  label(px + 332, py + 112, "LOBBY", 10, GOLD, "left");
-  blitUV(tex.hairline, px + 330, py + 128, PW - 355, 2, 0, 1, 0, 1, [1, .78, .30], 0.35);
-  const STATUS = [
-    "HOSTING  --  ELWYNN SPRINT",
-    "4 of 8 on the grid",
-    "",
-    "Grimtusk (you)",
-    "  Mordenna",
-    "  Sableflank",
-    "  Wrynnbourne",
-  ];
-  let sy = py + 140;
-  for (const line of STATUS) {
-    if (line === "") { sy += 20; continue; }
-    const mine = line.endsWith("(you)");
-    if (textWidth(line, 13) > PW - 355) {
+  // The live column: two lines of status, then every slot on the grid. The
+  // hosting case is the one worth drawing -- four people in and four to fill.
+  const STATUS = ["HOSTING  --  ELWYNN SPRINT", "4 of " + MAXR + " on the grid"];
+  STATUS.forEach((line, i) => {
+    if (textWidth(line, 14) > COLUMN) {
       throw new Error(`preview-ui: the lobby line "${line}" is wider than its column`);
     }
-    label(px + 330, sy, line, 13, mine ? GOLD : MUTED, "left");
-    sy += 20;
+    label(PX + RIGHT, PY + FIRST + i * 20, line, 14, i === 0 ? LIME : MUTED);
+  });
+  const JOINED = ["Grimtusk  (you)", "Mordenna", "Sableflank", "Wrynnbourne"];
+  for (let i = 0; i < MAXR; i++) {
+    const y = PY + FIRST + 52 + i * 22;
+    const who = JOINED[i];
+    label(PX + RIGHT + 16, y, String(i + 1), 12,
+      i === 0 ? GOLD : [.42, .48, .58], "right");
+    label(PX + RIGHT + 24, y, who || "AI racer", 13,
+      who ? (i === 0 ? GOLD : PALE) : [.42, .48, .58]);
   }
+  const gridBottom = FIRST + 52 + MAXR * 22;
 
-  // The note along the bottom, and the two things that must clear it.
-  const noteTop = PH - 25 - 34;
-  labelWrapped(px + PW / 2, py + noteTop,
-    "Multiplayer fills empty grid spots with AI racers. Results and unlocks are saved locally.",
-    12, MUTED, PW - 70);
-  if (actionsBottom > noteTop - 6) {
-    throw new Error("preview-ui: the lobby's actions run into the note by "
-      + Math.ceil(actionsBottom - noteTop + 6) + "px");
-  }
-  if (sy - py > noteTop - 6) {
-    throw new Error("preview-ui: the lobby roster runs into the note by "
-      + Math.ceil((sy - py) - noteTop + 6) + "px");
+  // The note along the bottom, and the two columns that must clear it.
+  const noteTop = CH - 24 - 30;
+  labelWrapped(PX + CW / 2, PY + noteTop,
+    "Empty slots are filled with AI racers. Results and unlocks are saved locally for every participant.",
+    12, MUTED, CW - MARGIN * 2);
+  const lowest = Math.max(actionsBottom, gridBottom);
+  if (lowest > noteTop - 6) {
+    throw new Error("preview-ui: the lobby's columns run into the note by "
+      + Math.ceil(lowest - (noteTop - 6)) + "px");
   }
 }
 
-// ---- the trophy room, on demand: SCREEN=trophies -----------------------------
-//
-// The last player-facing screen with no picture. Fourteen achievements in a
-// two-column grid whose card height is derived from the count, so adding a
-// fifteenth re-flows -- which is exactly the sort of thing that quietly stops
-// fitting.
 if (process.env.SCREEN === "trophies") {
   for (let i = 0; i < W * H; i++) { fb[i*3] = 0.030; fb[i*3+1] = 0.040; fb[i*3+2] = 0.070; }
   panel(OX, OY - 40, CW, CH, [0.045, 0.075, 0.125], 0.97);

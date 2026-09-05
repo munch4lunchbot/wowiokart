@@ -847,21 +847,47 @@ function Menu:ShowMultiplayer()
 end
 
 function Menu:BuildMultiplayer(page)
+  -- ON THE PAGE, NOT IN A BOX ON THE PAGE.
+  --
+  -- Every other screen in this menu lays its content straight onto the content
+  -- panel. This one built a second 680x400 plate inside the 960x520 one and put
+  -- everything in that -- a frame inside a frame with a hundred and forty pixels
+  -- of nothing all the way round it, on the screen two people stare at while
+  -- working out whether they are in the same race. It read as a dialog that had
+  -- wandered onto the wrong background, and it left the actions squeezed into
+  -- 280px columns while a third of the width went unused.
+  --
+  -- Two columns on the page itself, under the same gold heading and hairline
+  -- the home screen and the settings page use: what you can DO on the left,
+  -- what is HAPPENING on the right.
+  local MARGIN, TOP = 42, 104
+  local COLUMN = math.floor((960 - MARGIN * 2 - 30) / 2)
+  local LEFT, RIGHT = MARGIN, MARGIN + COLUMN + 30
+
   local header = UI:NewText(page, "PARTY & RAID RACING", 25, AK.COLORS.gold, "CENTER")
-  header:SetPoint("TOP", 0, -35)
-  -- 680x400, and the buttons stacked down the left with the lobby status
-  -- beside them. At 340 tall with the four buttons in a 2x2 block, the status
-  -- text was anchored at (340, -183) and REFRESH LOBBIES occupied (350..630,
-  -- 178..220): the one line telling you whether a lobby was found was printed
-  -- straight through the button you press to look for one.
-  local panel = UI:NewPanel(page, 680, 400, { .055, .10, .17, .98 })
-  panel:SetPoint("CENTER", 0, 8)
+  header:SetPoint("TOP", 0, -28)
   local back = UI:NewButton(page, "BACK", 120, 32, function() self:ShowHome() end)
   back:SetPoint("TOPLEFT", 25, -25)
-  local description = UI:NewText(panel, "Race with people in your current party or raid who also have Azeroth Kart installed.\nThe host runs the race simulation and shares synchronized kart states through WoW's built-in addon channel.", 15, { .86, .92, 1 }, "CENTER")
-  description:SetPoint("TOPLEFT", 35, -36)
-  description:SetPoint("TOPRIGHT", -35, -36)
-  -- Four actions, in the order you would take them, stacked. A 2x2 grid of
+  local description = UI:NewText(page,
+    "Race anyone in your party or raid who also has Azeroth Kart installed.",
+    14, { .86, .92, 1 }, "CENTER")
+  description:SetPoint("TOPLEFT", MARGIN, -68)
+  description:SetPoint("TOPRIGHT", -MARGIN, -68)
+
+  --- A gold heading over a hairline, the shape every section in this menu uses.
+  local function section(title, x)
+    local head = UI:NewText(page, title, 11, AK.COLORS.gold, "LEFT")
+    head:SetPoint("TOPLEFT", x + 2, -TOP)
+    local rule = page:CreateTexture(nil, "ARTWORK")
+    rule:SetTexture(ART .. "hairline.tga")
+    rule:SetPoint("TOPLEFT", x, -TOP - 16)
+    rule:SetSize(COLUMN, 2)
+    rule:SetVertexColor(1, 0.78, 0.30, 0.35)
+  end
+  section("LOBBY ACTIONS", LEFT)
+  section("THE GRID", RIGHT)
+
+  -- Five actions, in the order you would take them, stacked. A 2x2 grid of
   -- four buttons has no reading order at all: which of the top two comes
   -- first is a coin toss, and one of them only makes sense after the other.
   local ACTIONS = {
@@ -882,95 +908,111 @@ function Menu:BuildMultiplayer(page)
         end)
       end },
   }
-  -- FIVE ROWS NOW, so they are shorter and tighter. At 42 tall on a 52 pitch a
-  -- fifth button reached -362 in a 400-tall panel, and the two-line note along
-  -- the bottom starts at about -341: the last action would have been printed
-  -- through it. 36 on a 42 pitch ends at -312 and leaves the note alone.
   -- Not named ROW_H: this file already has a file-level ROW_H for the settings
   -- rows, and a second one inside a function is a shadow that reads like a
   -- reference to the first.
-  local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = 36, 42, 108
+  local LOBBY_ROW, LOBBY_PITCH, LOBBY_TOP = 42, 50, TOP + 26
   for index, action in ipairs(ACTIONS) do
-    local button = UI:NewButton(panel, action[1], 280, LOBBY_ROW, action[2])
-    button:SetPoint("TOPLEFT", 25, -LOBBY_TOP - (index - 1) * LOBBY_PITCH)
+    local button = UI:NewButton(page, action[1], COLUMN, LOBBY_ROW, action[2])
+    button:SetPoint("TOPLEFT", LEFT, -LOBBY_TOP - (index - 1) * LOBBY_PITCH)
     if index == 1 then button:SetRestStyle({ 0.42, 0.31, 0.08 }, { 1, 0.95, 0.80 }) end
   end
-  -- The lowest thing in the left column, so the check below knows where it is.
   local actionsBottom = LOBBY_TOP + (#ACTIONS - 1) * LOBBY_PITCH + LOBBY_ROW
-  if actionsBottom > 330 then
-    AK:Print("Multiplayer actions overflow into the note: " .. actionsBottom .. "px.")
+
+  -- The live column. Two lines of status, then the grid itself.
+  local lobbyState = UI:NewText(page, "", 14, AK.COLORS.muted, "LEFT")
+  lobbyState:SetPoint("TOPLEFT", RIGHT, -LOBBY_TOP)
+  lobbyState:SetPoint("TOPRIGHT", -MARGIN, -LOBBY_TOP)
+  lobbyState:SetJustifyV("TOP")
+
+  -- ALL EIGHT SLOTS, NOT A COUNT.
+  --
+  -- The one question this screen exists to answer is "did my friends get in,
+  -- and is there room for one more". "4 of 8 on the grid" over a list of four
+  -- names answers half of it and makes you do the subtraction for the rest --
+  -- and it left the column half the height of the button stack beside it. The
+  -- grid is drawn as a grid: every slot, numbered, with the empty ones saying
+  -- what will actually be sitting in them when the flag drops.
+  local slots = {}
+  for index = 1, AK.MAX_RACERS do
+    local number = UI:NewText(page, tostring(index), 12, { .40, .46, .56 }, "RIGHT")
+    number:SetPoint("TOPLEFT", RIGHT, -LOBBY_TOP - 52 - (index - 1) * 22)
+    number:SetWidth(16)
+    local who = UI:NewText(page, "", 13, AK.COLORS.muted, "LEFT")
+    who:SetPoint("TOPLEFT", RIGHT + 24, -LOBBY_TOP - 52 - (index - 1) * 22)
+    who:SetPoint("TOPRIGHT", -MARGIN, -LOBBY_TOP - 52 - (index - 1) * 22)
+    slots[index] = { number = number, who = who }
   end
-  -- The status column gets a heading, the same way the home screen's sections
-  -- do, so it reads as a place rather than as a paragraph that happens to be
-  -- over there.
-  local lobbyHead = UI:NewText(panel, "LOBBY", 11, AK.COLORS.gold, "LEFT")
-  lobbyHead:SetPoint("TOPLEFT", 332, -112)
-  local lobbyRule = panel:CreateTexture(nil, "ARTWORK")
-  lobbyRule:SetTexture(ART .. "hairline.tga")
-  lobbyRule:SetPoint("TOPLEFT", 330, -128)
-  lobbyRule:SetPoint("TOPRIGHT", -25, -128)
-  lobbyRule:SetHeight(2)
-  lobbyRule:SetVertexColor(1, 0.78, 0.30, 0.35)
-  local lobbyText = UI:NewText(panel, "", 14, AK.COLORS.muted, "LEFT")
-  lobbyText:SetPoint("TOPLEFT", 330, -140)
-  lobbyText:SetPoint("TOPRIGHT", -25, -140)
-  lobbyText:SetJustifyV("TOP")
-  -- LIVE. This is the one readout on the screen that changes while you sit on
-  -- it: a lobby opens, a friend announces one, a racer joins. It was baked in
-  -- at build time and the four actions each rebuilt the whole page to update
-  -- it -- which is why REFRESH LOBBIES had to wait a third of a second and then
-  -- reconstruct everything. The page is kept now, so this is a refresh.
-  --- WHO IS ON THE GRID, BY NAME.
-  ---
-  --- "3 racers ready" is the wrong readout for the one screen where the whole
-  --- question is whether your friends got in. Names, sorted so the list does
-  --- not reshuffle itself every time somebody joins, with the local player
-  --- marked -- and capped, because a full raid lobby would otherwise run the
-  --- list off the bottom of the panel.
-  local function rosterLines(roster)
+  local gridBottom = LOBBY_TOP + 52 + AK.MAX_RACERS * 22
+
+  --- Everyone in the lobby, sorted so the list does not reshuffle itself every
+  --- time somebody joins.
+  local function sortedRoster(roster)
     local names = {}
     for name in pairs(roster or {}) do names[#names + 1] = name end
     table.sort(names)
-    local me, lines = AK.Net:PlayerName(), {}
-    for index, name in ipairs(names) do
-      if index > 6 then
-        lines[#lines + 1] = ("...and %d more"):format(#names - 6)
-        break
+    return names
+  end
+
+  --- Fill the eight slots from a roster, or empty them.
+  local function paintGrid(roster)
+    local names = sortedRoster(roster)
+    local me = AK.Net:PlayerName()
+    for index, slot in ipairs(slots) do
+      local name = names[index]
+      if name then
+        -- Realm suffixes make every line the same length and unreadable.
+        local short = name:match("^([^-]+)") or name
+        local mine = name == me
+        slot.who:SetText(mine and (short .. "  (you)") or short)
+        slot.who:SetTextColor(unpack(mine and AK.COLORS.gold or { .86, .92, 1 }))
+        slot.number:SetTextColor(unpack(mine and AK.COLORS.gold or { .55, .62, .74 }))
+      else
+        slot.who:SetText(roster and "AI racer" or "--")
+        slot.who:SetTextColor(.42, .48, .58)
+        slot.number:SetTextColor(.34, .39, .48)
       end
-      -- Realm suffixes make every line the same length and unreadable.
-      local short = name:match("^([^-]+)") or name
-      lines[#lines + 1] = name == me
-        and ("|cff%s%s (you)|r"):format(AK:ColorHex(AK.COLORS.gold), short)
-        or ("  " .. short)
     end
-    if #lines == 0 then lines[1] = "  nobody yet" end
-    return table.concat(lines, "\n"), #names
+    return #names
   end
 
   function page:akRefresh()
     local own = AK.Net.lobby
     local found = AK.Net.availableLobby
     if own then
-      local list, count = rosterLines(own.roster)
-      lobbyText:SetText(("|cff%sHOSTING|r  --  %s\n%d of %d on the grid\n\n%s"):format(
+      local count = paintGrid(own.roster)
+      lobbyState:SetText(("|cff%sHOSTING|r  --  %s\n%d of %d on the grid"):format(
         AK:ColorHex(AK.COLORS.lime), AK:GetTrack(own.track).name,
-        count, AK.MAX_RACERS, list))
+        count, AK.MAX_RACERS))
     elseif found then
-      local list, count = rosterLines(found.roster)
+      local count = paintGrid(found.roster)
       local joined = found.roster and found.roster[AK.Net:PlayerName()]
-      lobbyText:SetText(("%s\nHost: %s  --  %s\n%d of %d on the grid\n\n%s"):format(
+      lobbyState:SetText(("%s  --  %s\nHost: %s  --  %d of %d on the grid"):format(
         joined and ("|cff" .. AK:ColorHex(AK.COLORS.lime) .. "YOU ARE IN|r")
           or ("|cff" .. AK:ColorHex(AK.COLORS.gold) .. "LOBBY FOUND|r"),
-        found.host:match("^([^-]+)") or found.host,
-        AK:GetTrack(found.track).name, count, AK.MAX_RACERS, list))
+        AK:GetTrack(found.track).name,
+        found.host:match("^([^-]+)") or found.host, count, AK.MAX_RACERS))
     else
-      lobbyText:SetText(
-        "No lobby announced yet.\nOpen one yourself, or press REFRESH LOBBIES\nonce a friend has opened theirs.")
+      paintGrid(nil)
+      lobbyState:SetText(
+        "No lobby announced yet.\nOpen one, or refresh once a friend has opened theirs.")
     end
   end
-  local note = UI:NewText(panel, "Multiplayer fills empty grid spots with AI racers. Results and unlocks are saved locally for every participant.", 13, AK.COLORS.muted, "CENTER")
-  note:SetPoint("BOTTOMLEFT", 35, 25)
-  note:SetPoint("BOTTOMRIGHT", -35, 25)
+
+  local note = UI:NewText(page,
+    "Empty slots are filled with AI racers. Results and unlocks are saved locally for every participant.",
+    12, AK.COLORS.muted, "CENTER")
+  note:SetPoint("BOTTOMLEFT", MARGIN, 24)
+  note:SetPoint("BOTTOMRIGHT", -MARGIN, 24)
+
+  -- Both columns have to clear the note, and both of them grow: the actions
+  -- grew from four the day this was written and the grid is as tall as
+  -- MAX_RACERS. Say so rather than printing one through the other.
+  local floor = 520 - 24 - 30
+  local lowest = math.max(actionsBottom, gridBottom)
+  if lowest > floor then
+    AK:Print("Multiplayer columns overflow the note by " .. math.ceil(lowest - floor) .. "px.")
+  end
 end
 
 function Menu:UpdateSummary()
@@ -1081,11 +1123,11 @@ function Menu:BuildSelection(page, kind)
   -- height cannot change, so adding an eighth track re-flows instead of
   -- spilling.
   local MARGIN, TOP, GAP, BOTTOM, MIN_CARD, MAX_CARD = 42, 82, 18, 22, 150, 210
-  -- Three cups is ONE row, so their card is allowed to be taller than the cap
-  -- the grids need -- but only as tall as it has content for. At 300 the extra
-  -- ninety pixels landed as a hole in the middle of the plate, which is the
-  -- same fault as the empty panel, moved inside the card.
-  local CUP_CARD = 248
+  -- How far in from a cup row's left edge the strip of circuit plans starts,
+  -- and how much of the right-hand end the won/not-won badge keeps for
+  -- itself. "NOT YET WON" is about ninety pixels at 13pt; the rest of the
+  -- reserve is the gap that stops the circuit list running into it.
+  local CUP_PAD, CUP_BADGE = 22, 116
   -- What a racer card's text needs under the portrait: a name that may wrap to
   -- two lines at 14pt, the gap, two short stat lines at 11pt, and a margin.
   -- The portrait gets everything else, so adding a twelfth racer shrinks the
@@ -1105,7 +1147,15 @@ function Menu:BuildSelection(page, kind)
   -- every kart game's character select has used since the N64. The name wraps
   -- to two lines at that width, which is fine on a tall card and was the only
   -- reason four was ever chosen.
-  local columns = kind == "racer" and 6 or 3
+  -- A CUP IS A ROW, NOT A STAMP.
+  --
+  -- Three cups in three columns is one short row of cards adrift in the middle
+  -- of a 960x520 panel, with two hundred pixels of nothing above and below it
+  -- -- the emptiest screen in the game, on the one that starts the longest
+  -- thing you can do in it. One column means three full-width rows that fill
+  -- the panel top to bottom, and a row has somewhere to put the four circuit
+  -- plans at a size you can actually read them.
+  local columns = kind == "racer" and 6 or (kind == "cup" and 1 or 3)
   local function rowsFor(n) return math.ceil(#entries / n) end
   local function heightFor(n)
     local rows = rowsFor(n)
@@ -1125,13 +1175,7 @@ function Menu:BuildSelection(page, kind)
   -- dark bands across the top and bottom of every card. The tallest thing any
   -- of these cards carries is a cup's four circuit names under an icon and a
   -- title, which comes to about a hundred and eighty.
-  -- A CUP CARD IS THE ONLY ONE WITH A WHOLE ROW TO ITSELF, so it gets to be
-  -- taller. Three cups is one row of a 416px space, and at MAX_CARD that left
-  -- two hundred pixels of empty panel above and below a strip of cards --
-  -- the emptiest screen in the game, on the one that picks the longest thing
-  -- you can do in it. The extra height goes into bigger circuit plans and into
-  -- saying whether the cup has actually been won.
-  local cardHeight = math.min(heightFor(columns), kind == "cup" and CUP_CARD or MAX_CARD)
+  local cardHeight = math.min(heightFor(columns), MAX_CARD)
   -- Whatever height that leaves over goes above and below the grid, so a short
   -- grid sits in the middle of the panel instead of hanging from its top edge.
   local rows = rowsFor(columns)
@@ -1202,13 +1246,11 @@ function Menu:BuildSelection(page, kind)
       -- many hairpins, how many long sweeps, whether it is a fast set or a
       -- technical one, at a glance.
       icon:Hide()
-      -- Sized from the card rather than fixed at 44, so the plans grow with it.
-      cupPlan = math.max(36, math.min(72,
-        math.floor((cardWidth - 18) / math.max(1, #entry.tracks))))
-      local span = #entry.tracks * cupPlan
+      -- A strip of plans down the left of the row, as tall as the row allows.
+      cupPlan = math.max(40, math.min(80, cardHeight - 30))
       for slot, trackId in ipairs(entry.tracks) do
         local shape = UI:NewTrackShape(card, AK:GetTrack(trackId), cupPlan)
-        shape:SetPoint("TOP", -span * 0.5 + cupPlan * (slot - 0.5), -10)
+        shape:SetPoint("LEFT", CUP_PAD + cupPlan * (slot - 1), 0)
       end
     end
     if kind == "racer" then
@@ -1247,7 +1289,15 @@ function Menu:BuildSelection(page, kind)
       -- card now, so a hand-counted 58 would sit on top of them.
       or (kind == "cup" and (cupPlan + 18))
       or (kind == "kart" and 84) or 72
-    if kind == "racer" then
+    if kind == "cup" then
+      -- Left-aligned beside the plans, not centred over them: a row reads
+      -- across, and a centred block in the right-hand half of one is a column
+      -- of text that happens to be over there.
+      local textX = CUP_PAD + cupPlan * #entry.tracks + 26
+      name:SetJustifyH("LEFT")
+      name:SetPoint("TOPLEFT", textX, -22)
+      name:SetPoint("TOPRIGHT", -CUP_BADGE, -22)
+    elseif kind == "racer" then
       -- BOTTOM-ANCHORED, so the gap under the name is the same on every card.
       -- Six of the eleven names fit on one line and five wrap to two; pinned to
       -- the top, the one-liners left twice as much air under them as the
@@ -1291,13 +1341,28 @@ function Menu:BuildSelection(page, kind)
     -- The racer cards were fixed this way already; this is the same fix for
     -- the other two grids that carry figures.
     local stat
-    if kind == "track" or kind == "kart" or kind == "cup" then
+    if kind == "track" or kind == "kart" then
       stat = UI:NewText(card, "", 12, AK.COLORS.muted, "CENTER")
       stat:SetPoint("BOTTOMLEFT", 2, 9)
       stat:SetPoint("BOTTOMRIGHT", -2, 9)
       cards[index].stat = stat
+    elseif kind == "cup" then
+      -- Left-aligned under the circuit list, and the won/not-won badge on its
+      -- own at the right-hand end of the row where the eye lands last.
+      stat = UI:NewText(card, "", 12, AK.COLORS.muted, "LEFT")
+      cards[index].stat = stat
+      cards[index].badge = UI:NewText(card, "", 13, AK.COLORS.muted, "RIGHT")
+      -- On the title's line, not floating at the row's middle where the
+      -- circuit list wraps into it.
+      cards[index].badge:SetPoint("TOPRIGHT", -24, -24)
     end
-    if kind == "racer" then
+    if kind == "cup" then
+      detail:SetJustifyH("LEFT")
+      detail:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 0, -8)
+      detail:SetPoint("TOPRIGHT", name, "BOTTOMRIGHT", 0, -8)
+      stat:SetPoint("TOPLEFT", detail, "BOTTOMLEFT", 0, -8)
+      stat:SetPoint("TOPRIGHT", detail, "BOTTOMRIGHT", 0, -8)
+    elseif kind == "racer" then
       -- PINNED TO THE FLOOR, not flowed from the name. Six of the eleven names
       -- fit on one line at this width and five wrap to two, so a stat block
       -- hanging off the name's bottom edge sat at two different heights across
@@ -1336,17 +1401,17 @@ function Menu:BuildSelection(page, kind)
         table.insert(names, circuit.name)
         metres = metres + (circuit.length or 0) * (circuit.laps or 3)
       end
-      detail:SetText(table.concat(names, "\n"))
+      -- One line across the row, not a stack down a card.
+      detail:SetText(table.concat(names, "  /  "))
       -- WHETHER YOU HAVE WON IT. The trophy has been recorded since the cup
       -- screen was written and this was the one place that never said so, so
       -- the only way to find out which cups you still owed was to open the
       -- trophy room and count. A cup is the longest commitment in the game;
       -- the screen that starts one should say whether it is a rerun.
       local won = AK.db.progress.trophies and AK.db.progress.trophies[entry.id]
-      stat:SetText(("%d RACES  /  %dM\n|cff%s%s|r"):format(
-        #entry.tracks, metres,
-        AK:ColorHex(won and AK.COLORS.gold or AK.COLORS.muted),
-        won and "CUP WON" or "NOT YET WON"))
+      stat:SetText(("%d RACES  /  %dM"):format(#entry.tracks, metres))
+      cards[index].badge:SetText(won and "CUP WON" or "NOT YET WON")
+      cards[index].badge:SetTextColor(unpack(won and AK.COLORS.gold or { .40, .46, .56 }))
     else
       -- THREE LINES, not five. This used to carry the subtitle, the shortcut
       -- blurb, the lap count, a blank and the record -- and with five columns
