@@ -1463,6 +1463,94 @@ if loadFailures == 0 then
   -- seven tags from the grand prix before it stayed painted where they were.
   --
   -- Driven exactly as it was hit: a full grid, then a one-kart session.
+  -- AND NOTHING FROM THE LAST RACE SURVIVES INTO THE NEXT ONE.
+  --
+  -- The stuck name tag was one instance of a shape: a widget put on screen by
+  -- an event, and taken off by a path that can be skipped. The banners are the
+  -- rest of that shape -- a lap split, a spiny warning, a wrong-way flash, the
+  -- cooldown scrim -- and every one of them is shown by something that happens
+  -- and hidden by a deadline stored in RACE time, which resets to zero the
+  -- moment the next race starts. A deadline in the old race's clock can never
+  -- expire in the new one.
+  --
+  -- Driven, not read: a full race with the banners deliberately fired, then a
+  -- fresh race, then one frame. Anything still lit belongs to the race before.
+  ok("no banner from the last race is still up in the next one", function()
+    local RaceUI = AK.RaceUI
+    RaceUI:Build()
+
+    AK.Race:Start("quick", { track = "elwynn" })
+    local first = AK.Race.current
+    for _ = 1, math.ceil(8 / FRAME) do AK.Race:Update(FRAME) end
+    -- Fire every transient the HUD owns, by its own public route.
+    RaceUI:Announce("SOMETHING HAPPENED", AK.COLORS.gold)
+    if RaceUI.ShowLapSplit then RaceUI:ShowLapSplit(1, 34.5, 33.9) end
+    if RaceUI.SpinyIncoming then RaceUI:SpinyIncoming() end
+    if RaceUI.Flash then RaceUI:Flash(AK.COLORS.danger, 2.0) end
+    RaceUI:Render(first)
+    AK.Race:Stop(true)
+
+    -- A fresh race, and exactly one frame of it.
+    AK.Race:Start("quick", { track = "durotar" })
+    local second = AK.Race.current
+    AK.Race:Update(FRAME)
+    RaceUI:Render(second)
+
+    local transient = {
+      "finishCard", "finishPlate", "finishEdge", "splitText", "wrongWay",
+      "beatLabel", "spinyWarn", "notice",
+      "sectionLabel", "cooldownScrim", "recoveryVeil", "urgency", "flash",
+      -- The notice's plate, border and icon are judged separately below, on
+      -- whether the banner actually says anything.
+      -- NOT the start lights or the chequer: one frame into a race the lights
+      -- are the countdown and they are supposed to be up. They are the one
+      -- thing on the HUD whose presence at this exact moment is correct.
+    }
+    local lit = {}
+    for _, name in ipairs(transient) do
+      local region = RaceUI[name]
+      -- Some are driven by alpha and never hidden, some by SetShown; a region
+      -- counts as lit only if it is BOTH shown and not transparent, which is
+      -- the only combination a player can actually see.
+      if region and region.akShown and (region.akAlpha == nil or region.akAlpha > 0.01) then
+        local text = region.akText
+        if not text or text ~= "" then
+          lit[#lit + 1] = name .. (text and (" (" .. tostring(text) .. ")") or "")
+        end
+      end
+    end
+    -- THE NOTICE IS JUDGED ON WHETHER IT SAYS ANYTHING.
+    --
+    -- Race:Start announces "LINE UP FOR THE COUNTDOWN", so a banner up one
+    -- frame into the new race is not a leak -- it belongs to this race. An
+    -- ORPHAN is the plate, its border and its icon still lit with no words in
+    -- them, which is what is left when the text is faded out from under them
+    -- and nothing takes the furniture down.
+    if not (RaceUI.notice and (RaceUI.notice.akText or "") ~= "") then
+      for _, name in ipairs({ "noticePlate", "noticeEdge", "noticeIcon" }) do
+        local region = RaceUI[name]
+        if region and region.akShown
+          and (region.akAlpha == nil or region.akAlpha > 0.01) then
+          lit[#lit + 1] = name .. " (empty banner furniture)"
+        end
+      end
+    end
+
+    -- The chequered flag is a list of tiles, not one region.
+    local tiles = 0
+    for _, tile in ipairs(RaceUI.checker or {}) do
+      if tile.akShown and (tile.akAlpha == nil or tile.akAlpha > 0.01) then
+        tiles = tiles + 1
+      end
+    end
+    if tiles > 0 then lit[#lit + 1] = tiles .. " chequered tiles" end
+
+    say(("        %d of %d transient HUD regions still lit one frame into the next race")
+      :format(#lit, #transient + 1))
+    assert(#lit == 0, "the last race left these up: " .. table.concat(lit, ", "))
+    AK.Race:Stop(true)
+  end)
+
   ok("a smaller field leaves nothing from the last one on screen", function()
     local RaceUI = AK.RaceUI
     RaceUI:Build()

@@ -2480,6 +2480,20 @@ function RaceUI:ClearPresentation()
   forEachPresent(function(region) region:SetAlpha(0) end,
     self.finishCard, self.splitText, self.wrongWay,
     self.beatLabel, self.urgency, self.flash, self.spinyWarn)
+  -- THE NOTICE IS FOUR WIDGETS AND THIS KNEW ABOUT ONE.
+  --
+  -- The text above is faded to nothing, and the black plate behind it, its gold
+  -- border and its icon were left exactly as they were -- so starting a new
+  -- race cleared the words and left the empty banner sitting on the HUD. Worse,
+  -- nothing could ever take it down again: UpdatePresentation only hides those
+  -- three when a notice deadline EXPIRES, and the line above has just set that
+  -- deadline to nil, so the branch that would clean up never runs.
+  --
+  -- ClearBanner already owns the full list. Calling it is the fix, and it is
+  -- the reason to have had it: a second hand-written copy of "what a notice is
+  -- made of" is how this went wrong in the first place.
+  self:ClearBanner()
+
   -- These two manage their own shown state, so they have to actually be hidden:
   -- UpdatePresentation only runs during a race, and between races nothing would
   -- take them down. `checker` is a LIST of 24 cells, not a single texture --
