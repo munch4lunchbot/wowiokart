@@ -148,6 +148,66 @@ end
 -- rasterisation to fix: keep the minimum width, and give back in ALPHA exactly
 -- what was taken in width, so the line's total ink stays what the geometry
 -- asked for and it fades out instead of flickering.
+--- How much of a strip lies on a launch ramp, and how much of that is the lip.
+---
+--- A POINT TEST IS A COIN FLIP OUT THERE. This asked RampAt for the strip's far
+--- end alone, which is exact in the near field and meaningless in the far one:
+--- 1/z sampling makes the last strips tens of metres long, and a ramp is about
+--- forty-five, so whether the whole jump was painted at all came down to where
+--- one sample happened to land. It landed somewhere different every frame, so
+--- the ramp flashed in and out and jumped about -- "jumps still look slightly
+--- glitchy in the distance", which is the same singularity behind everything
+--- else in the far field.
+---
+--- Measured as OVERLAP instead. A strip that is half on the ramp gets half the
+--- paint, which is stable frame to frame because it is a property of the road
+--- rather than of the sampling.
+local function rampCover(track, fromZ, toZ)
+  local ramps = track.ramps
+  if not ramps then return 0, 0 end
+  local a = AK.TrackBuilder:At(track, fromZ)
+  local b = AK.TrackBuilder:At(track, toZ)
+  -- The strip straddles the lap seam, which is one strip a lap. Fall back to
+  -- the point test rather than reporting a negative span.
+  if b <= a then
+    local ramp = AK.TrackBuilder:RampAt(track, toZ)
+    if not ramp then return 0, 0 end
+    return 1, (ramp.to - b < 2.2) and 1 or 0
+  end
+  local span = b - a
+  local on, lip = 0, 0
+  for _, ramp in ipairs(ramps) do
+    local lo, hi = math.max(a, ramp.from), math.min(b, ramp.to)
+    if hi > lo then
+      on = on + (hi - lo)
+      local lipFrom = math.max(lo, ramp.to - 2.2)
+      if hi > lipFrom then lip = lip + (hi - lipFrom) end
+    end
+  end
+  return on / span, lip / span
+end
+
+-- HOW MUCH A BLINKING THING IS ALLOWED TO BLINK, by how far away it is.
+--
+-- The same argument as stripeFade, in time rather than in space. A pattern
+-- finer than the sampling has to ease toward its own mean or it aliases; a
+-- thing that BLINKS while it is two pixels wide and two hundred metres away
+-- cannot be localised either, so it stops reading as a signal and starts
+-- reading as the picture being broken. Three things in the scene blink -- the
+-- hazard rails along a launch ramp at 1.9Hz, its side barriers, and Oribos's
+-- travelling kerb pulse -- and every one of them is at its most distracting
+-- exactly where it is least useful: out at the horizon, where the eye cannot
+-- tell a flashing rail from a rendering fault. That is what is left of "jumps
+-- still look slightly glitchy in the distance".
+--
+-- The amplitude eases out; the MEAN stays. A distant ramp is still hazard gold
+-- and still reads as a ramp -- it simply holds still until you are close enough
+-- for the flashing to mean something.
+local FLICKER_NEAR, FLICKER_FAR = 70, 170
+local function flicker(dz)
+  return AK.Math.Clamp((FLICKER_FAR - dz) / (FLICKER_FAR - FLICKER_NEAR), 0, 1)
+end
+
 local THIN_PIXELS = 1.6
 local function thinLine(width)
   if width >= THIN_PIXELS then return width, 1 end
@@ -3918,16 +3978,25 @@ function RaceUI:DrawRibbon(race, route, from, startDz, centre, baseY, span,
         -- slow gave you nothing to aim at. Same hazard bands and same white
         -- lip as the main road, from the same table.
         local rampR, rampG, rampB = roadColor[1], roadColor[2], roadColor[3]
-        local ribbonRamp = AK.TrackBuilder:RampAt(route, from + bd)
-        if ribbonRamp then
+        -- By COVERAGE, like the main road's -- see rampCover. A point test out
+        -- where one ribbon strip spans tens of metres decides whether the whole
+        -- jump is painted on the roll of a die, and rolls it again next frame.
+        local ribMix, ribLip = rampCover(route, from + bd - span / FORK_SEGMENTS,
+          from + bd)
+        if ribMix > 0.02 then
+          local cr, cg, cb
           if math.floor((from + bd) / 2.4) % 2 == 0 then
-            rampR, rampG, rampB = 1.00, 0.78, 0.10
+            cr, cg, cb = 1.00, 0.78, 0.10
           else
-            rampR, rampG, rampB = 0.13, 0.10, 0.06
+            cr, cg, cb = 0.13, 0.10, 0.06
           end
-          if ribbonRamp.to - AK.TrackBuilder:At(route, from + bd) < 2.2 then
-            rampR, rampG, rampB = 1.00, 0.97, 0.88
+          if ribLip > 0 then
+            cr, cg, cb = cr + (1.00 - cr) * ribLip, cg + (0.97 - cg) * ribLip,
+              cb + (0.88 - cb) * ribLip
           end
+          rampR = rampR + (cr - rampR) * ribMix
+          rampG = rampG + (cg - rampG) * ribMix
+          rampB = rampB + (cb - rampB) * ribMix
         end
         -- The same wash the main road gets. Fogging the ribbon by
         -- brightness alone while the tarmac beside it recedes toward the
@@ -3957,7 +4026,7 @@ function RaceUI:DrawRibbon(race, route, from, startDz, centre, baseY, span,
         -- overlaps it for the first fifty metres. The pulse now runs
         -- between three quarters and full rather than between a little
         -- over half and full, and the hue is a lime rather than a leaf.
-        local glow = 0.75 + 0.25 * math.sin(race.elapsed * 6 - bd * 0.2)
+        local glow = 0.75 + 0.25 * math.sin(race.elapsed * 6 - bd * 0.2) * flicker(dz)
         local rr, rg, rb = self:Aerial(0.48 * glow, 1.0 * glow, 0.30 * glow, light, dz)
         -- Unrolled. This was `ipairs({ { strip.edgeLeft, -1 }, ... })`,
         -- which allocated three tables per strip per frame -- a hundred
@@ -4440,10 +4509,8 @@ function RaceUI:RenderRoad(race, player)
       -- metres, where the wheels actually leave -- is the one place on a jump
       -- the player has to be able to see exactly, and it was drawn the same
       -- mustard as the forty metres of run-up before it.
-      local ramp = AK.TrackBuilder:RampAt(track, segZ)
-      local onRamp = ramp ~= nil
-      local toLip
-      if ramp then toLip = ramp.to - AK.TrackBuilder:At(track, segZ) end
+      local rampMix, lipMix = rampCover(track, previousZ, segZ)
+      local onRamp = rampMix > 0.02
       -- Distance fog, scaled by the track's ambient light so night circuits go
       -- dark into the distance instead of staying flatly lit.
       local fog = AK.Math.Clamp(1 - (dz / HAZE_Z) * tuning.fogStrength, 0.22, 1) * light
@@ -4559,8 +4626,23 @@ function RaceUI:RenderRoad(race, player)
         local cr, cg, cb = towardMean(1.00, 0.78, 0.10, 0.22, 0.16, 0.07, rampStripe)
         if not band then cr, cg, cb = towardMean(0.22, 0.16, 0.07, 1.00, 0.78, 0.10, rampStripe) end
         -- The lip. Two metres of white, so the exact moment you leave the
-        -- ground is a line you can aim at rather than something that happens.
-        if toLip and toLip < 2.2 then cr, cg, cb = 1.00, 0.97, 0.88 end
+        -- ground is a line you can aim at rather than something that happens --
+        -- and mixed in by how much of the strip it really covers, or it is the
+        -- same coin flip the ramp itself was, on the highest-contrast thing in
+        -- the frame.
+        if lipMix > 0 then
+          cr = cr + (1.00 - cr) * lipMix
+          cg = cg + (0.97 - cg) * lipMix
+          cb = cb + (0.88 - cb) * lipMix
+        end
+        -- And the ramp paint itself is mixed over the tarmac by coverage, so a
+        -- strip that is half on the jump is half gold rather than all or
+        -- nothing. Near the kart rampMix is 1 and this costs nothing.
+        if rampMix < 1 then
+          cr = roadColor[1] + (cr - roadColor[1]) * rampMix
+          cg = roadColor[2] + (cg - roadColor[2]) * rampMix
+          cb = roadColor[3] + (cb - roadColor[3]) * rampMix
+        end
         strip.road:SetVertexColor(aerial(cr, cg, cb,
           roadLight * (flatRoad and ROAD_MEAN or 1), mix))
       else
@@ -4624,7 +4706,7 @@ function RaceUI:RenderRoad(race, player)
         -- Anima light pulsing along the verge, travelling with the stripes.
         -- The pulse has a 22m period, so it aliases on the same terms; its
         -- DEPTH fades rather than its colour, leaving a steady light.
-        local depth = 0.45 * stripeFade(22, segZ - previousZ)
+        local depth = 0.45 * stripeFade(22, segZ - previousZ) * flicker(dz)
         local pulse = (1 - depth) + depth * math.sin(segZ * 0.28 - race.elapsed * 5)
         rr, rg, rb = towardMean(0.30, 0.82, 1.00, 1.00, 0.72, 0.28, stripe)
         if dark then rr, rg, rb = towardMean(1.00, 0.72, 0.28, 0.30, 0.82, 1.00, stripe) end
@@ -4632,8 +4714,13 @@ function RaceUI:RenderRoad(race, player)
       end
       if onRamp then
         -- Blazing rails either side of the launch, so it reads from far off.
-        local flash = 0.65 + 0.35 * math.sin(race.elapsed * 12)
-        rr, rg, rb = 1.0 * flash, 0.85 * flash, 0.25 * flash
+        -- Mixed in by coverage like the paint: a rail that switched on and off
+        -- with a point test was a pair of hazard-gold dashes blinking in the
+        -- far field, which is the most eye-catching kind of wrong.
+        local flash = 0.65 + 0.35 * math.sin(race.elapsed * 12) * flicker(dz)
+        rr = rr + (1.0 * flash - rr) * rampMix
+        rg = rg + (0.85 * flash - rg) * rampMix
+        rb = rb + (0.25 * flash - rb) * rampMix
       end
       -- Kerbs are part of the road surface, and in a tunnel they are the most
       -- important thing on screen: they are what tells you where the edge is.
@@ -4813,7 +4900,7 @@ function RaceUI:RenderRoad(race, player)
         local nearOut = math.max(1, (previousPPM or pixelsPerMetre) * 0.40)
         local thick = math.max(railOut, nearOut)
         local railTop = math.max(previousY + nearHeight, y + railHeight)
-        local flash = 0.70 + 0.30 * math.sin(race.elapsed * 12)
+        local flash = 0.70 + 0.30 * math.sin(race.elapsed * 12) * flicker(dz)
         local rr2, rg2, rb2 = 0.95 * flash * fog, 0.80 * flash * fog, 0.26 * flash * fog
         -- Indexed rather than `pairs({ [-1] = ..., [1] = ... })`: that built a
         -- fresh table for every strip of every frame -- a hundred and fifty
@@ -4834,7 +4921,11 @@ function RaceUI:RenderRoad(race, player)
           texture:SetTexCoord(0, 1, 0, 1)
           texture:SetPoint("BOTTOM", self.frame, "CENTER", (lo + hi) * 0.5, previousY)
           texture:SetSize(math.max(1, hi - lo), math.max(2, railTop - previousY))
-          texture:SetVertexColor(rr2, rg2, rb2, 1)
+          -- Faded by how much of this strip is really on the ramp, so the
+          -- first and last rail of a jump arrive and leave instead of popping.
+          -- Out in the far field one strip can be longer than the whole ramp,
+          -- and a rail switched by a point test blinks.
+          texture:SetVertexColor(rr2, rg2, rb2, rampMix)
           setShown(texture, true)
         end
         setShown(strip.ceiling, false)

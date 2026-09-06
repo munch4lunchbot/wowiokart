@@ -75,6 +75,23 @@ const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
  * stable thing left to draw.
  */
 const STRIPE_RESOLVE = 2.6;
+// HOW MUCH A BLINKING THING IS ALLOWED TO BLINK, by how far away it is.
+//
+// The same argument as stripeFade, in time rather than in space. A pattern
+// finer than the sampling has to ease toward its own mean or it aliases; a
+// thing that blinks while it is two pixels wide and two hundred metres away
+// cannot be localised either, so it reads as the picture being broken rather
+// than as a signal -- "jumps still look slightly glitchy in the distance". The
+// amplitude eases out instead; the mean stays, so a distant ramp is still gold,
+// it just holds still.
+const FLICKER_NEAR = 70, FLICKER_FAR = 170;
+function flicker(dz) {
+  // FLICKER_OFF=1 restores the old always-on amplitude, so the difference can
+  // be measured rather than asserted.
+  if (process.env.FLICKER_OFF) return 1;
+  return clamp((FLICKER_FAR - dz) / (FLICKER_FAR - FLICKER_NEAR), 0, 1);
+}
+
 function stripeFade(period, dzSpan) {
   return clamp01((period / Math.max(0.01, dzSpan) - 1) / STRIPE_RESOLVE);
 }
@@ -197,6 +214,16 @@ const aerialAt = (c, lit, dz) => {
 };
 const { drawText } = require("./hud-font.js");
 const STRIPE = 4.5, CURVE_SCALE = +(process.env.CS || 30);
+// A CLOCK, so the things that BLINK can be looked at.
+//
+// Everything animated in the scene -- the ramp's hazard rails, Oribos's
+// travelling kerb pulse, the shortcut ribbon's glow -- is driven by race
+// elapsed time, and this sheet had none, so it rendered them all at t=0 and
+// could say nothing at all about flicker. Rendering the same camera at two
+// values of ELAPSED is the exact measurement for "how much of the far field
+// moves when nothing moves but the clock", which is what a distant blinking
+// rail is.
+const ELAPSED = +(process.env.ELAPSED || 0);
 // NONORM=1 drops the global peak-fit in the compile, so authored curvature
 // keeps its absolute size and a hairpin stays a hairpin regardless of what else
 // is on the lap.
@@ -763,9 +790,34 @@ for (let r = rows.length - 1; r >= 0; r--) {
   // everything periodic on this strip eases toward its own average.
   const stripe = stripeFade(STRIPE, row.segZ - row.prevZ);
   const rz=((row.segZ%track.length)+track.length)%track.length;
-  const rampSpan = track._ramps.find(r=>rz>=r[0]&&rz<=r[1]);
-  const onRamp = !!rampSpan;
-  const toLip = rampSpan ? rampSpan[1] - rz : null;
+  // MIRRORS rampCover in UI/RaceUI.lua. A point test out where a strip spans
+  // tens of metres decides whether a forty-five metre ramp is painted at all on
+  // the roll of a die, and rolls it again next frame -- which is the "jumps
+  // still look slightly glitchy in the distance". Measured as overlap instead.
+  const [rampMix, lipMix] = (() => {
+    // POINTRAMP=1 restores the point test, so the difference this makes can be
+    // measured rather than asserted.
+    if (process.env.POINTRAMP) {
+      const hit = track._ramps.find(r => rz >= r[0] && rz <= r[1]);
+      return hit ? [1, hit[1] - rz < 2.2 ? 1 : 0] : [0, 0];
+    }
+    const a = ((row.prevZ % track.length) + track.length) % track.length;
+    if (rz <= a) {
+      const hit = track._ramps.find(r => rz >= r[0] && rz <= r[1]);
+      return hit ? [1, hit[1] - rz < 2.2 ? 1 : 0] : [0, 0];
+    }
+    let on = 0, lip = 0;
+    for (const r of track._ramps) {
+      const lo = Math.max(a, r[0]), hi = Math.min(rz, r[1]);
+      if (hi > lo) {
+        on += hi - lo;
+        const lipFrom = Math.max(lo, r[1] - 2.2);
+        if (hi > lipFrom) lip += hi - lipFrom;
+      }
+    }
+    return [on / (rz - a), lip / (rz - a)];
+  })();
+  const onRamp = rampMix > 0.02;
   const yTop = SY(row.y + row.h), hpx = row.h + 1;
   // The road quad at the NARROWEST of its two edges, never the average -- see
   // the note in RaceUI:RenderRoad. It can then only fall short of the true
@@ -850,7 +902,8 @@ for (let r = rows.length - 1; r >= 0; r--) {
     const nearH = Math.max(2, (row.nearPPM || row.ppm) * 1.15);
     const thick = Math.max(1, Math.max(row.ppm, row.nearPPM || row.ppm) * 0.40);
     const top = Math.max(row.h + nearH, railH);
-    const c = [0.95 * fog, 0.80 * fog, 0.26 * fog];
+    const rf = 0.70 + 0.30 * Math.sin(ELAPSED * 12) * flicker(row.dz);
+    const c = [0.95 * rf * fog, 0.80 * rf * fog, 0.26 * rf * fog];
     const nl = row.nearX - row.nearHalf, fl = row.farX - row.farHalf;
     const nr = row.nearX + row.nearHalf, fr = row.farX + row.farHalf;
     const lo = Math.min(nl, fl) - thick, hi = Math.max(nl, fl);
@@ -886,7 +939,14 @@ for (let r = rows.length - 1; r >= 0; r--) {
       rampPaint = (Math.floor(row.segZ / 2.4) % 2 === 0)
         ? towardMean([1.00, 0.78, 0.10], [0.22, 0.16, 0.07], rampStripe)
         : towardMean([0.22, 0.16, 0.07], [1.00, 0.78, 0.10], rampStripe);
-      if (toLip !== null && toLip < 2.2) rampPaint = [1.00, 0.97, 0.88];
+      // The lip and the paint are both mixed in by coverage -- mirrors
+      // RenderRoad. Half a strip on the jump is half gold, not all or nothing.
+      if (lipMix > 0) {
+        rampPaint = rampPaint.map((c, i) => c + ([1.00, 0.97, 0.88][i] - c) * lipMix);
+      }
+      if (rampMix < 1) {
+        rampPaint = rampPaint.map((c, i) => track.road[i] + (c - track.road[i]) * rampMix);
+      }
     }
     const tint = rampPaint
       ? aerial(rampPaint, tarmacLight * meanFix, mix)
@@ -907,7 +967,11 @@ for (let r = rows.length - 1; r >= 0; r--) {
     clamp(row.midHalf * (track.style === "oribos" ? .055 : .05), 0.2, 20));
   let rr, rg, rb;
   if (track.style === "oribos") {
-    const pulse = .55 + .45 * Math.sin(row.segZ * .28);
+    // Mirrors RenderRoad: the pulse has a 22m period so it aliases on the same
+    // terms as everything else, and its depth falls off with distance as well
+    // as with sampling -- out there it is a travelling shimmer, not a pulse.
+    const depth = 0.45 * stripeFade(22, row.segZ - row.prevZ) * flicker(row.dz);
+    const pulse = (1 - depth) + depth * Math.sin(row.segZ * .28 - ELAPSED * 5);
     [rr, rg, rb] = dark ? [1 * pulse, .72 * pulse, .28 * pulse] : [.30 * pulse, .82 * pulse, 1 * pulse];
   } else {
     // The kerb is the worst of the aliasing: the highest-contrast pattern in
@@ -917,7 +981,15 @@ for (let r = rows.length - 1; r >= 0; r--) {
       ? towardMean([.95, .95, .96], [.82, .22, .18], stripe)
       : towardMean([.82, .22, .18], [.95, .95, .96], stripe);
   }
-  if(onRamp){ const fl=0.8; rr=1.0*fl; rg=0.85*fl; rb=0.25*fl; }
+  if (onRamp) {
+    // Mirrors RenderRoad: the flash amplitude falls off with distance, because
+    // a 1.9Hz strobe on a two-pixel rail two hundred metres away is not a
+    // signal, it is noise. Mixed in by ramp coverage as well.
+    const fl = 0.65 + 0.35 * Math.sin(ELAPSED * 12) * flicker(row.dz);
+    rr += (1.0 * fl - rr) * rampMix;
+    rg += (0.85 * fl - rg) * rampMix;
+    rb += (0.25 * fl - rb) * rampMix;
+  }
   // Kerbs are part of the road surface: they take the tarmac's lighting, not
   // the rock's. In a tunnel they are the only thing marking where the edge is.
   const rc = aerial([rr, rg, rb], tarmacLight, mix);
@@ -1086,7 +1158,7 @@ if (!process.env.NOFORK) {
         // Bright rails, so the alternate line reads as a road and not as a
         // shadow on the grass.
         const rail = clamp(rib.midHalf * 0.055, 2.5, 18);
-        const glow = 0.75 + 0.25 * Math.sin(-rib.bd * 0.2);
+        const glow = 0.75 + 0.25 * Math.sin(ELAPSED * 6 - rib.bd * 0.2) * flicker(rib.dz);
         const rc = aerialAt([0.48 * glow, 1.0 * glow, 0.30 * glow], light, rib.dz);
         // Diagonals on the ribbon's true edge -- see `edge`. A branch is at
         // its most oblique exactly where it leaves the road, so its rails were
