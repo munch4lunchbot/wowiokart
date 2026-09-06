@@ -33,9 +33,49 @@ local DRIFT_STEER = 1.30
 -- curvature at which it earns all of it. A straight banks almost nothing.
 local DRIFT_LOAD_FLOOR = 0.30
 local DRIFT_LOAD_FULL = 1.6
+-- HOW MUCH OF THE SLIDE YOU KEEP WHEN YOU ARE NOT HOLDING IT IN.
+--
+-- A drift in this genre is a COMMITMENT. Once the kart is sideways it is going
+-- round that way, and the stick decides only how tight -- hold it in and the
+-- arc closes, fight it and the arc opens, but you never turn the other way
+-- until you let the button go. Here the drift was nothing of the sort: it set a
+-- direction, kept it for the charge meter, and then went on steering off raw
+-- input at full authority in either direction. You could drift left and turn
+-- right just as hard as if you were not drifting at all, which makes the whole
+-- mechanic a 30% steering bonus with a light show attached.
+--
+-- Neutral stick still carries most of the turn, because that is what "sliding"
+-- means; full countersteer unwinds it to a fifth without ever reversing it.
+local DRIFT_NEUTRAL_HOLD = 0.62
+local DRIFT_COUNTER_HOLD = 0.20
+-- What is left of the wheel while the wheels are off the ground.
+local AIR_STEER = 0.30
 -- Published, because Race/AI.lua works out how fast it can take a corner and
 -- has to use the same physics the corner is actually resolved with.
 AK.DRIFT_BITE, AK.DRIFT_STEER = DRIFT_BITE, DRIFT_STEER
+
+-- WHAT A BOOST IS WORTH. Every boost in the game used to be the same 1.30 --
+-- the smallest mini-turbo and a Mushroom moved the same needle, and the drift
+-- ladder's three rungs differed only in how long the identical boost lasted.
+-- The ladder is most of the skill in a kart racer and it has to PAY.
+local BOOST_MINI, BOOST_SUPER, BOOST_MEGA = 1.17, 1.25, 1.34
+local BOOST_MUSHROOM, BOOST_PAD, BOOST_TRICK = 1.38, 1.30, 1.22
+local BOOST_START, BOOST_SLING, BOOST_GHOST = 1.32, 1.20, 1.20
+AK.BOOST = {
+  mini = BOOST_MINI, super = BOOST_SUPER, mega = BOOST_MEGA,
+  mushroom = BOOST_MUSHROOM, pad = BOOST_PAD, trick = BOOST_TRICK,
+  start = BOOST_START, sling = BOOST_SLING, ghost = BOOST_GHOST,
+}
+
+--- Hand a kart a boost of a given strength.
+---
+--- Time and strength take the better of what is already running, separately: a
+--- Mushroom fired during a mini-turbo does not get shortened by it, and a
+--- mini-turbo banked during a Mushroom does not weaken it.
+function Physics:Boost(vehicle, seconds, power)
+  vehicle.boostTime = math.max(vehicle.boostTime or 0, seconds)
+  vehicle.boostPower = math.max(vehicle.boostPower or 0, power or BOOST_PAD)
+end
 
 AK.WEIGHT_CLASSES = {
   light  = { accel = 1.22, top = 0.94, handling = 1.14, recovery = 1.35, mass = 0.68 },
@@ -95,7 +135,9 @@ function Physics:ReleaseDrift(race, vehicle)
   if not vehicle.drifting then return end
   if vehicle.driftCharge > .35 then
     local boost = vehicle.driftCharge > 1.8 and 1.45 or (vehicle.driftCharge > .9 and .85 or .42)
-    vehicle.boostTime = math.max(vehicle.boostTime, boost)
+    local power = vehicle.driftCharge > 1.8 and BOOST_MEGA
+      or (vehicle.driftCharge > .9 and BOOST_SUPER or BOOST_MINI)
+    self:Boost(vehicle, boost, power)
     vehicle.speed = math.max(vehicle.speed, vehicle.maxSpeed * (1.04 + boost * .055))
     if vehicle == race.player then
       -- Tier from the SAME thresholds that chose the boost, so the burst, the
@@ -345,8 +387,10 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
     -- belongs to the launch, where the speed that earned it is known.
     vehicle.airApex = JUMP_APEX_LOW + (JUMP_APEX_HIGH - JUMP_APEX_LOW)
       * AK.Math.Clamp((vehicle.air - 0.62) / 0.90, 0, 1)
+    -- One trick per flight, and it has not been done yet.
+    vehicle.tricked = false
     if vehicle == race.player then
-      AK.RaceUI:Announce("JUMP!", AK.COLORS.gold)
+      AK.RaceUI:Announce("JUMP!  HOP TO TRICK", AK.COLORS.gold)
       -- The shake, the shove and the burst all live in RaceUI:FeelLaunch, which
       -- fires off the same rising edge the landing's dip fires off. Shaking
       -- from here as well double-counted it.
@@ -355,22 +399,46 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
   elseif not ramp then
     if vehicle.launched and (vehicle.air or 0) <= 0 then
       vehicle.launched = false
-      -- Clean landing pays out a short boost.
-      vehicle.boostTime = math.max(vehicle.boostTime or 0, 0.8)
+      -- THE LANDING PAYS FOR THE TRICK, NOT FOR THE JUMP.
+      --
+      -- Every landing used to hand out the same boost automatically, so the
+      -- most eventful thing on most of these circuits asked the player for
+      -- nothing at all: you drove at a ramp and a boost happened. A ramp is
+      -- supposed to be a beat you PLAY -- flick the hop button while you are up
+      -- there and land it, or come down with nothing.
+      if vehicle.tricked then
+        self:Boost(vehicle, 0.85, BOOST_TRICK)
+      end
       -- The kart takes the impact, not just the camera. Its own channel rather
       -- than the lightning squash: that one flattens you to half height, which
       -- is being hit by something, not landing on your suspension.
       vehicle.land = 0.20
       vehicle.landMax = 0.20
       if vehicle == race.player then
-        AK.RaceUI:Announce("CLEAN LANDING!", AK.COLORS.lime)
-        AK.RaceUI:Shake(14)
+        AK.RaceUI:Announce(vehicle.tricked and "TRICK!  CLEAN LANDING" or "LANDED",
+          vehicle.tricked and AK.COLORS.lime or AK.COLORS.muted)
+        AK.RaceUI:Shake(vehicle.tricked and 14 or 9)
         if AK.PlaySfx then AK:PlaySfx("landing") end
       end
+      vehicle.tricked = false
     elseif (vehicle.air or 0) <= 0 then
       vehicle.launched = false
     end
   end
+
+  -- The trick itself. Any moment in the air will do -- the skill is remembering
+  -- to do it at all while a corner is arriving -- but only once per flight, and
+  -- the spin is visual, decided here so the renderer has something to read.
+  if (vehicle.air or 0) > 0 and controls.hopPressed and not vehicle.tricked then
+    vehicle.tricked = true
+    vehicle.trick = math.max(vehicle.air, 0.30)
+    vehicle.trickMax = vehicle.trick
+    if vehicle == race.player then
+      AK.RaceUI:Flash(AK.COLORS.gold, .10)
+      if AK.PlaySfx then AK:PlaySfx("jump") end
+    end
+  end
+  vehicle.trick = math.max(0, (vehicle.trick or 0) - dt)
 
   vehicle.spin = math.max(0, (vehicle.spin or 0) - dt)
   vehicle.hop = math.max(0, (vehicle.hop or 0) - dt)
@@ -391,7 +459,11 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
   -- Star power outruns everything and cannot be slowed at all.
   if vehicle.star > 0 then vehicle.slow = 0 end
   local turning = (controls.left and -1 or 0) + (controls.right and 1 or 0)
-  local boostMultiplier = vehicle.boostTime > 0 and 1.30 or 1
+  -- Strength comes off the boost that granted it; the field is cleared when the
+  -- clock runs out so a spent Mushroom cannot lend its power to the next
+  -- mini-turbo.
+  if (vehicle.boostTime or 0) <= 0 then vehicle.boostPower = nil end
+  local boostMultiplier = vehicle.boostTime > 0 and (vehicle.boostPower or BOOST_PAD) or 1
   if vehicle.star > 0 then boostMultiplier = boostMultiplier * 1.10 end
   -- Tow from running in someone's dirty air: up to +9% top speed.
   boostMultiplier = boostMultiplier * (1 + (vehicle.slipstream or 0) * 0.056)
@@ -421,8 +493,30 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
     -- A Mushroom overrules the surface. This is the whole reason a shortcut
     -- across grass is a decision rather than a mistake: the boost has to WIN
     -- the interaction, not be cancelled out by the terrain penalty.
-    if (vehicle.boostTime or 0) > 0 or (vehicle.star or 0) > 0 then
+    --
+    -- Only a surface that PUNISHES, though. This damped everything the wheels
+    -- were on, so a Mushroom fired along Oribos's dash-panel road threw away
+    -- four fifths of the strip's own advantage -- the boost overruling the
+    -- thing that was helping it.
+    if ((vehicle.boostTime or 0) > 0 or (vehicle.star or 0) > 0)
+      and (material.speed or 1) < 1 then
       blend = blend * 0.20
+    end
+    -- A PAINTED BOOST STRIP HAS TO BOOST.
+    --
+    -- Every material carries a `boost` and only the dash panel sets one, and
+    -- nothing anywhere read it. What the strip actually did was raise
+    -- acceleration and nothing else: the top-speed side of it went through the
+    -- `drag` branch further down, which only ever applies a material's speed
+    -- figure when it is BELOW one -- so a surface meant to make you faster was
+    -- silently ignored, and the comment in Data/Terrain.lua promising "+35% top
+    -- speed" described nothing. 230m of Oribos is painted with this.
+    --
+    -- Granted as a real boost, so it also lights the flame, kicks the lens and
+    -- reads on the HUD as a boost, which is what driving down a gold strip is
+    -- supposed to look like. Short, and renewed every frame you stay on it.
+    if (material.boost or 0) > 1 and blend > 0.5 then
+      self:Boost(vehicle, 0.25, material.boost)
     end
     vehicle.material = material
     vehicle.materialBlend = blend
@@ -488,9 +582,31 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
     if controls.hopPressed and (vehicle.air or 0) <= 0 and (vehicle.hopAir or 0) <= 0 then
       vehicle.hopAir = 0.30
       vehicle.hopAirMax = 0.30
+      -- AND A HOP MOVES YOU. In the games this is modelled on, tapping the hop
+      -- button while turning shifts the kart across a little -- it is how you
+      -- make the small adjustment that the wheel is too coarse for, edge onto a
+      -- boost pad, or step around a banana you saw too late. Here the hop was
+      -- purely a picture: it bounced the sprite and changed nothing at all,
+      -- which is the whole of what the button does when you are not drifting.
+      --
+      -- Gated by the hop's own 0.3s, and it costs a sliver of speed, so
+      -- crabbing sideways down the road stays a poor way to travel.
+      if turning ~= 0 then
+        vehicle.lateral = vehicle.lateral + turning * 0.10
+        vehicle.speed = vehicle.speed * 0.985
+      end
     end
 
-    if controls.drift and turning ~= 0 and vehicle.speed > 18 then
+    -- A DRIFT DOES NOT SNAP OFF WHEN THE STICK PASSES THROUGH CENTRE.
+    --
+    -- Entry needs a steering input -- you cannot start a slide going straight
+    -- -- but staying in one does not, and requiring it meant a single frame at
+    -- neutral between two corners of the same direction threw the mini-turbo
+    -- away. No kart racer works that way: the button holds the drift, and the
+    -- stick shapes it. Airborne karts cannot start one at all; there is nothing
+    -- under the wheels to break traction.
+    if controls.drift and vehicle.speed > 18
+      and (vehicle.drifting or (turning ~= 0 and (vehicle.air or 0) <= 0)) then
       if not vehicle.drifting then
         -- Every kart racer starts a drift with a hop. It reads as commitment
         -- and it is the clearest signal that the drift actually engaged.
@@ -510,9 +626,15 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
       -- stick against and back into the slide is what charges the mini-turbo.
       -- Simply holding the stick down through a corner should charge slowly;
       -- working the slide should charge fast.
-      local counter = (turning ~= vehicle.driftDirection) and 1 or 0
-      local rocked = (vehicle.lastSteer and turning ~= vehicle.lastSteer) and 1 or 0
-      vehicle.lastSteer = turning
+      -- A NEUTRAL STICK IS NOT COUNTERSTEER. Both of these read `turning`
+      -- directly, so releasing the wheel scored as holding it against the slide
+      -- -- the largest charge bonus there is -- and letting go and grabbing it
+      -- again scored as a rock. Now that a drift survives centre, that would
+      -- have been the fastest way to bank a mega: do nothing.
+      local counter = (turning ~= 0 and turning ~= vehicle.driftDirection) and 1 or 0
+      local rocked = (turning ~= 0 and vehicle.lastSteer and vehicle.lastSteer ~= 0
+        and turning ~= vehicle.lastSteer) and 1 or 0
+      if turning ~= 0 then vehicle.lastSteer = turning end
       local rate = (.30 + vehicle.driftStat * .05)      -- baseline, holding in
         + counter * (.22 + vehicle.driftStat * .04)     -- holding counter-steer
         + rocked * 0.55                                  -- the moment you rock it
@@ -528,6 +650,14 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
         math.abs(AK.Math.RoadCurve(vehicle.route or race.track, vehicle.distance))
           / DRIFT_LOAD_FULL, 0, 1)
       rate = rate * (DRIFT_LOAD_FLOOR + (1 - DRIFT_LOAD_FLOOR) * load)
+      -- AND THE GROUND DECIDES WHETHER YOU CAN WORK A SLIDE AT ALL. Every
+      -- material carries a `drift` figure -- ice 1.35, mud 0.40, scree 0.25 --
+      -- and nothing had ever read one, so a mini-turbo charged at exactly the
+      -- same rate on a glacier and in a bog. It is the cheapest way to make two
+      -- surfaces feel like different places, and the file that declares them
+      -- says in its own header that this is what the number is for.
+      rate = rate * AK.Terrain:Mix(vehicle.material or AK.Terrain.TYPES.ROAD,
+        "drift", vehicle.materialBlend or 0)
       -- The ladder cue fires from RaceUI's existing threshold-crossing check in
       -- VehicleEffects, which already tracks `previous.charge` and owns the
       -- matching spark pop. Detecting the same crossing here as well would
@@ -539,7 +669,21 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
     elseif vehicle.drifting then
       self:ReleaseDrift(race, vehicle)
     end
-    if turning ~= 0 then
+    -- WHERE THE WHEEL ACTUALLY POINTS THIS FRAME.
+    --
+    -- Gripping, that is simply the stick. Drifting, the kart is committed: it
+    -- keeps turning the way it is sliding whatever the stick says, and the
+    -- stick only chooses how tight -- all of it holding in, most of it at
+    -- neutral, a fifth of it fighting the slide. It never crosses zero, which
+    -- is the difference between a drift and a steering bonus.
+    local steerInput = turning
+    if vehicle.drifting then
+      local hold = DRIFT_NEUTRAL_HOLD
+      if turning == vehicle.driftDirection then hold = 1
+      elseif turning ~= 0 then hold = DRIFT_COUNTER_HOLD end
+      steerInput = vehicle.driftDirection * hold
+    end
+    if steerInput ~= 0 then
       -- Turn-in authority peaks in the middle of the rev range and falls away
       -- at the top end.
       --
@@ -594,13 +738,24 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
         * (0.45 + 0.55 * AK.Terrain:Mix(surface, "traction", surfaceBlend))
       -- A spin-out takes the wheel away for its duration; that is the cost.
       if vehicle.spin > 0 then turnStrength = turnStrength * 0.22 end
-      vehicle.lateral = vehicle.lateral + turning * turnStrength * dt
+      -- NOTHING TO STEER AGAINST IN MID-AIR. The launch above says in as many
+      -- words that a jump costs you steering, and nothing anywhere implemented
+      -- it: a kart off a ramp had the full wheel and no centrifugal push at
+      -- all, which made the biggest jump on the lap the easiest place in the
+      -- game to change lanes. A flight is meant to be a commitment you make on
+      -- the run-up.
+      if (vehicle.air or 0) > 0 then turnStrength = turnStrength * AIR_STEER end
+      vehicle.lateral = vehicle.lateral + steerInput * turnStrength * dt
       -- The skid itself: the kart washes toward the OUTSIDE of the corner, on
       -- top of the grip it has already lost. Reduced authority alone reads as
       -- vague steering; an actual outward slide reads as breaking traction.
       if (vehicle.skidding or 0) > 0 then
-        vehicle.lateral = vehicle.lateral - turning * vehicle.skidding * 0.46 * dt
+        vehicle.lateral = vehicle.lateral - steerInput * vehicle.skidding * 0.46 * dt
       end
+    else
+      -- Coasting straight: no brake load, so no skid to carry into the next
+      -- corner. This used to keep whatever the last steering frame left behind.
+      vehicle.skidding = 0
     end
     -- Spinning karts drift sideways off their own momentum.
     if vehicle.spin > 0 then
@@ -751,7 +906,18 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
   -- the fence alone would have done nothing on the widest sections. Sized off
   -- the tuning knob's own ceiling so the two can never disagree again.
   vehicle.lateral = AK.Math.Clamp(vehicle.lateral, -8, 8)
-  vehicle.speed = AK.Math.Clamp(vehicle.speed, 0, topSpeed)
+  -- A BOOST DOES NOT END WITH A HANDBRAKE.
+  --
+  -- This was a hard clamp to the current ceiling, so the frame a Mushroom ran
+  -- out the kart lost 38% of its speed instantly -- a wall you drive into with
+  -- nothing on screen to explain it, and the better the boost the harder the
+  -- wall. Every kart racer lets you carry the overspeed out and bleed it off.
+  -- Nothing below the ceiling is affected: the power taper is what stops a kart
+  -- there under its own steam, and always was.
+  if vehicle.speed > topSpeed then
+    vehicle.speed = math.max(topSpeed, vehicle.speed - (vehicle.speed - topSpeed) * 2.6 * dt)
+  end
+  vehicle.speed = math.max(0, vehicle.speed)
   vehicle.distance = vehicle.distance + vehicle.speed * dt
   vehicle.padCooldown = math.max(0, (vehicle.padCooldown or 0) - dt)
   vehicle.bumpCooldown = math.max(0, (vehicle.bumpCooldown or 0) - dt)

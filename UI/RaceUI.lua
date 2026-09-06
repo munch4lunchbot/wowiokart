@@ -1881,7 +1881,7 @@ function RaceUI:Build()
   -- discoverable. Sits under the buttons so it never covers the road.
   self.controlHint = UI:NewText(self.controlBar,
     "W / UP  GAS      S / DOWN  BRAKE      A D  or  LEFT RIGHT  STEER      "
-    .. "SPACE  HOP / DRIFT      SHIFT  ITEM      Q  AIM BACK      ESC  PAUSE",
+    .. "SPACE  HOP / DRIFT / TRICK      SHIFT  ITEM      Q  AIM BACK      ESC  PAUSE",
     11, AK.COLORS.muted, "CENTER")
   self.controlHint:SetPoint("BOTTOM", 0, 8)
 
@@ -5814,7 +5814,16 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       local travel = vehicle.speed / math.max(1, vehicle.maxSpeed)
       local bumpRate = 13 + travel * 16
       local bump = math.sin(vehicle.distance * 0.9 + (vehicle.seed or 0)) * travel
-      if vehicle.offroad then bump = bump + math.sin(race.elapsed * bumpRate) * 1.6 end
+      -- HOW ROUGH THE GROUND IS, from the ground. Every material in
+      -- Data/Terrain.lua carries a `rumble` -- scree 0.95, snow 0.45, ice 0.10
+      -- -- and nothing read it: leaving the road shook the kart by a flat 1.6
+      -- whether it had gone onto a glacier or into a rockfall. This is the only
+      -- channel a client with no controller has for saying what is under the
+      -- wheels, and it was spending it on a constant.
+      if vehicle.offroad then
+        local rough = (vehicle.material and vehicle.material.rumble) or 0.55
+        bump = bump + math.sin(race.elapsed * bumpRate) * (0.6 + rough * 1.6)
+      end
       local bounce = bump * width * 0.022
       -- Airtime from a blast: a clean arc up and back down.
       local hop = vehicle.hop or 0
@@ -5891,6 +5900,16 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       if spin > 0 then
         local t = spin / math.max(0.01, vehicle.spinMax or 1)
         spinTurns = t * t * math.pi * 2 * 2.5
+      end
+      -- A TRICK. One clean revolution over the flight, in the same channel the
+      -- spin-out uses -- so the kart really does roll, driver and all, rather
+      -- than the boost simply appearing on landing with nothing to look at.
+      -- Deliberately a single turn: a spin-out is several, frantic and
+      -- decelerating, and the two must never read as the same event.
+      local trick = vehicle.trick or 0
+      if trick > 0 then
+        local t = trick / math.max(0.01, vehicle.trickMax or 1)
+        spinTurns = spinTurns + (1 - t) * math.pi * 2
       end
 
       -- The shadow stays on the ground and tightens as the kart lifts, which is

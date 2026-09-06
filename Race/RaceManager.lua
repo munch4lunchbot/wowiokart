@@ -638,10 +638,11 @@ function Race:SetControl(control, value)
   local race = self.current
   if not race then return end
   if race.state == AK.RACE_STATES.COUNTDOWN and control == "accelerate" and value then race.launchPress = race.countdown end
-  -- Rising edge on the drift key is a hop in its own right. In Mario Kart the
-  -- hop button is not just "start a drift" -- it clears low hazards, adjusts
-  -- your line and crosses small gaps, and drift is what it becomes if you are
-  -- also steering.
+  -- Rising edge on the drift key is a hop in its own right. The hop button is
+  -- not just "start a drift": on the ground and steering it shifts your line a
+  -- little, in the air it is the trick that pays for the landing, and a drift
+  -- is what it becomes if you hold it while turning. All three live on the
+  -- same key because they are the same verb.
   if control == "drift" and value and not self.controls.drift then
     self.controls.hopPressed = true
   end
@@ -1350,7 +1351,7 @@ function Race:UpdateSlipstream(race, dt)
       -- to charge, then choose when to pull out and spend it. That is the whole
       -- difference between a passive bonus and something you do on purpose.
       if wasTowing and not towing and (vehicle.slipstream or 0) > 1.10 then
-        vehicle.boostTime = math.max(vehicle.boostTime or 0, 0.55)
+        AK.Physics:Boost(vehicle, 0.55, AK.BOOST.sling)
         vehicle.speed = math.max(vehicle.speed, vehicle.maxSpeed * 1.06)
         vehicle.slipstream = 0
         if vehicle == race.player then
@@ -1484,7 +1485,7 @@ function Race:CheckObjects(race, dt)
               -- Dash panels never expire; they are terrain, not a pickup.
               if (vehicle.padCooldown or 0) <= 0 then
                 vehicle.padCooldown = 0.6
-                vehicle.boostTime = math.max(vehicle.boostTime or 0, 1.5)
+                AK.Physics:Boost(vehicle, 1.5, AK.BOOST.pad)
                 vehicle.speed = math.max(vehicle.speed, vehicle.maxSpeed * 1.22)
                 if vehicle == race.player then
                   AK.RaceUI:Announce("DASH PANEL!", AK.COLORS.gold)
@@ -1702,6 +1703,10 @@ function Race:UpdateRacing(race, dt)
           -- flat out while the real one is coasting.
           local predicted = { left = self.controls.left, right = self.controls.right,
             drift = self.controls.drift, brake = self.controls.brake,
+            -- The hop edge rides along so the trick roll plays the moment the
+            -- key goes down rather than whenever the next snapshot lands. The
+            -- host still decides whether the boost was earned.
+            hopPressed = self.controls.hopPressed,
             accelerate = self.controls.accelerate, throttleAware = true }
           AK.Physics:UpdateVehicle(race, vehicle, predicted, dt)
         else
@@ -1719,7 +1724,19 @@ function Race:UpdateRacing(race, dt)
           local heard = race.remoteHeard and race.remoteHeard[vehicle.owner]
           local input = race.remoteInputs[vehicle.owner]
           if input and heard and (GetTime() - heard) < REMOTE_SILENCE then
+            -- A HOP IS AN EDGE TOO, AND THE WIRE ONLY CARRIES THE HELD STATE.
+            --
+            -- The input packet sends whether the drift key is down, not the
+            -- moment it went down -- which was fine while the hop was purely a
+            -- picture. It is not any more: the same edge is the trick that pays
+            -- for a landing and the nudge that adjusts your line, so without
+            -- this a remote player loses the boost off every ramp on the lap
+            -- while everyone else banks one. Reconstructed on the host from the
+            -- transition, exactly as SetControl does it for the local player.
+            input.hopPressed = input.drift and not vehicle.remoteDrift or false
+            vehicle.remoteDrift = input.drift
             AK.Physics:UpdateVehicle(race, vehicle, input, dt)
+            input.hopPressed = false
             -- AN ITEM PRESS IS AN EDGE, AND THE HOST HELD IT DOWN.
             --
             -- The last input table a remote player sent stays in place until
@@ -2148,7 +2165,8 @@ function Race:Step(race, dt)
       -- first skill test of a Mario Kart race.
       local press = race.launchPress
       if press and press > .10 and press < .42 then
-        race.player.boostTime, race.player.launchBoost = 1.1, true
+        AK.Physics:Boost(race.player, 1.1, AK.BOOST.start)
+        race.player.launchBoost = true
         AK.RaceUI:Announce("ROCKET START!", AK.COLORS.gold)
         AK.RaceUI:LaunchEffect(AK.COLORS.gold, true)
         AK.RaceUI:Shake(14)

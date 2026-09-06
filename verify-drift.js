@@ -43,7 +43,15 @@ const DRIFT_PUSH_GRIP = +(process.env.BITE ?? num(/local DRIFT_BITE = ([\d.]+)/,
 const DRIFT_DRAG = num(/vehicle\.speed \* \.(\d+) \* dt/, 30) / 1000;
 const COUNTER_SLIDE = num(/vehicle\.driftDirection \* counter \* ([\d.]+) \* dt/, 0.22);
 const CURVE_SCALE = num(/RoadCurve\(track, vehicle\.distance\) \* ([\d.]+)/, 0.002);
-const BOOST_MULT = num(/local boostMultiplier = vehicle\.boostTime > 0 and ([\d.]+) or 1/, 1.30);
+// Boosts differ in STRENGTH now, not just in how long they last, so the mirror
+// reads the drift ladder's three and applies whichever one was banked.
+const BOOST_MINI = num(/local BOOST_MINI, BOOST_SUPER, BOOST_MEGA = ([\d.]+), [\d.]+, [\d.]+/, 1.17);
+const BOOST_SUPER = num(/local BOOST_MINI, BOOST_SUPER, BOOST_MEGA = [\d.]+, ([\d.]+), [\d.]+/, 1.25);
+const BOOST_MEGA = num(/local BOOST_MINI, BOOST_SUPER, BOOST_MEGA = [\d.]+, [\d.]+, ([\d.]+)/, 1.34);
+// How much of the slide survives a stick that is not held into it.
+const BOOST_BLEED = num(/vehicle\.speed - topSpeed\) \* ([\d.]+) \* dt/, 2.6);
+const DRIFT_NEUTRAL_HOLD = num(/local DRIFT_NEUTRAL_HOLD = ([\d.]+)/, 0.62);
+const DRIFT_COUNTER_HOLD = num(/local DRIFT_COUNTER_HOLD = ([\d.]+)/, 0.20);
 // Leaving the tarmac is the real cost of swinging across a straight, so the
 // harness has to model it or it will report snaking as free when it is not.
 const TERRAIN = fs.readFileSync(path.join(ADDON, "Data", "Terrain.lua"), "utf8");
@@ -85,7 +93,8 @@ function run({ curve, seconds, drift, steer, throttle = 1, speed = null }) {
     const t = i * RATE;
     const turning = steer(t, v);
     v.boostTime = Math.max(0, v.boostTime - RATE);
-    const top = KART.maxSpeed * (v.boostTime > 0 ? BOOST_MULT : 1);
+    const top = KART.maxSpeed * (v.boostTime > 0 ? (v.boostPower || BOOST_MEGA) : 1);
+    if (v.boostTime <= 0) v.boostPower = 0;
     if (v.boostTime > 0) boosted += RATE;
 
     // Surface. Mirrors Terrain:Sample -- past the verge the penalty ramps in
@@ -94,7 +103,12 @@ function run({ curve, seconds, drift, steer, throttle = 1, speed = null }) {
     let blend = offBy <= 0 ? 0 : Math.min(Math.max(offBy / BLEND_RAMP, 0), 1);
     if (v.boostTime > 0) blend *= 0.20;
     const surfSpeed = 1 + (GRASS_SPEED - 1) * blend;
-    const surfSteer = (1 + (GRASS_STEER - 1) * blend) * (1 + (GRASS_TRACTION - 1) * blend);
+    // Traction enters through the same floor the physics applies: however
+    // slippery the ground, it can take at most 55% of the wheel. This mirror
+    // still multiplied the two knobs at full strength, which is one knob
+    // squared -- the exact fault Physics.lua was fixed for.
+    const surfSteer = (1 + (GRASS_STEER - 1) * blend)
+      * (0.45 + 0.55 * (1 + (GRASS_TRACTION - 1) * blend));
 
     // throttle / rolling resistance
     const ratio = Math.min(Math.max(v.speed / Math.max(1, top), 0), 1.4);
@@ -102,10 +116,11 @@ function run({ curve, seconds, drift, steer, throttle = 1, speed = null }) {
     v.speed -= (2.2 + v.speed * 0.022) * RATE;
 
     // drift engage / hold / release
-    const wantDrift = drift(t, v) && turning !== 0 && v.speed > 18;
+    // Entry needs a steering input; staying in a drift does not.
+    const wantDrift = drift(t, v) && v.speed > 18 && (v.drifting || turning !== 0);
     if (wantDrift) {
       if (!v.drifting) { v.drifting = true; v.direction = turning; }
-      const counter = turning !== v.direction ? 1 : 0;
+      const counter = (turning !== 0 && turning !== v.direction) ? 1 : 0;
       let rate = (0.30 + KART.driftStat * 0.05) + counter * (0.22 + KART.driftStat * 0.04);
       // A mini-turbo comes from LOADING the kart in a corner, not from holding a
       // button. Without this, weaving down a straight banks one every 0.8s.
@@ -119,8 +134,11 @@ function run({ curve, seconds, drift, steer, throttle = 1, speed = null }) {
     } else if (v.drifting) {
       if (v.charge > MINI) {
         const boost = v.charge > MEGA ? 1.45 : (v.charge > SUPER ? 0.85 : 0.42);
+        const power = v.charge > MEGA ? BOOST_MEGA
+          : (v.charge > SUPER ? BOOST_SUPER : BOOST_MINI);
         if (v.charge > MEGA) megas++;
         v.boostTime = Math.max(v.boostTime, boost);
+        v.boostPower = Math.max(v.boostPower || 0, power);
         v.speed = Math.max(v.speed, KART.maxSpeed * (1.04 + boost * 0.055));
       }
       v.drifting = false; v.charge = 0; v.direction = 0;
@@ -129,7 +147,15 @@ function run({ curve, seconds, drift, steer, throttle = 1, speed = null }) {
     // steering authority, then the corner's push
     const grip = (0.30 + 1.55 * ratio - 1.35 * ratio * ratio) * 1.35;
     const strength = KART.handling * (v.drifting ? DRIFT_STEER : 1) * grip * surfSteer;
-    v.lateral += turning * strength * RATE;
+    // A DRIFT IS COMMITTED: the kart keeps turning the way it slides, and the
+    // stick only chooses how tight. Never crosses zero.
+    let steerInput = turning;
+    if (v.drifting) {
+      const hold = turning === v.direction ? 1
+        : (turning === 0 ? DRIFT_NEUTRAL_HOLD : DRIFT_COUNTER_HOLD);
+      steerInput = v.direction * hold;
+    }
+    v.lateral += steerInput * strength * RATE;
     // Signed exactly as Physics does it: a positive curve is a right-hand bend
     // and the push is NEGATIVE, i.e. outward, against the driver steering into
     // it. Getting this backwards makes the corner help you round itself.
@@ -140,6 +166,10 @@ function run({ curve, seconds, drift, steer, throttle = 1, speed = null }) {
     // The material's own speed ceiling, scrubbed toward rather than applied flat.
     const ceiling = KART.maxSpeed * surfSpeed;
     if (v.speed > ceiling) v.speed -= (v.speed - ceiling) * 3.2 * RATE;
+    // And the boost ceiling, which is also bled off rather than clamped -- so
+    // the overspeed a mini-turbo bought is carried out of the corner instead of
+    // vanishing the frame the clock runs out.
+    if (v.speed > top) v.speed = Math.max(top, v.speed - (v.speed - top) * BOOST_BLEED * RATE);
     // The barrier: past this you are off the course entirely and get picked up.
     if (Math.abs(v.lateral) > OFFROAD_ROOM) { v.lateral = Math.sign(v.lateral) * OFFROAD_ROOM; recoveries++; }
     peakLateral = Math.max(peakLateral, Math.abs(v.lateral));
@@ -270,6 +300,81 @@ if (!costsSpeed) {
   failures++;
   console.log("     <- FAIL: drifting costs no speed, so there is no reason not to hold it");
 }
+console.log("");
+
+// --- 4. what the stick does INSIDE a drift ---------------------------------
+//
+// The property that separates a drift from a steering bonus. Once the kart is
+// sideways it is going round that way; the stick decides how tight, and cannot
+// turn it the other way until the button comes up. Before this, a drift left
+// with the stick held right turned right at full authority -- which is not a
+// drift, it is a 30% bonus with a light show on it.
+//
+// A LEFT-hand corner is used (negative curve) so "into the slide" is negative
+// lateral and any positive number in the first column is the kart going the
+// wrong way.
+// Measured on a DEAD STRAIGHT, so the only thing moving the kart sideways is
+// the wheel. On a real corner the centrifugal push dominates the line and would
+// hide the very thing being tested.
+const legs = [
+  ["held into the slide", () => -1],
+  ["stick at neutral", () => 0],
+  ["fighting the slide", () => 1],
+];
+console.log("4. WHAT THE STICK DOES INSIDE A DRIFT  (drifting left, 1.0s at 60, no corner)");
+console.log("     input                    lateral travelled");
+let commitFail = null;
+const travel = {};
+for (const [label, driver] of legs) {
+  // The drift is entered with a left input, then the leg's own stick takes over.
+  const r = run({
+    curve: 0, seconds: 1.0, speed: 60, drift: () => true,
+    steer: (t) => (t < 0.05 ? -1 : driver()),
+  });
+  travel[label] = r.lateral;
+  console.log("     " + label.padEnd(24) + r.lateral.toFixed(3).padStart(12));
+}
+if (travel["fighting the slide"] > 0) {
+  commitFail = "countersteering turns the kart the OTHER way -- that is not a drift";
+} else if (!(travel["held into the slide"] < travel["stick at neutral"]
+    && travel["stick at neutral"] < travel["fighting the slide"])) {
+  commitFail = "the stick does not tighten and open the arc in order";
+}
+console.log("     " + (commitFail ? "<- FAIL: " + commitFail
+  : "ok -- the arc tightens and opens, and the kart never crosses over"));
+if (commitFail) failures++;
+console.log("");
+
+// And the same three inputs through a real left-hander, which is the line the
+// driver actually sees: the corner's push is what the drift is fighting.
+const TURN = -2.4;
+console.log("   the same three through a curve-" + Math.abs(TURN) + " left-hander, 1.2s at 60");
+for (const [label, driver] of legs) {
+  const r = run({
+    curve: TURN, seconds: 1.2, speed: 60, drift: () => true,
+    steer: (t) => (t < 0.05 ? -1 : driver()),
+  });
+  console.log("     " + label.padEnd(24) + r.lateral.toFixed(3).padStart(12) +
+    "   " + (r.lateral < 0 ? "holds the apex" : "washes wide"));
+}
+console.log("");
+
+// A drift must survive the stick passing through centre. Two corners of the
+// same direction with a breath between them is the commonest shape in the
+// game, and dropping the charge there threw away the mini-turbo you had spent
+// the whole first corner earning.
+const throughCentre = run({
+  curve: TURN, seconds: 1.6, speed: 60, drift: () => true,
+  steer: t => (t > 0.6 && t < 0.8) ? 0 : -1,
+});
+const unbroken = run({ curve: TURN, seconds: 1.6, speed: 60, drift: () => true, steer: () => -1 });
+console.log("5. A DRIFT THROUGH A MOMENTARY NEUTRAL STICK (0.2s off the wheel)");
+console.log("     charge held        " + throughCentre.charge.toFixed(2) +
+  "   vs " + unbroken.charge.toFixed(2) + " never letting go");
+const survives = throughCentre.charge > unbroken.charge * 0.7;
+console.log("     " + (survives ? "ok -- the drift survives centre"
+  : "<- FAIL: letting the stick go for a fifth of a second threw the drift away"));
+if (!survives) failures++;
 console.log("");
 
 console.log(failures ? "FAIL (" + failures + " -- the drift is not a decision)"

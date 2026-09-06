@@ -1602,6 +1602,148 @@ if loadFailures == 0 then
   -- second. Going off is meant to be a penalty you drive out of; if it is not,
   -- one mistake ends the race and the player is a passenger. Nothing measured
   -- whether the wheel could beat the surface, so nothing noticed.
+  -- A DRIFT IS A COMMITMENT, DRIVEN FOR REAL.
+  --
+  -- verify-drift.js measures this too, but through a JavaScript reimplementation
+  -- of the physics. This is the physics: a real race, a real kart, the real
+  -- control table. If the two ever disagree it is the mirror that is wrong, and
+  -- only one of them can say so.
+  ok("a drift commits the kart to the way it is sliding", function()
+    local field = AK.db.settings.aiCount
+    AK.db.settings.aiCount = 0
+    AK.Race:Start("quick", { track = "oribos" })
+    AK.db.settings.aiCount = field
+    local race = AK.Race.current
+    local player = race.player
+    local controls = AK.Race.controls
+
+    --- Drift left for a moment, then hand the wheel to `steer`, and report how
+    --- far across the road the kart travelled.
+    local function leg(steer)
+      player.distance, player.lateral, player.speed = 200, 0, 60
+      player.drifting, player.driftCharge, player.driftDirection = false, 0, 0
+      wipe(controls)
+      controls.accelerate, controls.throttleAware = true, true
+      controls.drift, controls.left = true, true
+      for step = 1, math.ceil(1.2 / FRAME) do
+        if step * FRAME > 0.1 then
+          controls.left = (steer == -1)
+          controls.right = (steer == 1)
+        end
+        AK.Physics:UpdateVehicle(race, player, controls, FRAME)
+      end
+      local moved = player.lateral
+      wipe(controls)
+      return moved, player.drifting
+    end
+
+    local into = leg(-1)
+    local neutral, stillDrifting = leg(0)
+    local against = leg(1)
+    say(("        drifting left: holding in %.2f, neutral %.2f, fighting it %.2f")
+      :format(into, neutral, against))
+    -- Negative is left, which is the way the kart is sliding.
+    assert(against < 0,
+      "countersteering out of a drift turned the kart the other way (" ..
+      ("%.2f"):format(against) .. ")")
+    assert(into < neutral and neutral < against,
+      "the stick does not tighten and open the drift in order")
+    -- And the drift itself survives a stick at rest, which is the shape of
+    -- every double-apex corner in the game.
+    assert(stillDrifting, "letting the wheel go for a second dropped the drift")
+    AK.Race:Stop(true)
+  end)
+
+  -- A RAMP IS A BEAT YOU PLAY.
+  ok("a jump pays for the trick, not for the ramp", function()
+    local field = AK.db.settings.aiCount
+    AK.db.settings.aiCount = 0
+    AK.Race:Start("quick", { track = "oribos" })
+    AK.db.settings.aiCount = field
+    local race = AK.Race.current
+    local player = race.player
+    local controls = AK.Race.controls
+
+    -- Find a ramp to aim at.
+    local track = race.track
+    local rampAt
+    for d = 0, track.length, 5 do
+      if AK.TrackBuilder:RampAt(track, d) then rampAt = d break end
+    end
+    assert(rampAt, "oribos has no ramp to jump off")
+
+    local function fly(trick)
+      player.distance, player.lateral = rampAt - 60, 0
+      player.speed = player.maxSpeed * 0.9
+      player.air, player.launched, player.tricked = 0, false, false
+      player.boostTime, player.boostPower = 0, nil
+      wipe(controls)
+      controls.accelerate, controls.throttleAware = true, true
+      local flew, spun = false, false
+      for _ = 1, math.ceil(6 / FRAME) do
+        controls.hopPressed = false
+        if (player.air or 0) > 0 then
+          flew = true
+          if trick and not player.tricked then controls.hopPressed = true end
+        elseif flew then
+          break
+        end
+        AK.Physics:UpdateVehicle(race, player, controls, FRAME)
+        if (player.trick or 0) > 0 then spun = true end
+      end
+      wipe(controls)
+      return flew, player.boostTime or 0, spun
+    end
+
+    -- AND YOU CANNOT STEER YOUR WAY OUT OF A JUMP.
+    --
+    -- Measured on the straightest piece of the lap and with the airtime forced,
+    -- so the only difference between the two runs is whether the wheels are
+    -- touching. Comparing a real flight against a real corner would not isolate
+    -- anything: the corner's own push works against the wheel and the flight
+    -- has no push at all, which flatters the air.
+    local straight, flattest = 0, math.huge
+    for d = 0, track.length, 5 do
+      local c = math.abs(AK.Math.RoadCurve(track, d))
+      if c < flattest then straight, flattest = d, c end
+    end
+    local function lockFor(seconds, airborne)
+      player.distance, player.lateral = straight, 0
+      player.speed = player.maxSpeed * 0.9
+      player.air, player.launched, player.tricked = 0, false, false
+      wipe(controls)
+      controls.accelerate, controls.throttleAware, controls.left = true, true, true
+      local moved = 0
+      for _ = 1, math.ceil(seconds / FRAME) do
+        if airborne then player.air = 1.0 end
+        local before = player.lateral
+        AK.Physics:UpdateVehicle(race, player, controls, FRAME)
+        moved = moved + math.abs(player.lateral - before)
+      end
+      player.air = 0
+      wipe(controls)
+      return moved / seconds
+    end
+    local ground = lockFor(0.6, false)
+    local air = lockFor(0.6, true)
+    say(("        full lock moves you %.2f a second on the road, %.2f in the air")
+      :format(ground, air))
+    assert(air < ground * 0.55,
+      "a kart in mid-air steers nearly as well as one on the ground")
+    assert(air > 0, "a kart in mid-air cannot be steered at all")
+
+    local flew, plainBoost = fly(false)
+    assert(flew, "the kart never left the ramp")
+    local _, trickBoost, spun = fly(true)
+    say(("        landing a jump: %.2fs of boost without a trick, %.2fs with one")
+      :format(plainBoost, trickBoost))
+    assert(plainBoost <= 0.01,
+      "a jump with no input still paid out " .. ("%.2f"):format(plainBoost) .. "s of boost")
+    assert(trickBoost > 0.5, "tricking off a ramp paid nothing")
+    assert(spun, "the trick has no roll to look at")
+    AK.Race:Stop(true)
+  end)
+
   ok("a kart pushed off the road can drive back onto it", function()
     local worst, worstTrack, slowest = 0, nil, math.huge
     for _, id in ipairs({ "ironforge", "icecrown", "elwynn", "netherstorm" }) do
@@ -2700,7 +2842,7 @@ if loadFailures == 0 then
       -- the first gap of every race four seconds longer than it was.
       local last, gaps, events, racing = nil, {}, {}, false
       local was = { item = nil, held = nil, slow = 0, air = 0, boost = 0,
-        place = nil, lap = 0 }
+        place = nil, lap = 0, firedAt = -1 }
       local worstAt = 0
       local function mark(what)
         local now = race.elapsed
@@ -2723,12 +2865,24 @@ if loadFailures == 0 then
         if race.state == AK.RACE_STATES.RACING then
           if not racing then racing, last = true, race.elapsed end
           if player.item and not was.item then mark("box") end
-          if was.item and not player.item then mark("fired") end
+          if was.item and not player.item then
+            mark("fired")
+            was.firedAt = race.elapsed
+          end
           if (player.slow or 0) > (was.slow or 0) then mark("hit") end
           if (player.air or 0) > (was.air or 0) + 0.05 then mark("jump") end
-          -- A boost that appears out of nowhere is a mini-turbo or a pad; the
-          -- ones that come from an item are already counted as "fired".
-          if (player.boostTime or 0) > (was.boost or 0) + 0.05 and not was.item then
+          -- A boost that appears out of nowhere is a mini-turbo, a pad or a
+          -- trick; the one that comes out of a Mushroom is already counted as
+          -- the shot that fired it.
+          --
+          -- THIS USED TO READ `not was.item`, which silenced every mini-turbo
+          -- the player banked while merely CARRYING something. Racers carry an
+          -- item most of the time, so the measurement went deaf for whole laps
+          -- and reported twenty-three quiet seconds over a stretch the kart
+          -- spent drifting and boosting continuously. A quarter of a second
+          -- after the shot is the actual overlap.
+          if (player.boostTime or 0) > (was.boost or 0) + 0.05
+            and race.elapsed - (was.firedAt or -1) > 0.25 then
             mark("boost")
           end
           local place = race.positions[player]
@@ -2753,14 +2907,17 @@ if loadFailures == 0 then
         mean = count > 0 and total / count or 99 }
       AK.Race:Stop(true)
     end
-    -- THE BARS. Twelve seconds is the length of a whole lap of the shortest
-    -- circuit: going that long with nothing happening to you is the complaint
-    -- these numbers exist to catch. The mean is the texture rather than the
-    -- worst case, and four seconds is roughly one thing per corner sequence.
+    -- THE BARS, set against what the game actually does rather than against
+    -- what sounded tolerable. Nine seeded races across these three circuits
+    -- come in at 79 to 107 moments each, a worst quiet stretch of 3.0 to 5.2
+    -- seconds and a mean gap of 1.0 to 1.5 -- so ten and two and a half leave
+    -- room for seed variance and still catch anything that goes properly
+    -- quiet. The first version of this allowed twelve and four, which is a bar
+    -- nothing could fail.
     for _, r in ipairs(worst) do
-      assert(r.quiet < 12,
+      assert(r.quiet < 10,
         r.id .. ": " .. ("%.1f"):format(r.quiet) .. "s in which nothing happened to the player")
-      assert(r.mean < 4.0,
+      assert(r.mean < 2.5,
         r.id .. ": a moment only every " .. ("%.1f"):format(r.mean) .. "s")
     end
   end)

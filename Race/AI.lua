@@ -516,17 +516,53 @@ function AI:Controls(race, vehicle, dt)
   -- thresholds in Physics:ReleaseDrift, and a high drift stat charges sooner.
   local target = (ai.daring > 0.85 and 1.85 or (ai.daring > 0.62 and 0.95 or 0.40))
     * (1.10 - (vehicle.driftStat or 5) * 0.02)
-  if corner and vehicle.speed > 26 and ai.daring > 0.4 and ai.driftCool <= 0 then
+  -- EVERYBODY DRIFTS. The gate used to be daring > 0.4, which excluded the
+  -- Beginner style outright -- and once a drift started paying real money (a
+  -- committed slide and a boost that scales with the rung you reach) a driver
+  -- who never drifts is not a slower driver, they are a different sport. The
+  -- field spread out from ten per cent of the winner's time to nearly twenty.
+  -- Daring still decides everything that matters: how long they hold on for,
+  -- and therefore which rung they cash out at.
+  if corner and vehicle.speed > 26 and ai.daring > 0.25 and ai.driftCool <= 0 then
     ai.wantDrift = true
   end
   if not corner then ai.wantDrift = false end
+  -- A CHICANE ENDS A DRIFT. The kart is now committed to the way it is sliding
+  -- and cannot be steered across to the other side of the road while the button
+  -- is down, so a driver who holds a right-hand drift into a left-hander simply
+  -- runs out of road. The answer -- for a person and for the field alike -- is
+  -- to let go and set the other one up, which is what an esses section IS.
+  if vehicle.drifting and (vehicle.driftDirection or 0) ~= 0 then
+    local reversed = (curveSoon > 0.9 and vehicle.driftDirection < 0)
+      or (curveSoon < -0.9 and vehicle.driftDirection > 0)
+    if reversed then ai.wantDrift, ai.driftCool = false, 0.20 end
+  end
   if ai.wantDrift and (vehicle.driftCharge or 0) >= target
     and ai.mistakeKind ~= "lateDrift" then
     -- Banked. Sit out a beat before re-arming so a chain of corners reads as a
     -- deliberate flick-flick rather than a stutter on the button.
     ai.wantDrift, ai.driftCool = false, 0.35
   end
-  controls.drift = (ai.wantDrift and (controls.left or controls.right)) or false
+  -- Held like a button, not re-pressed every frame from the steering. A drift
+  -- now survives the stick passing through centre (see Race/Physics.lua), and
+  -- gating the button on a live steering input threw that away for the field
+  -- while leaving it for the player -- the AI would drop its charge at exactly
+  -- the moment between two corners the rule was written to protect. Entry still
+  -- needs a steering input; the physics decides that.
+  controls.drift = ai.wantDrift or false
+
+  -- TRICK OFF EVERY RAMP -- or nearly. A landing pays only if somebody flicked
+  -- the button up there, so a field that never tricks is a field handing the
+  -- player a free boost at every jump on the lap. Rolled once per flight so the
+  -- sloppier drivers still miss one now and then.
+  if (vehicle.air or 0) > 0 then
+    if vehicle.aiTrickRoll == nil then
+      vehicle.aiTrickRoll = rng:Next() < (0.55 + (ai.precision or 0.8) * 0.45)
+    end
+    if vehicle.aiTrickRoll and not vehicle.tricked then controls.hopPressed = true end
+  else
+    vehicle.aiTrickRoll = nil
+  end
 
   -- Remember the charge before it is banked: ReleaseDrift zeroes it, so this
   -- is the only moment a completed drift can be counted.

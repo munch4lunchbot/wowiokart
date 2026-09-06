@@ -336,12 +336,14 @@ function AK:FireItem(race, vehicle, id)
   local isPlayer = (vehicle == race.player)
 
   if item.effect == "boost" then
-    vehicle.boostTime = math.max(vehicle.boostTime or 0, 2.0)
+    AK.Physics:Boost(vehicle, 2.0, AK.BOOST.mushroom)
     vehicle.speed = math.max(vehicle.speed, vehicle.maxSpeed * 1.20)
 
   elseif item.effect == "star" then
     vehicle.star = math.max(vehicle.star or 0, item.duration)
-    vehicle.boostTime = math.max(vehicle.boostTime or 0, item.duration)
+    -- The star's own 10% sits on top of this in Physics, so it comes out the
+    -- fastest thing in the game by some way -- which is the point of it.
+    AK.Physics:Boost(vehicle, item.duration, AK.BOOST.mushroom)
     vehicle.usedStar = true
 
   elseif item.effect == "bolt" then
@@ -397,7 +399,7 @@ function AK:FireItem(race, vehicle, id)
     -- the strongest defensive state in the game and it must not be handed out
     -- for a miss.
     if not stolen then
-      vehicle.boostTime = math.max(vehicle.boostTime or 0, 1.0)
+      AK.Physics:Boost(vehicle, 1.0, AK.BOOST.ghost)
       if isPlayer then
         AK.RaceUI:Announce("NOTHING TO STEAL -- TAKE A RUN AT THEM", item.color)
       end
