@@ -91,6 +91,11 @@ local CUES = {
   -- Two of the three most emphatic things that can happen to you sounded
   -- identical, and the third was the landing they both led into.
   jump        = { match = { "JUMP", "LAUNCH", "SPRING" }, kit = { "UI_PET_BATTLE_START", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
+  -- The trick, which used to borrow the launch cue -- so the flick of the wrist
+  -- that earns the landing boost sounded exactly like the ramp that threw you
+  -- up there, a fifth of a second earlier. Two things happen on a jump now and
+  -- they need two voices, or the second one is inaudible inside the first.
+  trick       = { kit = { "UI_PET_BATTLE_ABILITY_SWAP", "IG_ABILITY_ICON_PICKUP" }, pri = PRI.HIGH, cd = 0.30 },
   landing     = { match = { "IMPACT", "THUD", "LAND" }, kit = { "IG_ABILITY_ICON_DROP", "IG_MAINMENU_CLOSE" }, pri = PRI.NORMAL, cd = 0.40 },
 
   -- ENGINE. Its own lane -- see UpdateEngine. These never route through

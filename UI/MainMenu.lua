@@ -1575,17 +1575,30 @@ function Menu:BuildAchievements(page)
 
   -- Two columns, sized from the entry count rather than hard-coded, so adding
   -- an achievement re-flows instead of spilling off the panel.
-  local COLUMNS, MARGIN, TOP, GAP = 2, 40, 92, 6
+  -- THREE COLUMNS, because the room filled up. At two, the grid grows a row
+  -- for every second trophy and the cards shrink to fit the page: a fifteenth
+  -- achievement took them from 48px to 41 and started pushing two-line
+  -- descriptions out through the bottom of their own card. Three columns is
+  -- five rows whatever happens next, so the cards stay at their full 52 and
+  -- there is room to keep writing them.
+  local COLUMNS, MARGIN, TOP, GAP = 3, 40, 92, 6
   local cardWidth = math.floor((960 - MARGIN * 2 - GAP * (COLUMNS - 1)) / COLUMNS)
   local rows = math.ceil(#order / COLUMNS)
   local cardHeight = math.min(52, math.floor((520 - TOP - 56 - GAP * (rows - 1)) / math.max(1, rows)))
+  -- SIT THE GRID IN THE MIDDLE OF WHAT IS LEFT. Three columns is five short
+  -- rows, and pinned to the top they left a hand's width of empty panel above
+  -- the career line -- a room that looks half unpacked rather than half earned.
+  -- Half the slack, so it is centred between the summary and the totals.
+  local used = rows * cardHeight + GAP * (rows - 1)
+  local lift = math.max(0, math.floor((520 - TOP - 56 - used) / 2))
 
   for index, id in ipairs(order) do
     local achievement = AK.Achievements[id]
     if achievement then
       local column, row = (index - 1) % COLUMNS, math.floor((index - 1) / COLUMNS)
       local card = UI:NewPanel(page, cardWidth, cardHeight, { .07, .09, .14, .94 })
-      card:SetPoint("TOPLEFT", MARGIN + column * (cardWidth + GAP), -TOP - row * (cardHeight + GAP))
+      card:SetPoint("TOPLEFT", MARGIN + column * (cardWidth + GAP),
+        -TOP - lift - row * (cardHeight + GAP))
 
       -- A tick versus an empty socket, so earned reads at a glance without
       -- relying on colour alone. These were the characters "*" and "-": typing

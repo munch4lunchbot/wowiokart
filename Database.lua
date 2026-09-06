@@ -33,7 +33,9 @@ local defaults = {
   -- never written or read by anything: every racer and every kart is available
   -- from the start, which is the right call for a game this size. Two empty
   -- tables saved to disk forever are a promise the game does not keep.
-  progress = { coins = 0, races = 0, wins = 0, podiums = 0, bestTimes = {}, achievements = {}, trophies = {} },
+  -- `tricks` counts landed tricks, and its only job is to retire the
+  -- "HOP TO TRICK" prompt once the player has plainly learned it.
+  progress = { coins = 0, races = 0, wins = 0, podiums = 0, bestTimes = {}, achievements = {}, trophies = {}, tricks = 0 },
 }
 
 local function merge(target, source)

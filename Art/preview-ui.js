@@ -849,7 +849,7 @@ if (process.env.SCREEN === "trophies") {
   if (missing.length) throw new Error("preview-ui: no such achievement: " + missing.join(", "));
 
   // Mirrors Menu:BuildAchievements.
-  const COLUMNS = 2, MARGIN = 40, TOP = 92, GAP = 6;
+  const COLUMNS = 3, MARGIN = 40, TOP = 92, GAP = 6;
   // The grid starts below the BACK button, not beside it -- and the first card
   // is only fifty pixels under it, so a taller header or a lower grid would put
   // them into each other with nothing to notice.
@@ -859,6 +859,9 @@ if (process.env.SCREEN === "trophies") {
   const cardW = Math.floor((CW - MARGIN * 2 - GAP * (COLUMNS - 1)) / COLUMNS);
   const rows = Math.ceil(order.length / COLUMNS);
   const cardH = Math.min(52, Math.floor((CH - TOP - 56 - GAP * (rows - 1)) / Math.max(1, rows)));
+  // Mirrors the vertical centring in Menu:BuildAchievements.
+  const usedH = rows * cardH + GAP * (rows - 1);
+  const lift = Math.max(0, Math.floor((CH - TOP - 56 - usedH) / 2));
 
   const earned = new Set(order.slice(0, 5));   // a plausible half-finished room
   label(OX + CW / 2, OY - 40 + 62, earned.size + " OF " + order.length + " EARNED",
@@ -869,7 +872,7 @@ if (process.env.SCREEN === "trophies") {
     const a = byId[id];
     const col = index % COLUMNS, row = Math.floor(index / COLUMNS);
     const x = OX + MARGIN + col * (cardW + GAP);
-    const y = OY - 40 + TOP + row * (cardH + GAP);
+    const y = OY - 40 + TOP + lift + row * (cardH + GAP);
     const got = earned.has(id);
     // The nine-slice panel plate the game uses for these, not the button's
     // three-slice: a card here is UI:NewPanel, and the two wear different art.

@@ -5925,7 +5925,24 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       local lastLateral = memory and memory.lateral or vehicle.lateral
       local slide = vehicle.lateral - lastLateral
       local lean = AK.Math.Clamp(slide * 26, -0.55, 0.55) * tuning.leanAmount
-      if vehicle.drifting then lean = lean + (vehicle.driftDirection or 0) * 0.4 * tuning.leanAmount end
+      -- THE DRIFT HAS TO LOOK LIKE A COMMITMENT.
+      --
+      -- A drift ignores half the wheel on purpose now -- fight the slide and
+      -- you get a fifth of your steering, not a turn the other way -- and a
+      -- rule like that is only fair if the kart is visibly doing it. A flat
+      -- tilt the whole time it was drifting said "drifting" and nothing else,
+      -- so a player holding full opposite lock and going nowhere had no way to
+      -- tell the difference between a mechanic and a broken control.
+      --
+      -- `driftHold` is what the physics actually applied this frame: all of the
+      -- turn holding in, most of it at neutral, a fifth of it fighting. The
+      -- kart lays right over when you commit and comes back upright as you
+      -- fight it, which is the picture of what the stick is doing.
+      if vehicle.drifting then
+        local hold = vehicle.driftHold or 1
+        lean = lean + (vehicle.driftDirection or 0)
+          * (0.16 + 0.44 * hold) * tuning.leanAmount
+      end
       if memory then memory.lateral = vehicle.lateral end
       -- Spin-out: whole kart rotates through several turns, easing to a stop.
       local spin = vehicle.spin or 0

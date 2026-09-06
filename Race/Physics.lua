@@ -390,7 +390,15 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
     -- One trick per flight, and it has not been done yet.
     vehicle.tricked = false
     if vehicle == race.player then
-      AK.RaceUI:Announce("JUMP!  HOP TO TRICK", AK.COLORS.gold)
+      -- TEACH IT, THEN TRUST THEM.
+      --
+      -- The landing boost now depends on an input nobody has ever been asked
+      -- for, so the first jumps have to say so -- and a game that is still
+      -- explaining its controls on your fortieth race is nagging, not
+      -- teaching. The prompt retires itself once you have actually landed a
+      -- few, which is the only evidence that you know.
+      local learned = (AK.db and AK.db.progress and AK.db.progress.tricks or 0) >= 5
+      AK.RaceUI:Announce(learned and "JUMP!" or "JUMP!  HOP TO TRICK", AK.COLORS.gold)
       -- The shake, the shove and the burst all live in RaceUI:FeelLaunch, which
       -- fires off the same rising edge the landing's dip fires off. Shaking
       -- from here as well double-counted it.
@@ -408,6 +416,20 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
       -- there and land it, or come down with nothing.
       if vehicle.tricked then
         self:Boost(vehicle, 0.85, BOOST_TRICK)
+        if vehicle == race.player and vehicle.isPlayer and AK.db and AK.db.progress then
+          AK.db.progress.tricks = (AK.db.progress.tricks or 0) + 1
+        end
+        -- THREE IN A LAP. Thousand Needles is built around its leaps and there
+        -- are exactly three of them, so this is the circuit's own mastery test:
+        -- not "did you ever press the button" but "did you remember it every
+        -- time, on the lap where remembering is hardest".
+        if vehicle == race.player and vehicle.isPlayer then
+          if vehicle.trickLap ~= vehicle.lap then
+            vehicle.trickLap, vehicle.trickCount = vehicle.lap, 0
+          end
+          vehicle.trickCount = (vehicle.trickCount or 0) + 1
+          if vehicle.trickCount >= 3 then AK:UnlockAchievement("air_show") end
+        end
       end
       -- The kart takes the impact, not just the camera. Its own channel rather
       -- than the lightning squash: that one flattens you to half height, which
@@ -415,8 +437,17 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
       vehicle.land = 0.20
       vehicle.landMax = 0.20
       if vehicle == race.player then
-        AK.RaceUI:Announce(vehicle.tricked and "TRICK!  CLEAN LANDING" or "LANDED",
-          vehicle.tricked and AK.COLORS.lime or AK.COLORS.muted)
+        -- A MISSED TRICK IS NOT WORTH A CAPTION.
+        --
+        -- Landing without one used to print "LANDED" in grey, which on a
+        -- circuit with three ramps is nine notices a race whose entire content
+        -- is that you failed to do something. Telling a player off for missing
+        -- an optional flourish, over and over, is the surest way to make the
+        -- flourish feel like a chore. The trick is celebrated; the plain
+        -- landing just lands, with its own thump and shake and nothing said.
+        if vehicle.tricked then
+          AK.RaceUI:Announce("TRICK!", AK.COLORS.lime)
+        end
         AK.RaceUI:Shake(vehicle.tricked and 14 or 9)
         if AK.PlaySfx then AK:PlaySfx("landing") end
       end
@@ -435,7 +466,7 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
     vehicle.trickMax = vehicle.trick
     if vehicle == race.player then
       AK.RaceUI:Flash(AK.COLORS.gold, .10)
-      if AK.PlaySfx then AK:PlaySfx("jump") end
+      if AK.PlaySfx then AK:PlaySfx("trick") end
     end
   end
   vehicle.trick = math.max(0, (vehicle.trick or 0) - dt)
@@ -682,6 +713,13 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
       if turning == vehicle.driftDirection then hold = 1
       elseif turning ~= 0 then hold = DRIFT_COUNTER_HOLD end
       steerInput = vehicle.driftDirection * hold
+      -- PUBLISHED, so the kart can be SEEN doing this. A commitment the player
+      -- cannot see is indistinguishable from steering that has stopped working
+      -- -- which is exactly how a drift that ignores half your inputs reads if
+      -- nothing on screen says why. UI/RaceUI.lua leans the kart by this.
+      vehicle.driftHold = hold
+    else
+      vehicle.driftHold = nil
     end
     if steerInput ~= 0 then
       -- Turn-in authority peaks in the middle of the rev range and falls away
