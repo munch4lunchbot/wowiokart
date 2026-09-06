@@ -1844,7 +1844,15 @@ for (const r of LAYOUT.rects(W, H, HUD_SAMPLE)) {
     }
 
     if (STATE === "finish") {
-      hudText("FINISHED 2ND", HW, HH - H * 0.06 - u(40) * 0.5, u(40), [1, 0.82, 0.25], "center");
+      // ON A PLATE -- mirrors RaceUI. Forty points of gold on nothing, landed
+      // in the middle of the screen, is landed on top of the kart: a pale tan
+      // rider three hundred pixels tall. Sized to the card's own string.
+      const cardY = HH - H * 0.06 - u(40) * 0.5;
+      const cardW = drawTextWidth("FINISHED 2ND", u(40)) + u(56);
+      const cardH = u(40) * 1.2 + u(26);
+      rect(HW - cardW / 2, cardY - u(13), cardW, cardH, 0.01, 0.02, 0.04, 0.72);
+      rect(HW - cardW / 2, cardY - u(13) + cardH, cardW, 2, 1, 0.82, 0.25, 0.9);
+      hudText("FINISHED 2ND", HW, cardY, u(40), [1, 0.82, 0.25], "center");
       // The cooldown ladder: LADDER in UI/RaceUI.lua, anchored RIGHT -30, +20.
       const LW = rnum(/local LADDER = \{ w = (\d+)/, 250);
       const LROW = rnum(/local LADDER = \{ w = \d+, row = (\d+)/, 22);

@@ -691,7 +691,16 @@ if (process.env.SCREEN === "tracks") {
         let cy = y + 22;
         label(textX, cy, e.name, 16, chosen ? LIT : GOLD);
         cy += Math.round(16 * 1.45) + 8;
-        cy = labelLeftWrapped(textX, cy, e.lines.join("  /  "), 12, MUTED, textW);
+        // TWO PER LINE, mirrors MainMenu. Left to the widget's own word wrap,
+        // four names joined with " / " broke wherever the width ran out --
+        // "ZANGARMARSH" ending one line and "SPORE RUN" starting the next,
+        // with no slash between them, which reads as five tracks in a
+        // four-race cup.
+        for (let i = 0; i < e.lines.length; i += 2) {
+          const pair = e.lines[i + 1]
+            ? `${e.lines[i]}  /  ${e.lines[i + 1]}` : e.lines[i];
+          cy = labelLeftWrapped(textX, cy, pair, 12, MUTED, textW);
+        }
         cy += 8;
         labelLeftWrapped(textX, cy, e.floor[0], 12, MUTED, textW);
         label(x + cardW - 24, y + 24, e.floor[1], 13,

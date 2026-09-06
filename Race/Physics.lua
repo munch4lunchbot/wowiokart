@@ -182,6 +182,14 @@ function Physics:UpdateRoute(race, vehicle)
         vehicle.branchIntent = nil
         if vehicle == race.player then
           AK.RaceUI:Announce(branch.name and branch.name:upper() or "SHORTCUT", AK.COLORS.lime)
+          -- WHERE YOU WERE WHEN YOU TOOK IT, so the rejoin can say whether it
+          -- worked. A shortcut that saves eighty metres and changes nothing you
+          -- can see is a shortcut that "kind of doesn't do much" -- and the one
+          -- fact the player cannot work out for themselves is what would have
+          -- happened if they had stayed on the main line. The nearest honest
+          -- answer is what it did to their position.
+          race.forkPlace = race.lastPosition
+          race.forkName = branch.name
         end
       end
     end
@@ -200,6 +208,19 @@ function Physics:UpdateRoute(race, vehicle)
     vehicle.lateral = AK.Math.Clamp(vehicle.lateral, -edge * 0.9, edge * 0.9)
     vehicle.branchIntent = nil
     vehicle.prevDistance, vehicle.prevLateral = vehicle.distance, vehicle.lateral
+    -- And what it bought. Only when it actually moved you: a card that says
+    -- "no change" every time is the chatter this game does not need, and the
+    -- two cases worth hearing are the two that make the choice a choice.
+    if vehicle == race.player and race.forkPlace then
+      local gained = race.forkPlace - (race.lastPosition or race.forkPlace)
+      local name = (race.forkName or "SHORTCUT"):upper()
+      if gained > 0 then
+        AK.RaceUI:Announce(("%s  +%d"):format(name, gained), AK.COLORS.lime)
+      elseif gained < 0 then
+        AK.RaceUI:Announce(("%s  %d"):format(name, gained), AK.COLORS.muted)
+      end
+      race.forkPlace, race.forkName = nil, nil
+    end
   end
 
   local progress = AK.TrackBuilder:GlobalProgress(track, vehicle.route, vehicle.distance)

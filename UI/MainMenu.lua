@@ -1421,8 +1421,20 @@ function Menu:BuildSelection(page, kind)
         table.insert(names, circuit.name)
         metres = metres + (circuit.length or 0) * (circuit.laps or 3)
       end
-      -- One line across the row, not a stack down a card.
-      detail:SetText(table.concat(names, "  /  "))
+      -- TWO PER LINE, BROKEN WHERE WE CHOOSE TO BREAK IT.
+      --
+      -- Four names joined with " / " and left to the widget's own word wrap
+      -- broke wherever the width happened to run out -- "ZANGARMARSH" at the
+      -- end of one line and "SPORE RUN" at the start of the next, with a
+      -- slash between neither of them and the eye reading five tracks in a
+      -- four-race cup. Two to a line always fits and always breaks between
+      -- circuits rather than through one.
+      local lines = {}
+      for i = 1, #names, 2 do
+        lines[#lines + 1] = names[i + 1]
+          and (names[i] .. "  /  " .. names[i + 1]) or names[i]
+      end
+      detail:SetText(table.concat(lines, "\n"))
       -- WHETHER YOU HAVE WON IT. The trophy has been recorded since the cup
       -- screen was written and this was the one place that never said so, so
       -- the only way to find out which cups you still owed was to open the

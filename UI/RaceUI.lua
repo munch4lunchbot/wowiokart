@@ -1477,6 +1477,23 @@ function RaceUI:Build()
   self.splitText:SetAlpha(0)
 
   -- "FINISHED 2ND", held long enough to land before the results screen.
+  --
+  -- ON A PLATE, like every other card in this game. This was forty points of
+  -- gold with a two-pixel shadow and nothing behind it, landed in the middle of
+  -- the screen -- which is exactly where the kart is, and the kart is a pale
+  -- tan rider three hundred pixels tall. The single most important line the
+  -- race ever prints was being read off the back of the thing it was printed
+  -- over. The notice banner has had a plate the whole time; this is the same
+  -- plate, sized to whatever the card says, because a photo finish is two lines
+  -- and a placing is one.
+  self.finishPlate = makeTexture(self.hudLayer, "BACKGROUND", { 0.01, 0.02, 0.04, 1 })
+  self.finishPlate:SetPoint("CENTER", self.frame, "CENTER", 0, 0)
+  self.finishPlate:SetSize(2, 2)
+  self.finishPlate:Hide()
+  self.finishEdge = makeTexture(self.hudLayer, "BORDER", AK.COLORS.gold)
+  self.finishEdge:SetPoint("TOP", self.finishPlate, "BOTTOM", 0, 0)
+  self.finishEdge:SetSize(2, 2)
+  self.finishEdge:Hide()
   self.finishCard = UI:NewText(self.hudLayer, "", 40, AK.COLORS.gold, "CENTER")
   self.finishCard:SetShadowColor(0, 0, 0, 1)
   self.finishCard:SetShadowOffset(2, -2)
@@ -2777,9 +2794,26 @@ function RaceUI:UpdatePresentation(race, dt)
   -- Position card.
   if self.finishCard then
     local left = (self.finishUntil or 0) - t
+    local alpha = AK.Math.Clamp(left / 0.4, 0, 1)
     self.finishCard:ClearAllPoints()
     self.finishCard:SetPoint("CENTER", self.frame, "CENTER", 0, h * 0.06)
-    self.finishCard:SetAlpha(AK.Math.Clamp(left / 0.4, 0, 1))
+    self.finishCard:SetAlpha(alpha)
+    -- The plate takes its size from the card's own string, so it fits a one
+    -- line placing and a two line photo finish without either being told about
+    -- the other. Hidden outright at zero rather than left as an invisible
+    -- rectangle, because a texture at alpha 0 still costs a draw every frame.
+    if self.finishPlate then
+      local cardW = self.finishCard:GetStringWidth() + 56
+      local cardH = self.finishCard:GetStringHeight() + 26
+      self.finishPlate:ClearAllPoints()
+      self.finishPlate:SetPoint("CENTER", self.finishCard, "CENTER", 0, 0)
+      self.finishPlate:SetSize(math.max(2, cardW), math.max(2, cardH))
+      self.finishPlate:SetAlpha(alpha * 0.72)
+      self.finishPlate:SetShown(alpha > 0.01)
+      self.finishEdge:SetSize(math.max(2, cardW), 2)
+      self.finishEdge:SetAlpha(alpha * 0.9)
+      self.finishEdge:SetShown(alpha > 0.01)
+    end
   end
 
   -- Beat name, while /kart beats is running.
