@@ -128,6 +128,20 @@ function AK.Math.ForkSide(branch)
   return AK.Math.Mirrored(branch and branch.side or -1)
 end
 
+-- How far off centre counts as choosing a side. In half-widths, so a fifth of
+-- the way over from the middle -- deliberately small, because the choice should
+-- be "I moved over" and not "I hugged the verge".
+local FORK_AIM = 0.15
+
+--- Is this kart lined up for the branch? One predicate, read by the physics to
+--- decide and by the renderer to SAY SO -- the two disagreeing about what counts
+--- as lined up would be worse than either being wrong.
+function AK.Math.ForkAimed(branch, lateral)
+  local wants = AK.Math.ForkSide(branch)
+  if wants < 0 then return (lateral or 0) < -FORK_AIM end
+  return (lateral or 0) > FORK_AIM
+end
+
 --- How wide the road is here, as a multiple of the nominal width. Corners can
 --- pinch and straights can open out, which is one of the strongest tools a
 --- circuit layout has.

@@ -1,5 +1,17 @@
 local _, AK = ...
 
+-- The height of a launch, in metres, from the slowest launch that counts to
+-- flat out. Read by UI/RaceUI.lua's jump arc; see the note at the launch below.
+--
+-- CALIBRATED AGAINST THE VERSION THAT WORKED. The arc people liked was 2.1
+-- kart-widths of screen offset, and a kart is 2.2m, so that was about 4.6m of
+-- apparent height -- with no camera movement at all, which is why it ran off
+-- the top of the frame at speed. 5.4 at the top end is a shade more than that,
+-- 3.0 at the bottom is a modest hop off a slow launch, and the camera now takes
+-- a small share of it, so the biggest jump is bigger than the one that was fun
+-- and still ends up inside the picture.
+local JUMP_APEX_LOW, JUMP_APEX_HIGH = 3.0, 5.4
+
 AK.Physics = {}
 local Physics = AK.Physics
 
@@ -147,11 +159,34 @@ function Physics:UpdateRoute(race, vehicle)
     -- Approaching a fork: your lateral position at the split decides your line.
     -- Committing by where you already are is what makes the choice a driving
     -- decision rather than a menu.
-    local branch, gap = AK.TrackBuilder:ForkAt(track, vehicle.distance, 6)
-    if branch and gap and gap <= 6 then
-      local wants = AK.Math.ForkSide(branch)
-      local committed = (wants < 0 and vehicle.lateral < -0.15)
-        or (wants > 0 and vehicle.lateral > 0.15)
+    -- AIMED AT, NOT CAUGHT OUT.
+    --
+    -- The decision used to be taken inside six metres of the split, on where
+    -- the kart happened to be at that instant -- a tenth of a second at racing
+    -- speed, with nothing on screen saying whether you were on the right side
+    -- of the road for it. You did not choose a shortcut, you found out whether
+    -- you had taken one. That is most of what is awkward about a fork.
+    --
+    -- Lining up is now something you do over the whole approach: from sixty
+    -- metres out the kart remembers the last moment it was on the branch's
+    -- side, the sign says whether it is (see RenderFork), and a wobble in the
+    -- last third of a second no longer throws the choice away.
+    local branch, gap = AK.TrackBuilder:ForkAt(track, vehicle.distance, 60)
+    if branch and gap then
+      local aimed = AK.Math.ForkAimed(branch, vehicle.lateral)
+      -- REMEMBERED IN METRES, not in seconds. A time window does not expire
+      -- while the clock is not running -- during the countdown, or on any frame
+      -- the race is paused -- so a kart that had once been on the branch's side
+      -- kept its claim to the shortcut indefinitely. Distance always advances,
+      -- and eighteen metres is the same forgiveness at racing speed with the
+      -- useful property of being MORE forgiving when you are going slowly.
+      if aimed then vehicle.forkAim = vehicle.distance end
+      vehicle.forkAt = branch.id
+    end
+    if branch and gap and gap <= 10 then
+      local committed = AK.Math.ForkAimed(branch, vehicle.lateral)
+        or (vehicle.forkAt == branch.id and vehicle.forkAim
+          and vehicle.distance - vehicle.forkAim < 18)
       -- The AI states its intent explicitly; a human just steers.
       if vehicle.branchIntent == branch.id then committed = true end
       if vehicle.branchIntent and vehicle.branchIntent ~= branch.id then committed = false end
@@ -180,6 +215,7 @@ function Physics:UpdateRoute(race, vehicle)
         -- no frame can draw a blend of the two.
         vehicle.prevDistance, vehicle.prevLateral = vehicle.distance, vehicle.lateral
         vehicle.branchIntent = nil
+        vehicle.forkAim, vehicle.forkAt = nil, nil
         if vehicle == race.player then
           AK.RaceUI:Announce(branch.name and branch.name:upper() or "SHORTCUT", AK.COLORS.lime)
           -- WHERE YOU WERE WHEN YOU TOOK IT, so the rejoin can say whether it
@@ -291,8 +327,24 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
   local ramp = AK.TrackBuilder:RampAt(vehicle.route or race.track, vehicle.distance)
   if ramp and vehicle.speed > 26 and (vehicle.air or 0) <= 0 and not vehicle.launched then
     vehicle.launched = true
-    vehicle.air = 0.55 + (vehicle.speed / math.max(1, vehicle.maxSpeed)) * 0.75
+    -- LONGER IN THE AIR. 0.55 to 1.30 seconds was a hop; the flight is the
+    -- best thing a ramp gives you and it was over before you had looked at it.
+    -- 0.62 to 1.52 is about a sixth longer at every speed, and the arc's height
+    -- in RaceUI scales off this same number, so a full-speed launch is both
+    -- longer and higher than a scrappy one -- which is the whole reason to
+    -- carry speed into a jump.
+    vehicle.air = 0.62 + (vehicle.speed / math.max(1, vehicle.maxSpeed)) * 0.90
     vehicle.airMax = vehicle.air
+    -- HOW HIGH, in metres, decided here rather than in the renderer.
+    --
+    -- The arc used to be a screen offset -- so many kart-widths up the picture
+    -- -- which meant its size was a fight with the frame rather than a property
+    -- of the jump: at 2.1 widths it left the top of the screen, and cutting it
+    -- to 0.8 to fix that took the jump with it. A height in metres is projected
+    -- like anything else in the world, so it is right at any distance, and it
+    -- belongs to the launch, where the speed that earned it is known.
+    vehicle.airApex = JUMP_APEX_LOW + (JUMP_APEX_HIGH - JUMP_APEX_LOW)
+      * AK.Math.Clamp((vehicle.air - 0.62) / 0.90, 0, 1)
     if vehicle == race.player then
       AK.RaceUI:Announce("JUMP!", AK.COLORS.gold)
       -- The shake, the shove and the burst all live in RaceUI:FeelLaunch, which

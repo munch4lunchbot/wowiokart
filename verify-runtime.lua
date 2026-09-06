@@ -1487,6 +1487,124 @@ if loadFailures == 0 then
       spots, counts[1] or 0, counts[2] or 0, counts[3] or 0, people, closest))
   end)
 
+  -- A FORK IS SOMETHING YOU AIM AT.
+  --
+  -- The choice used to be taken inside six metres of the split on wherever the
+  -- kart happened to be -- a tenth of a second at racing speed, with nothing on
+  -- screen saying whether you were on the right side of the road for it. You
+  -- did not choose a shortcut, you found out whether you had taken one.
+  --
+  -- UpdateRoute is driven directly here rather than through a lap of racing.
+  -- Steering a kart to a line through corner force and traffic measures the
+  -- physics' opinion of the approach, not the junction rule -- and the first
+  -- version of this check spent its whole run parked in the verge at lateral
+  -- 1.2 proving nothing. Feeding the rule the positions it is meant to judge
+  -- tests exactly the thing that changed.
+  ok("a shortcut is aimed at, not stumbled into", function()
+    local function approach(line)
+      AK.Race:Start("quick", { track = "elwynn" })
+      local race = AK.Race.current
+      local branch = race.track.branches and race.track.branches[1]
+      assert(branch, "Elwynn has no branch")
+      local side = AK.Math.ForkSide(branch)
+      local v = race.player
+      v.route, v.forkAim, v.forkAt, v.branchIntent = race.track, nil, nil, nil
+      for d = branch.entry - 90, branch.entry + 20, 2 do
+        v.distance = d
+        v.lateral = line(branch.entry - d, side)
+        AK.Physics:UpdateRoute(race, v)
+        if v.route ~= race.track then return true, branch.entry - d end
+      end
+      return false
+    end
+    local held = function(_, side) return side * 0.45 end
+    local away = function(_, side) return -side * 0.45 end
+    local straightenedAt = function(metres)
+      return function(togo, side) return togo > metres and side * 0.45 or 0 end
+    end
+    assert(approach(held), "held the branch's side all the way and missed it")
+    assert(not approach(away),
+      "a kart on the far side of the road was given the shortcut anyway")
+    -- The forgiveness, in metres: a wobble in the last stretch must not throw
+    -- the choice away, and a change of mind well before it must be honoured.
+    assert(approach(straightenedAt(12)),
+      "straightened twelve metres out and lost the shortcut it had lined up for")
+    assert(not approach(straightenedAt(34)),
+      "changed its mind thirty-four metres out and was given the shortcut anyway")
+    local _, took = approach(held)
+    say(("        aimed: taken %.0fm short of the split;  wobbled at 12m: "
+      .. "taken;  changed mind at 34m: not taken;  wrong side: not taken")
+      :format(took or 0))
+  end)
+
+  -- A JUMP HAS TO BE WORTH LOOKING AT.
+  --
+  -- The arc was a screen offset -- so many kart-widths up the picture -- so its
+  -- size was a fight with the frame rather than a property of the jump. At 2.1
+  -- widths it left the top of the screen; cut to 0.8 to fix that, it took the
+  -- jump with it: "we don't get as much hangtime as we did, which is depressing
+  -- -- that was really cool". Nothing measured either number, so the second
+  -- change looked exactly like the first.
+  --
+  -- Both halves are measured now. The flight is a real duration and the height
+  -- is real metres, and the thing that actually reads on screen is how far the
+  -- kart separates from its own shadow, which stays on the road.
+  ok("a launch has real air under it", function()
+    -- ALONE ON THE CIRCUIT. With a field on track the run-up is a traffic
+    -- simulation: a bump three hundred metres from the ramp changes the launch
+    -- speed, and the check then measures the collision rather than the jump.
+    local field = AK.db.settings.aiCount
+    AK.db.settings.aiCount = 0
+    AK.Race:Start("quick", { track = "elwynn" })
+    AK.db.settings.aiCount = field
+    local race = AK.Race.current
+    local player = race.player
+    -- A RUN-UP, not a teleport onto the lip. Dropping the kart on the ramp with
+    -- speed set by hand measured whatever the first frame of the simulation
+    -- decided to do with it; the launch worth checking is the one you arrive at
+    -- flat out, so it drives there.
+    local ramp = race.track.ramps and race.track.ramps[1]
+    assert(ramp, "Elwynn has no ramp to launch off")
+    player.distance = ramp.from - 320
+    player.lateral = 0
+    player.prevDistance, player.prevLateral = player.distance, 0
+    AK.Race.controls.accelerate = true
+    AK.Race.controls.left, AK.Race.controls.right = false, false
+    local flew, apex, top = 0, 0, 0
+    for _ = 1, math.ceil(20 / FRAME) do
+      AK.Race:Update(FRAME)
+      if not AK.Race.current then break end
+      top = math.max(top, (player.speed or 0) / math.max(1, player.maxSpeed or 1))
+      if (player.air or 0) > 0 then
+        flew = flew + FRAME
+        apex = math.max(apex, player.airApex or 0)
+      end
+      if flew > 0 and (player.air or 0) <= 0 then break end
+    end
+    assert(top > 0.9, ("the kart only reached %.0f%% of top speed on the "
+      .. "run-up, so this is not measuring a full-speed launch"):format(top * 100))
+    assert(flew > 1.3, ("a full-speed launch only flew %.2fs"):format(flew))
+    -- 4.6m is what the arc people liked worked out to; anything under that is
+    -- the regression coming back.
+    assert(apex > 4.6, ("its arc peaked at %.1fm"):format(apex))
+    -- And what that is on screen: the kart's own frame against its shadow,
+    -- which is anchored at the road. Under about a kart's width of separation
+    -- and the jump reads as sliding forward rather than leaving the ground.
+    local RaceUI = AK.RaceUI
+    RaceUI:Build()
+    RaceUI.route = race.track
+    player.air, player.airMax = player.airMax * 0.5, player.airMax
+    RaceUI:BuildBend(race.track, player.distance - 6)
+    RaceUI:RenderKarts(race, player, 0, player.distance - 6)
+    local kart = RaceUI.karts[1]
+    local rise = math.abs((kart.shadow.akY or 0) - (kart.akY or 0))
+    assert(rise > (kart.akWidth or 0),
+      ("at the top of the arc the kart is only %.0fpx off its shadow, on a "
+        .. "%.0fpx kart"):format(rise, kart.akWidth or 0))
+    say(("        %.2fs in the air, %.1fm at the apex, %.0fpx clear of its "
+      .. "shadow on a %.0fpx kart"):format(flew, apex, rise, kart.akWidth or 0))
+  end)
+
   -- A FORK HAS TO GO SOMEWHERE, AND COME BACK POINTING THE RIGHT WAY.
   --
   -- "Forks kind of don't do much -- they just are pick left or right and in a
@@ -1523,6 +1641,17 @@ if loadFailures == 0 then
           .. " never comes back: " .. string.format("%.1f", offset) .. "m adrift at the exit")
         assert((mid or 0) > 14, branch.id .. " only gets "
           .. string.format("%.1f", mid or 0) .. "m from the road it left")
+        -- AND THE MOUTH IS AS WIDE AS THE ROAD IT LEAVES. Turning off an
+        -- eighteen metre road onto a twelve metre one, mid fork-turn, having
+        -- only just committed, is a lot to ask in one place.
+        local function mouth(at, mainAt)
+          local here = AK.Math.RoadWidth(branch, at)
+          local main = AK.Math.RoadWidth(track, mainAt)
+          assert(here >= main - 0.02, ("%s is %.2f wide at a junction the main "
+            .. "line is %.2f wide at"):format(branch.id, here, main))
+        end
+        mouth(0, branch.entry)
+        mouth(branch.length, branch.exit)
       end
     end
     assert(seen >= 8, "only " .. seen .. " branches were checked")

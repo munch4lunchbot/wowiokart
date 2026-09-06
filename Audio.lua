@@ -67,13 +67,13 @@ local CUES = {
   -- physical, and drawn from the parts of the library that are not checkbox
   -- ticks. If a name does not exist on a given client, nothing breaks, the next
   -- one is tried, and `/kart sfxreport` says what actually resolved.
-  item        = { match = { "PICKUP", "LOOT_" }, kit = { "UI_TOYBOX_TABS", "UI_EPICLOOT_TOAST", "IG_BACKPACK_COIN_UP" }, pri = PRI.HIGH, cd = 0.20 },
-  itemUse     = { match = { "ACTIVATE", "SPELLCAST" }, kit = { "IG_SPELLBOOK_CLOSE", "UI_TRANSMOG_ITEM_CLICK" }, pri = PRI.HIGH, cd = 0.20 },
+  item        = { kit = { "UI_TOYBOX_TABS", "UI_EPICLOOT_TOAST", "IG_BACKPACK_COIN_UP" }, pri = PRI.HIGH, cd = 0.20 },
+  itemUse     = { kit = { "IG_SPELLBOOK_CLOSE", "UI_TRANSMOG_ITEM_CLICK" }, pri = PRI.HIGH, cd = 0.20 },
   throw       = { match = { "SWOOSH", "WHOOSH", "THROW" }, kit = { "UI_PVP_KILLBLOW", "IG_MAINMENU_OPEN" }, pri = PRI.NORMAL },
   throwHoming = { match = { "MISSILE", "SWOOSH", "WHOOSH" }, kit = { "GS_CHARACTER_SELECTION_ENTER_WORLD", "UI_WORLDQUEST_START" }, pri = PRI.NORMAL },
   throwHeavy  = { match = { "CANNON", "SIEGE", "HEAVY" }, kit = { "IG_MAINMENU_QUIT", "UI_RAID_BOSS_DEFEATED" }, pri = PRI.NORMAL },
-  drop        = { match = { "DROP", "PLACE" }, kit = { "IG_BACKPACK_COIN_DOWN", "UI_ETHEREAL_WINDOW_CLOSE" }, pri = PRI.NORMAL },
-  deploy      = { match = { "TRAP", "PLACE" }, kit = { "UI_VOID_STORAGE_UNLOCK", "IG_CHARACTER_INFO_TAB" }, pri = PRI.NORMAL },
+  drop        = { kit = { "IG_BACKPACK_COIN_DOWN", "UI_ETHEREAL_WINDOW_CLOSE" }, pri = PRI.NORMAL },
+  deploy      = { kit = { "UI_VOID_STORAGE_UNLOCK", "IG_CHARACTER_INFO_TAB" }, pri = PRI.NORMAL },
   starPower   = { match = { "EMPOWER", "POWERUP" }, kit = { "UI_LEGENDARY_LOOT_TOAST", "UI_EPICLOOT_TOAST", "LEVELUPSOUND" }, pri = PRI.HIGH },
   -- The shell has locked onto you. CRITICAL: this is the one warning in the
   -- game where being crowded out costs the player the chance to react.
@@ -83,9 +83,9 @@ local CUES = {
   hitConfirm  = { match = { "KILLBLOW", "CRIT", "IMPACT" }, kit = { "UI_RAID_BOSS_DEFEATED", "LOOT_WINDOW_COIN_SOUND" }, pri = PRI.HIGH, cd = 0.25 },
 
   -- Speed. Boosts are earned, so they get to be heard.
-  boost       = { match = { "BOOST", "SPEED", "RUSH" }, kit = { "IG_SPELLBOOK_OPEN", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
+  boost       = { kit = { "IG_SPELLBOOK_OPEN", "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP" }, pri = PRI.HIGH, cd = 0.35 },
   megaBoost   = { match = { "TURBO", "BOOST", "SPEED" }, kit = { "UI_70_ARTIFACT_FORGE_TRAIT_RANK_UP", "LEVELUPSOUND" }, pri = PRI.HIGH, cd = 0.35 },
-  dash        = { match = { "DASH", "RUSH", "SPEED" }, kit = { "UI_WORLDQUEST_START", "IG_SPELLBOOK_OPEN" }, pri = PRI.NORMAL, cd = 0.40 },
+  dash        = { kit = { "UI_WORLDQUEST_START", "IG_SPELLBOOK_OPEN" }, pri = PRI.NORMAL, cd = 0.40 },
   -- A launch was playing "boost" -- the same cue as a mushroom and a
   -- mini-turbo, on the one event in the game that throws you off the ground.
   -- Two of the three most emphatic things that can happen to you sounded
@@ -121,25 +121,25 @@ local CUES = {
 
   -- Incidental texture. Everything below fires many times a lap and is the
   -- entire source of the complaint. Long cooldowns, first to be suppressed.
-  bump         = { match = { "SCRAPE", "THUD", "BUMP" }, kit = { "UI_ETHEREAL_WINDOW_CLOSE", "IG_PLAYER_INVITE_DECLINE" }, pri = PRI.LOW, cd = 1.20 },
+  bump         = { kit = { "UI_ETHEREAL_WINDOW_CLOSE", "IG_PLAYER_INVITE_DECLINE" }, pri = PRI.LOW, cd = 1.20 },
   -- Being hit has to land like something hit you, not like a window closing.
   collision    = { match = { "CRASH", "IMPACT", "KILLBLOW" }, kit = { "IG_PLAYER_INVITE_DECLINE", "UI_PVP_KILLBLOW" }, pri = PRI.NORMAL, cd = 0.70 },
-  blocked      = { match = { "DEFLECT", "SHIELD", "BLOCK" }, kit = { "IG_CHARACTER_NPC_SELECT", "UI_VOID_STORAGE_UNLOCK" }, pri = PRI.LOW, cd = 1.50 },
-  offroad      = { match = { "GRAVEL", "DIRT", "GRASS", "ROUGH" }, kit = { "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 1.60 },
-  surfaceEnter = { match = { "SPLASH", "SLOSH" }, kit = { "IG_MAINMENU_OPTION_CHECKBOX_OFF" }, pri = PRI.LOW, cd = 1.40 },
-  overtake     = { match = { "ACHIEVEMENT", "LEVELUP" }, kit = { "UI_WORLDQUEST_COMPLETE", "LOOT_WINDOW_COIN_SOUND", "IG_BACKPACK_COIN_UP" }, pri = PRI.NORMAL, cd = 0.80 },
+  blocked      = { kit = { "IG_CHARACTER_NPC_SELECT", "UI_VOID_STORAGE_UNLOCK" }, pri = PRI.LOW, cd = 1.50 },
+  offroad      = { kit = { "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 1.60 },
+  surfaceEnter = { kit = { "IG_MAINMENU_OPTION_CHECKBOX_OFF" }, pri = PRI.LOW, cd = 1.40 },
+  overtake     = { kit = { "UI_WORLDQUEST_COMPLETE", "LOOT_WINDOW_COIN_SOUND", "IG_BACKPACK_COIN_UP" }, pri = PRI.NORMAL, cd = 0.80 },
   -- Losing a place was completely silent -- the banner changed colour and that
   -- was all. Gaining one and losing one are the two halves of the same beat and
   -- a race where only the good half is audible reads as though nothing is at
   -- stake. Deliberately duller and lower than `overtake`.
-  passed       = { match = { "DENIED", "NEGATIVE" }, kit = { "IG_CHARACTER_INFO_CLOSE", "IG_QUEST_FAILED" }, pri = PRI.NORMAL, cd = 0.80 },
+  passed       = { kit = { "IG_CHARACTER_INFO_CLOSE", "IG_QUEST_FAILED" }, pri = PRI.NORMAL, cd = 0.80 },
   -- A green shell ricocheting off the verge. It happens constantly and made no
   -- noise at all, so a shell you fired simply vanished from the world.
-  shellBounce  = { match = { "RICOCHET", "BOUNCE", "DEFLECT" }, kit = { "IG_MAINMENU_CLOSE", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.45 },
+  shellBounce  = { kit = { "IG_MAINMENU_CLOSE", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.45 },
   -- Whoosh as somebody flicks past. Low priority and a long cooldown on purpose
   -- -- in a tight pack this can trigger several times a second, and it is
   -- texture, not information.
-  nearMiss     = { match = { "WHOOSH", "SWOOSH" }, kit = { "MAP_PING", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.90 },
+  nearMiss     = { kit = { "MAP_PING", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.90 },
   thunder      = { match = { "THUNDER", "STORM", "LIGHTNING" }, kit = { "IG_MAINMENU_OPEN", "READY_CHECK" }, pri = PRI.LOW, cd = 4.00 },
 
   -- Menus. Outside a race there is no budget pressure, but the hover cue still
@@ -198,6 +198,22 @@ end
 -- `/kart sfxreport` prints the NAME each cue landed on, so a bad pick is
 -- visible and one click in the sound editor replaces it.
 -- ---------------------------------------------------------------------------
+
+-- WHICH CUES ARE ALLOWED TO REACH FOR THE LIBRARY, AND WHICH ARE NOT.
+--
+-- Only a cue carries a `match` list, and most of them deliberately do not. The
+-- library's non-interface entries are DRAMATIC -- they are spell impacts, siege
+-- weapons, creature deaths -- and dramatic is exactly wrong for anything that
+-- happens several times a lap. An achievement fanfare every time you gain a
+-- place, a rockfall every time somebody nudges you: "some sounds are just too
+-- much, too extra". A checkbox tick is a perfectly good sound for a small
+-- event; it was only ever the wrong sound for a big one.
+--
+-- So the split is by WEIGHT, not by how placeholder the old choice looked.
+-- Matching is for the beats that are meant to land -- the impacts, the launch,
+-- the throw, the star, the spiny warning, the engine -- and everything that
+-- fires more than about once a lap keeps its small interface sound: items,
+-- boosts, bumps, scrapes, changing places, a shell ricochet, a near miss.
 
 -- Names to refuse however well they match. These are the long entries -- music
 -- beds, ambience, voice -- and a one-shot cue that lands on a ninety-second
@@ -574,7 +590,19 @@ function AK:UpdateEngine(vehicle, dt)
 
   local cue = engineNote(ratio)
   local def = CUES[cue]
+  -- ONE ENGINE AT A TIME.
+  --
+  -- The notes are spaced 0.24s to 0.85s apart, which was fine while they were
+  -- ten-millisecond interface ticks and is not fine now that they resolve to a
+  -- real engine sample -- those run to a second or more, so with duplicates
+  -- allowed (which they now are, and must be, for everything else) up to four
+  -- copies of the engine pile on top of each other and it stops being a motor
+  -- and becomes a roar. Cutting the previous note as the next one starts is
+  -- what makes this a monophonic engine instead of a heap.
+  local previous = AK.lastEngineHandle
   if def and playCue(cue, def) then
+    if previous and StopSound then pcall(StopSound, previous) end
+    AK.lastEngineHandle = AK.lastSoundHandle
     -- Deliberately does NOT touch lastAny/lastLow/lastNormal. The engine has its
     -- own lane and must never spend the budget the meaningful cues draw on.
     lastPlayed[cue] = now

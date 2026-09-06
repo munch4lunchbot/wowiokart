@@ -361,6 +361,34 @@ function Builder:AnchorBranch(track, branch)
     centre[i] = entryCentre + (centre[i] - baseCentre) + hermite(t, cP1, cM0, cM1)
     height[i] = entryHeight + (height[i] - baseHeight) + hermite(t, hP1, hM0, hM1)
   end
+
+  -- A JUNCTION HAS A MOUTH, AND THE MOUTH IS AS WIDE AS THE ROAD IT LEAVES.
+  --
+  -- Branches are authored narrow -- 0.58 to 0.86 of the nominal width -- which
+  -- is right in the middle of one and wrong at its ends: you turned off an
+  -- eighteen metre road onto a twelve metre one, at the exact moment the fork
+  -- turn is bending you hardest, having only just committed. That is a lot to
+  -- ask in one place, and it is a large part of why a shortcut feels awkward to
+  -- take rather than difficult to take.
+  --
+  -- The width is blended up to the main line's over the same stretch the fork
+  -- turn uses, at both ends. The narrow part -- the part that is the challenge
+  -- -- is untouched.
+  local width = branch.widthTable
+  if width then
+    local run = math.min(70, branch.length * 0.4)
+    local mouth = math.max(self:Width(track, branch.entry), self:Width(track, branch.exit))
+    for i = 1, samples do
+      local d = (i - 1) * STEP
+      local open = math.min(d, branch.length - d) / math.max(1, run)
+      if open < 1 then
+        -- Smoothstep, so the taper has no corner where it meets the authored
+        -- width -- a step in width is a step in the verge.
+        local blend = 1 - open * open * (3 - 2 * open)
+        width[i] = width[i] + (mouth - width[i]) * blend
+      end
+    end
+  end
 end
 
 function Builder:ForkAt(track, distance, window)

@@ -37,7 +37,40 @@ local REJOIN_NOTICE = 130
 local REJOIN_DRAW = 150
 -- How far the camera climbs at the top of a launch, in metres. The sprite's own
 -- hop is small; this is what makes the world drop away.
-local JUMP_CAMERA = 3.4
+-- HOW HIGH A JUMP ACTUALLY GOES, in metres of world height.
+--
+-- The arc used to be a screen offset -- so many kart-widths up the picture --
+-- which is why it kept having to be traded against the frame: at 2.1 widths it
+-- left the top of the screen, and cutting it to 0.8 took the jump with it.
+-- "We don't get as much hangtime as we did, which is depressing, that was
+-- really cool." It was, and I took it out.
+--
+-- Height in METRES fixes the trade instead of splitting it. The rise is
+-- projected like everything else in the world, so it is correct at any depth
+-- (a rival launching a hundred metres ahead rises a hundred metres' worth, not
+-- a full screen's worth), it scales with how long the kart is actually in the
+-- air, and the camera can take a measured share of it rather than all or none.
+--
+-- The camera climbs a little over half. What is left is the kart genuinely
+-- rising in frame; what the camera takes is the ground falling away underneath
+-- it, which is the other half of what a jump looks like. Both cues, and the
+-- kart stays where you can see what it is doing.
+-- How much of the arc the camera climbs. Small on purpose: this is a chase
+-- camera easing after the kart, not a boom lifting with it. At half the arc the
+-- two cancel and the jump disappears; at a fifth the kart clearly rises in
+-- frame and the ground still visibly drops away under it.
+local JUMP_CAMERA_SHARE = 0.18
+
+--- Where this kart is on its jump: metres off the road, and how far along the
+--- arc. Nil when it is on the ground. The apex is set by the physics at launch,
+--- from the speed that earned it -- see vehicle.airApex in Race/Physics.lua.
+local function jumpArc(vehicle)
+  local air = vehicle and vehicle.air or 0
+  if air <= 0 then return nil end
+  local t = 1 - air / math.max(0.01, vehicle.airMax or 1)
+  local apex = vehicle.airApex or 4.0
+  return apex * math.sin(t * math.pi), t, apex
+end
 local TUNNEL_HEIGHT = 7.5        -- metres from road to tunnel ceiling
 local TUNNEL_TILE = 5.0          -- metres per repeat of the rock texture
 local PROPS = 54                 -- roadside scenery frames in flight at once
@@ -4207,8 +4240,20 @@ function RaceUI:RenderFork(race, player, camX, camZ)
         -- Two files rather than one flipped texture: SetRotation turns the UVs
         -- inside a fixed rectangle, it does not mirror the quad.
         self.forkSign:SetTexture(ART .. (side < 0 and "forkleft.tga" or "forkright.tga"))
-        local flash = 0.72 + 0.28 * math.sin(race.elapsed * 7)
-        self.forkSign:SetVertexColor(0.55 * flash, 1.0 * flash, 0.62 * flash, 1)
+        -- LIT WHEN YOU ARE LINED UP FOR IT, dim when you are not.
+        --
+        -- The sign said a shortcut existed and nothing else, so the one thing
+        -- the player needed to know on the approach -- am I on the right side
+        -- of the road to take this -- was invisible until it was decided for
+        -- them. Same predicate the physics commits on, so the sign cannot say
+        -- one thing and the road do another.
+        local aimed = AK.Math.ForkAimed(branch, player.lateral)
+        local flash = aimed and (0.72 + 0.28 * math.sin(race.elapsed * 7)) or 0.42
+        if aimed then
+          self.forkSign:SetVertexColor(0.55 * flash, 1.0 * flash, 0.62 * flash, 1)
+        else
+          self.forkSign:SetVertexColor(0.62 * flash, 0.68 * flash, 0.72 * flash, 1)
+        end
         setShown(self.forkSign, true)
         self.forkLabel:ClearAllPoints()
         -- KEPT ON SCREEN. The sign stands beside the road, and on a bend the
@@ -4222,6 +4267,15 @@ function RaceUI:RenderFork(race, player, camX, camZ)
         -- read "RIVER FORD  <<", with the arrow typed out of angle brackets on
         -- the one screen the player is actually looking at.
         self.forkLabel:SetText((branch.name or "SHORTCUT"):upper())
+        -- And the words take the same state, so a glance at either one answers
+        -- the question. Lime is "you are going that way"; grey is "you are not".
+        if aimed then
+          self.forkLabel:SetTextColor(unpack(AK.COLORS.lime))
+          self.forkArrow:SetVertexColor(unpack(AK.COLORS.lime))
+        else
+          self.forkLabel:SetTextColor(0.62, 0.68, 0.78)
+          self.forkArrow:SetVertexColor(0.62, 0.68, 0.78)
+        end
         self.forkArrow:ClearAllPoints()
         self.forkArrow:SetPoint(side < 0 and "RIGHT" or "LEFT", self.forkLabel,
           side < 0 and "LEFT" or "RIGHT", side < 0 and -6 or 6, 0)
@@ -4315,10 +4369,13 @@ function RaceUI:RenderRoad(race, player)
   -- match (see the airRise note in RenderKarts) -- between the two you get the
   -- height without losing the kart.
   local airLift = 0
-  local flying = race and race.player
-  if flying and (flying.air or 0) > 0 then
-    local t = 1 - flying.air / math.max(0.01, flying.airMax or 1)
-    airLift = math.sin(t * math.pi) * JUMP_CAMERA
+  local height, phase = jumpArc(race and race.player)
+  if height then
+    -- Raised to a power above one so the camera is proportionally LOWER than
+    -- the kart early in the arc and catches up over the top: a chase camera
+    -- lags, and a camera that rises in lockstep cancels the whole effect out.
+    airLift = height * JUMP_CAMERA_SHARE
+      * (math.sin(phase * math.pi) ^ 0.35)
   end
   -- The camera rides above the road beneath it, so it crests and dips with the
   -- terrain instead of flying level through hills.
@@ -5681,18 +5738,17 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
         bounce = bounce + math.sin(t * math.pi) * width * 0.30
       end
       -- Ramp airtime: a long, high arc, well above the blast hop.
-      local air = vehicle.air or 0
       -- +1 leaving the lip, 0 at the top, -1 coming down. Used again below to
       -- stretch the kart on the way up and gather it on the way down.
       local airRise = 0
-      if air > 0 then
-        local t = 1 - air / math.max(0.01, vehicle.airMax or 1)
-        -- 0.8, not 2.1. The camera climbs JUMP_CAMERA metres on the same arc
-        -- now, so the world drops away underneath; the sprite only has to
-        -- separate from the road, not carry the whole jump on its own. At 2.1
-        -- widths it left the top of the screen.
-        bounce = bounce + math.sin(t * math.pi) * width * 0.8
-        airRise = math.cos(t * math.pi)
+      local airHeight, airPhase = jumpArc(vehicle)
+      if airHeight then
+        -- METRES, projected. pixelsPerMetre is exactly how this frame turns a
+        -- height at this depth into a screen offset, so the arc is correct
+        -- however far away the kart is -- and the shadow, which stays pinned at
+        -- the road's own y, opens up underneath it by the same amount.
+        bounce = bounce + pixelsPerMetre * airHeight
+        airRise = math.cos(airPhase * math.pi)
       end
 
       -- The world yaws around the player, so take most of the yaw back off
