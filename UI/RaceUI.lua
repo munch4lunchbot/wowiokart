@@ -5756,6 +5756,25 @@ function RaceUI:CrossRoute(entity)
       - AK.Math.RoadHeight(cross.route, cross.from) + cross.baseY
 end
 
+--- Put one pool entry entirely out of the world.
+---
+--- THE TAG, THE PLATE AND THE MARKER ARE NOT THE KART'S CHILDREN.
+---
+--- They live on `tagLayer` so they always draw over the field -- which is the
+--- whole reason that layer exists -- and the price of that is that hiding a
+--- kart frame does NOT hide them. Every path that takes a racer off the screen
+--- has to take all four with it, and there is more than one such path, so this
+--- is the only place that knows the list. It was written out by hand in one of
+--- them and the battle marker had already been left off it.
+local function hideKart(self, kart, index)
+  setShown(kart, false)
+  setShown(kart.tag, false)
+  setShown(kart.tagPlate, false)
+  kart.warn:SetText("")
+  kart.warn:SetAlpha(0)
+  self.previous[index] = nil
+end
+
 function RaceUI:RenderKarts(race, player, camX, camZ)
   local tuning = self.T
   for index, vehicle in ipairs(race.vehicles) do
@@ -6117,9 +6136,21 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       end
 
       -- Name tags float above the model, in their own always-on-top layer.
+      --
+      -- THROUGH setShown, BOTH WAYS. These two were shown with a direct
+      -- SetShown and hidden through the cache -- and the cache's whole contract
+      -- (see its note above) is that anything showing or hiding a pooled region
+      -- has to come through it. The direct call never set the flag, so when the
+      -- kart later left the screen `setShown(kart.tag, false)` looked at a flag
+      -- that still said "hidden", decided there was nothing to do, and skipped
+      -- the Hide. The tag stayed exactly where it was last drawn.
+      --
+      -- That is the name parked in the distance: not a rendering fault at all,
+      -- but the one region in this file that used both idioms on the same
+      -- widget, so the hide could never fire.
       local tagVisible = width > 34
-      kart.tag:SetShown(tagVisible)
-      kart.tagPlate:SetShown(tagVisible)
+      setShown(kart.tag, tagVisible)
+      setShown(kart.tagPlate, tagVisible)
       if tagVisible then
         kart.tag:SetText(vehicle == player and "YOU" or (vehicle.racer.tag or "CPU"))
         kart.tag:SetTextColor(unpack(vehicle == player and AK.COLORS.gold or { 1, 1, 1 }))
@@ -6207,11 +6238,25 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
 
       self:VehicleEffects(vehicle, index, x, y, width, vehicle == player)
     else
-      setShown(kart, false)
-      setShown(kart.tag, false)
-      setShown(kart.tagPlate, false)
-      self.previous[index] = nil
+      hideKart(self, kart, index)
     end
+  end
+
+  -- AND THE POOL IS BIGGER THAN THE FIELD.
+  --
+  -- There are MAX_RACERS kart frames, built once and reused, and this loop only
+  -- ever walks the racers actually in the race -- so every entry past the end
+  -- of the field keeps whatever the LAST race left on it. A Time Trial and a
+  -- Practice run are built with exactly one vehicle (Race:BuildRace), and
+  -- lowering the rival count in the settings does the same thing on a smaller
+  -- scale, so seven name tags from the grand prix you just finished stayed
+  -- painted on the screen, frozen at the position their kart was in when it was
+  -- last drawn: "THRALL" parked in the distance for the whole of your hot lap.
+  --
+  -- The kart frames themselves went away with it and were never the tell, since
+  -- the model and the sprite are children of the frame. The tags are not.
+  for index = #race.vehicles + 1, #self.karts do
+    hideKart(self, self.karts[index], index)
   end
 end
 

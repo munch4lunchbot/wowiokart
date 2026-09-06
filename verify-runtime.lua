@@ -1452,6 +1452,69 @@ if loadFailures == 0 then
   -- where they stand, and the seat drawing them must never change. While the
   -- camera is there, check the other thing that was wrong out here too -- that
   -- every one of them is on the grass and not on the tarmac.
+  -- A WIDGET POOL IS BIGGER THAN THE FIELD IT DRAWS.
+  --
+  -- Reported from a real game: the name "THRALL" stuck on screen, frozen in the
+  -- distance, during a session where no Thrall was racing. The kart frames are
+  -- a pool of MAX_RACERS built once and reused, but the name tags, their plates
+  -- and the battle marker live on `tagLayer` rather than on the kart -- so
+  -- hiding a kart frame does not hide them, and RenderKarts only ever walked
+  -- the racers actually in the race. A Time Trial is built with ONE vehicle, so
+  -- seven tags from the grand prix before it stayed painted where they were.
+  --
+  -- Driven exactly as it was hit: a full grid, then a one-kart session.
+  ok("a smaller field leaves nothing from the last one on screen", function()
+    local RaceUI = AK.RaceUI
+    RaceUI:Build()
+
+    local function drawField(mode, track)
+      AK.Race:Start(mode, { track = track })
+      local race = AK.Race.current
+      RaceUI.route = race.track
+      -- A few frames of real racing, so the tags are placed and shown rather
+      -- than merely built.
+      for _ = 1, math.ceil(3 / FRAME) do AK.Race:Update(FRAME) end
+      RaceUI:Render(race)
+      return race
+    end
+
+    local full = drawField("quick", "elwynn")
+    assert(#full.vehicles > 1, "the full grid was built with one kart")
+    local showing = 0
+    for _, kart in ipairs(RaceUI.karts) do
+      if kart.tag and kart.tag.akShown then showing = showing + 1 end
+    end
+    assert(showing > 0, "a full grid drew no name tags at all, so this proves nothing")
+    AK.Race:Stop(true)
+
+    -- Now the one-kart session that used to inherit them.
+    local solo = drawField("time_trial", "elwynn")
+    assert(#solo.vehicles == 1,
+      "a time trial was built with " .. #solo.vehicles .. " karts")
+
+    local stuck = {}
+    for index = #solo.vehicles + 1, #RaceUI.karts do
+      local kart = RaceUI.karts[index]
+      if kart.tag and kart.tag.akShown then
+        stuck[#stuck + 1] = ("tag %d says %q"):format(index, tostring(kart.tag.akText))
+      end
+      if kart.tagPlate and kart.tagPlate.akShown then
+        stuck[#stuck + 1] = ("plate %d"):format(index)
+      end
+      if kart.akShown then stuck[#stuck + 1] = ("kart %d"):format(index) end
+      -- The battle marker is text with an alpha rather than a shown flag, and
+      -- it was the one the hand-written hide branch had already forgotten.
+      if kart.warn and (kart.warn.akText or "") ~= "" then
+        stuck[#stuck + 1] = ("marker %d says %q"):format(index, tostring(kart.warn.akText))
+      end
+    end
+    say(("        %d karts on the grid, %d in the trial, %d left over on screen")
+      :format(#full.vehicles, #solo.vehicles, #stuck))
+    assert(#stuck == 0,
+      "the last race left this on the screen: " .. table.concat(stuck, ", "))
+    AK.Race:Stop(true)
+  end)
+
   ok("the crowd holds still, and stands off the road", function()
     AK.Race:Start("quick", { track = "elwynn" })
     local race = AK.Race.current

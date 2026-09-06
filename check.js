@@ -786,6 +786,46 @@ if (!languageServerRan)
     "syntax and leaked-local checks below looked at nothing. Set LUA_LS.");
 console.log("menu screens that do not fit: " + brokenScreens.length);
 for (const b of brokenScreens) console.log("  " + b);
+// --- a pooled region shown one way and hidden another -----------------------
+//
+// UI/RaceUI.lua caches visibility on the region itself: `setShown` skips the
+// call into the client when the flag already says what you are asking for,
+// because a scene renderer hides hundreds of unused pool entries every frame
+// and almost all of those calls do nothing. Its own note spells out the price:
+// anything that shows or hides one of these regions has to come through it.
+//
+// Exactly one widget in the file broke that rule, and it produced the bug
+// nobody could pin down. The kart name tag was SHOWN with a direct SetShown --
+// which never touches the flag -- and HIDDEN through the cache, which read a
+// flag still saying "hidden", concluded there was nothing to do, and skipped
+// it. So the tag could be put on the screen and never taken off: a rival's name
+// left parked in the distance, frozen where their kart last was.
+//
+// A widget managed both ways is the whole fault. One idiom or the other is
+// fine; mixing them on the same region is a hide that silently does nothing.
+const mixedVisibility = [];
+{
+  const file = path.join(ADDON, "UI", "RaceUI.lua");
+  if (fs.existsSync(file)) {
+    const src = fs.readFileSync(file, "utf8");
+    const cached = new Set();
+    for (const m of src.matchAll(/\bsetShown\(\s*([\w.]+)\s*[,)]/g)) cached.add(m[1]);
+    const direct = new Map();
+    for (const m of src.matchAll(/(?:^|[^\w.])([\w]+\.[\w.]+):SetShown\(/gm)) {
+      if (!direct.has(m[1])) {
+        direct.set(m[1], src.slice(0, m.index).split("\n").length);
+      }
+    }
+    for (const [name, line] of direct) {
+      if (cached.has(name)) {
+        mixedVisibility.push("UI/RaceUI.lua:" + line + "  " + name +
+          " is hidden through setShown but shown with a direct SetShown, " +
+          "so the cached flag goes stale and the hide never fires");
+      }
+    }
+  }
+}
+
 console.log("locals used above their declaration: " + usedTooEarly.length);
 for (const u of usedTooEarly) console.log("  " + u);
 console.log("screens still made of BackdropTemplate: " + addonLookingWindows.length);
@@ -824,6 +864,8 @@ console.log("constants read before they are declared: " + earlyConstants.length)
 for (const e of earlyConstants) console.log("  " + e);
 console.log("circuits wearing another circuit's scenery: " + borrowedScenery.length);
 for (const b of borrowedScenery) console.log("  " + b);
+console.log("pooled regions shown one way and hidden another: " + mixedVisibility.length);
+for (const m of mixedVisibility) console.log("  " + m);
 console.log("roads that vanish into their own verge: " + camouflagedRoads.length);
 for (const c of camouflagedRoads) console.log("  " + c);
 
@@ -833,6 +875,7 @@ const bad = earlyConstants.length
   + lapRelative.length + orphanAchievements.length + unorderedItems.length
   + unfaded.length + unscaled.length + invisibleSurfaces.length + sameLookingItems.length
   + nilProneLoops.length + borrowedScenery.length + camouflagedRoads.length
+  + mixedVisibility.length
   + wontCompile.length + addonLookingWindows.length + usedTooEarly.length
   + brokenScreens.length;
 console.log(bad ? "FAIL" : "PASS");
