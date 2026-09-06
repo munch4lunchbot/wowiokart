@@ -285,39 +285,81 @@ function Builder:CompileBranches(track)
 end
 
 --- The fork a racer is approaching on the main route, if any.
---- Pin a branch's two ends onto the main road.
+--- Pin a branch's two ends onto the main road, and make it actually leave.
 ---
 --- Compile closes every route into a loop, which is right for a circuit and
 --- wrong for a branch: a branch starts at one point on the main line and ends
---- at a different one. Left as a loop it would rejoin at the wrong lateral
---- offset and the road would visibly snap sideways under the kart. Adding the
---- missing displacement linearly along the branch spreads the correction over
---- its whole length, where it reads as part of the curve.
+--- at a different one.
+---
+--- TWO THINGS WERE WRONG WITH DOING THAT BY POSITION ALONE.
+---
+--- The first is that matching POSITION at the ends says nothing about HEADING.
+--- A branch was pinned so its centreline began exactly where the main line was
+--- and ended exactly where the main line would be -- and then set off at
+--- whatever angle its own first corner happened to give it. Position was
+--- continuous and direction was not, so the instant the physics moved you onto
+--- the branch the whole world rotated. Committing to the RIGHT at a fork whose
+--- first piece curves left threw the view left, which is exactly the report:
+--- you turn right and the game turns you left. The correction is a cubic rather
+--- than the old straight line, which lets both ENDS match the main line's slope
+--- as well as its value -- so the junction is smooth in both directions.
+---
+--- The visible SEPARATION of the two roads is not done here. This table is what
+--- the AI steers by and what the plan-view map is drawn from, both of which
+--- want the road's real line; the renderer never reads it at all -- classic
+--- pseudo-3D integrates curvature forward from the kart and has no world
+--- position to put a branch at. So the swing that makes a shortcut read as
+--- somewhere else lives in RaceUI:Depart, in the space that is actually drawn.
 function Builder:AnchorBranch(track, branch)
   local centre, height = branch.centreTable, branch.heightTable
   local samples = branch.sampleCount
   if not centre or not samples or samples < 2 then return end
 
-  -- Both ends must land ON the main line, in absolute terms.
-  --
-  -- This used to normalise the branch to start at zero and merely END at the
-  -- right RELATIVE offset, so a branch always began at centre 0 and height 0
-  -- while the main line at that point was somewhere else entirely. Switching
-  -- route therefore snapped the road vertically by whatever the entry height
-  -- was -- which is the "the fork just teleports you" report. The shape was
-  -- always right; it was pinned to the wrong origin.
-  local entryCentre = AK.Math.RoadCenter(track, branch.entry)
-  local entryHeight = AK.Math.RoadHeight(track, branch.entry)
-  local wantCentre = AK.Math.RoadCenter(track, branch.exit) - entryCentre
-  local wantHeight = AK.Math.RoadHeight(track, branch.exit) - entryHeight
+  -- RAW SAMPLES, NOT AK.Math.RoadCenter. RoadCenter negates everything in
+  -- mirror mode, so anchoring through it baked a flipped main-line offset into
+  -- the branch -- which RoadCenter then flipped AGAIN when the branch was read
+  -- back. Every shortcut on every circuit was pinned to the wrong place with
+  -- Mirror on, and only with Mirror on. The builder works in unmirrored space.
+  local entryCentre = self:Centre(track, branch.entry)
+  local entryHeight = self:Height(track, branch.entry)
+  local wantCentre = self:Centre(track, branch.exit) - entryCentre
+  local wantHeight = self:Height(track, branch.exit) - entryHeight
   local haveCentre = centre[samples] - centre[1]
   local haveHeight = height[samples] - height[1]
   local baseCentre, baseHeight = centre[1], height[1]
 
+  -- Slopes, in metres of offset per metre travelled, on both roads at both
+  -- junctions. A sample is STEP metres from the next, and the main line is
+  -- differenced across the same span so the two are comparable.
+  local function slopeOf(route, at)
+    return (self:Centre(route, at + STEP) - self:Centre(route, at - STEP)) / (2 * STEP)
+  end
+  local function gradeOf(route, at)
+    return (self:Height(route, at + STEP) - self:Height(route, at - STEP)) / (2 * STEP)
+  end
+  local mainInSlope, mainOutSlope = slopeOf(track, branch.entry), slopeOf(track, branch.exit)
+  local mainInGrade, mainOutGrade = gradeOf(track, branch.entry), gradeOf(track, branch.exit)
+  local ownInSlope = (centre[2] - centre[1]) / STEP
+  local ownOutSlope = (centre[samples] - centre[samples - 1]) / STEP
+  local ownInGrade = (height[2] - height[1]) / STEP
+  local ownOutGrade = (height[samples] - height[samples - 1]) / STEP
+
+  -- Cubic Hermite over t in 0..1, with the tangents expressed per unit t --
+  -- hence the multiply by the branch's length.
+  local span = math.max(1, (samples - 1) * STEP)
+  local function hermite(t, p1, m0, m1)
+    local t2, t3 = t * t, t * t * t
+    return (t3 - 2 * t2 + t) * m0 + (-2 * t3 + 3 * t2) * p1 + (t3 - t2) * m1
+  end
+  local cP1, cM0, cM1 = wantCentre - haveCentre,
+    (mainInSlope - ownInSlope) * span, (mainOutSlope - ownOutSlope) * span
+  local hP1, hM0, hM1 = wantHeight - haveHeight,
+    (mainInGrade - ownInGrade) * span, (mainOutGrade - ownOutGrade) * span
+
   for i = 1, samples do
     local t = (i - 1) / (samples - 1)
-    centre[i] = entryCentre + (centre[i] - baseCentre) + (wantCentre - haveCentre) * t
-    height[i] = entryHeight + (height[i] - baseHeight) + (wantHeight - haveHeight) * t
+    centre[i] = entryCentre + (centre[i] - baseCentre) + hermite(t, cP1, cM0, cM1)
+    height[i] = entryHeight + (height[i] - baseHeight) + hermite(t, hP1, hM0, hM1)
   end
 end
 

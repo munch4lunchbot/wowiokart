@@ -982,7 +982,25 @@ if (!process.env.NOFORK) {
     // and a sampler that wrapped here would fetch the branch's EXIT for any
     // distance just short of its start.
     const at = d => Math.max(0, Math.min(B.length, d));
-    const bCurve = d => B._cv[Math.min(B._N - 1, Math.floor(at(d) / B._STEP))];
+    // Declared here, not below: branchBend runs its integration immediately
+    // and forkTurn is part of the curvature it integrates.
+    const side = branch.b.side || -1;
+    // MIRRORS AK.Math.ForkTurn. A branch's departure from the road it left is
+    // authored curvature, so it belongs here with the rest of the curvature and
+    // not as an offset painted onto the ribbon -- the ribbon and the road it
+    // becomes then integrate the same curve and committing costs nothing.
+    const FORK_TURN = 2.4, FORK_TURN_RUN = 70;
+    const forkTurn = d => {
+      const run = Math.min(FORK_TURN_RUN, B.length * 0.4);
+      if (run <= 1) return 0;
+      if (d >= 0 && d <= run) return side * FORK_TURN * Math.sin(2 * Math.PI * d / run);
+      if (d >= B.length - run && d <= B.length) {
+        return -side * FORK_TURN * Math.sin(2 * Math.PI * (d - (B.length - run)) / run);
+      }
+      return 0;
+    };
+    const bCurve = d =>
+      B._cv[Math.min(B._N - 1, Math.floor(at(d) / B._STEP))] + forkTurn(at(d));
     const bHeight = d => B._h[Math.min(B._N - 1, Math.floor(at(d) / B._STEP))];
     const bWidth = d => B._w[Math.min(B._N - 1, Math.floor(at(d) / B._STEP))];
 
@@ -1007,8 +1025,6 @@ if (!process.env.NOFORK) {
       };
     })();
 
-    const side = branch.b.side || -1;
-    const offset = side * T.roadHalf * entryWidth * 0.92;
     const span = Math.min(B.length, Math.max(0, FAR_Z - entryDz));
     const baseY = roadHeight(branch.entry) - bHeight(0);
     let pX = null, pY = null, pW = null;
@@ -1019,16 +1035,18 @@ if (!process.env.NOFORK) {
         const bd = span * (i / (FORK_SEGMENTS - 1));
         const dz = entryDz + bd;
         if (dz <= 1.2) continue;
-        // Blended out of the main road over the first few metres so it grows
-        // from the tarmac rather than appearing beside it.
-        const emerge = clamp(bd / 12, 0, 1);
-        const worldX = entryCentre + branchBend(bd) + offset * emerge;
+        const worldX = entryCentre + branchBend(bd);
+        // Mirrors DrawRibbon: the ribbon has nothing to say until there is
+        // ground between the two roads, and painting it before then puts its
+        // bright rails straight across the road being driven. Measured against
+        // the road the camera is on at the same depth.
+        const reveal = clamp(Math.abs(worldX - bend(dz)) / (T.roadHalf * 0.8), 0, 1);
         const [x, y, ppm] = project(dz, worldX, baseY + bHeight(bd));
         const hwPx = ppm * T.roadHalf * bWidth(bd);
         if (pY !== null && y > pY) {
           ribs.push({ y: pY, h: Math.max(1, y - pY), midX: (x + pX) / 2,
             midHalf: (hwPx + pW) / 2, nearX: pX, nearHalf: pW, farX: x, farHalf: hwPx,
-            dz, bd, ppm });
+            dz, bd, ppm, reveal });
         }
         pX = x; pY = y; pW = hwPx;
       }
@@ -1057,13 +1075,13 @@ if (!process.env.NOFORK) {
         if (!qNarrow) { qLo = rib.midX - rib.midHalf; qHi = rib.midX + rib.midHalf; }
         const rw = Math.max(2, qHi - qLo);
         if (flatRibbon || !tex.road) {
-          rect(SX(qLo), SY(rib.y + rib.h), rw, rib.h + 1, ...tint, 1);
+          rect(SX(qLo), SY(rib.y + rib.h), rw, rib.h + 1, ...tint, rib.reveal);
         } else {
           const uR = T.roadHalf / ROAD_TILE;
           const v0 = (rib.bd - span / FORK_SEGMENTS) / ROAD_TILE;
           const v1 = Math.min(rib.bd / ROAD_TILE, v0 + Math.max(0.08, rib.h / MIN_TEXEL));
           blit(tex.road, SX(qLo), SY(rib.y + rib.h), rw, rib.h + 1,
-            -uR, uR, v0, v1, tint, 1);
+            -uR, uR, v0, v1, tint, rib.reveal);
         }
         // Bright rails, so the alternate line reads as a road and not as a
         // shadow on the grass.
@@ -1079,9 +1097,9 @@ if (!process.env.NOFORK) {
         if (!qNarrow) { nl = fl = qLo; nr = fr = qHi; }
         const tL = Math.abs(fl - nl), tR = Math.abs(fr - nr);
         edge(SX(nl + (tL - rail) / 2), SY(rib.y), SX(fl + (tL - rail) / 2),
-          SY(rib.y + rib.h), rail + tL, ...rc, 1);
+          SY(rib.y + rib.h), rail + tL, ...rc, rib.reveal);
         edge(SX(nr - (tR - rail) / 2), SY(rib.y), SX(fr - (tR - rail) / 2),
-          SY(rib.y + rib.h), rail + tR, ...rc, 1);
+          SY(rib.y + rib.h), rail + tR, ...rc, rib.reveal);
       }
     }
 

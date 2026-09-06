@@ -38,6 +38,9 @@ function compile(track) {
   return { centre, height, width, samples, length: track.length };
 }
 
+const slopeAt = (c, len, d) =>
+  (c.centre[at(c, len, d + STEP)] - c.centre[at(c, len, d - STEP)]) / (2 * STEP);
+
 const at = (c, len, d) => {
   const i = Math.max(0, Math.min(c.samples - 1, Math.round(((d % len) + len) % len / STEP)));
   return i;
@@ -62,12 +65,35 @@ function anchor(main, branch, entry, exit) {
   // fix. It must FAIL both junction checks.
   const originC = process.env.OLDANCHOR ? 0 : entryC;
   const originH = process.env.OLDANCHOR ? 0 : entryH;
+  // TANGENTS, NOT JUST ENDPOINTS. Matching only position leaves the branch free
+  // to set off at whatever angle its own first corner gives it, so the world
+  // ROTATES the instant the physics moves you onto it -- pick right at a fork
+  // whose first piece bends left and the game turns you left. A cubic
+  // correction pins value and slope at both ends instead of a straight line
+  // pinning value alone. FLATANCHOR=1 restores the linear version so this
+  // harness can be shown to catch the kink rather than merely agree with it.
+  const slope = (c, len, d) =>
+    (c.centre[at(c, len, d + STEP)] - c.centre[at(c, len, d - STEP)]) / (2 * STEP);
+  const grade = (c, len, d) =>
+    (c.height[at(c, len, d + STEP)] - c.height[at(c, len, d - STEP)]) / (2 * STEP);
+  const span = Math.max(1, (n - 1) * STEP);
+  const flat = !!process.env.FLATANCHOR;
+  const cM0 = flat ? 0 : (slope(main, main.length, entry) - (branch.centre[1] - branch.centre[0]) / STEP) * span;
+  const cM1 = flat ? 0 : (slope(main, main.length, exit) - (branch.centre[n - 1] - branch.centre[n - 2]) / STEP) * span;
+  const hM0 = flat ? 0 : (grade(main, main.length, entry) - (branch.height[1] - branch.height[0]) / STEP) * span;
+  const hM1 = flat ? 0 : (grade(main, main.length, exit) - (branch.height[n - 1] - branch.height[n - 2]) / STEP) * span;
+  const hermite = (t, p1, m0, m1) => {
+    const t2 = t * t, t3 = t2 * t;
+    return (t3 - 2 * t2 + t) * m0 + (-2 * t3 + 3 * t2) * p1 + (t3 - t2) * m1;
+  };
   for (let i = 0; i < n; i++) {
     const t = i / (n - 1);
-    branch.centre[i] = originC + (branch.centre[i] - bc) + (wantC - haveC) * t;
-    branch.height[i] = originH + (branch.height[i] - bh) + (wantH - haveH) * t;
+    branch.centre[i] = originC + (branch.centre[i] - bc) + hermite(t, wantC - haveC, cM0, cM1);
+    branch.height[i] = originH + (branch.height[i] - bh) + hermite(t, wantH - haveH, hM0, hM1);
   }
-  return { wantC, wantH, entryC, entryH, exitC, exitH };
+  return { wantC, wantH, entryC, entryH, exitC, exitH,
+    kinkIn: Math.abs(slope(main, main.length, entry) - (branch.centre[1] - branch.centre[0]) / STEP),
+    kinkOut: Math.abs(slope(main, main.length, exit) - (branch.centre[n - 1] - branch.centre[n - 2]) / STEP) };
 }
 
 // Pull the three tracks and their branches straight out of the Lua source.
@@ -174,8 +200,16 @@ for (const id of ALL_IDS) {
   console.log(`  branch road ${b.length}m (layout sums ${authored}m, scaled x${(b.length / authored).toFixed(2)})`);
   console.log(`  saves ${saved.toFixed(0)}m  =  ${(saved / AVG_SPEED).toFixed(2)}s at racing pace`);
   console.log(`  side ${b.side < 0 ? "LEFT" : "RIGHT"}, peak ${peak.toFixed(2)}, bow off the chord ${bow.toFixed(2)}`);
+  // The two ends re-differenced AFTER anchoring: how far the branch's own
+  // heading is from the main line's where they meet. Position continuity says
+  // nothing about this, and a kink here is a rotation of the whole world on the
+  // frame the physics moves you across.
+  const kinkIn = Math.abs(slopeAt(main, main.length, entry) - (bc.centre[1] - bc.centre[0]) / STEP);
+  const kinkOut = Math.abs(slopeAt(main, main.length, exit) - (bc.centre[last] - bc.centre[last - 1]) / STEP);
   console.log(`  junction error  entry ${inC.toFixed(4)}x / ${inH.toFixed(4)}h`
     + `   exit ${outC.toFixed(4)}x / ${outH.toFixed(4)}h  (any of these is a teleport)`);
+  console.log(`  junction kink   entry ${kinkIn.toFixed(4)}   exit ${kinkOut.toFixed(4)}`
+    + `  (heading mismatch; a kink turns the world for you)`);
 
   const checks = [
     [saved > 20, `saves ${saved.toFixed(0)}m -- must be a worthwhile shortcut`],
@@ -183,6 +217,13 @@ for (const id of ALL_IDS) {
     [inC < 0.001 && inH < 0.001, "meets the main line where it leaves it"],
     [outC < 0.001 && outH < 0.001, "meets the main line where it rejoins"],
     [bow > 0.35, `has real shape, not a diagonal cut (bow ${bow.toFixed(2)})`],
+    // 0.004 is a residual, not a tolerance for sloppiness. The correction is
+    // exact in continuous terms and sampled every 2m, so a one-sided difference
+    // at the very last sample keeps an O(STEP x curvature) remainder. What it
+    // means on screen: 0.004 of slope over the 120m detail band is half a metre
+    // of drift on an 18m road. The linear anchor it replaced ran to 0.12.
+    [kinkIn < 0.004, `leaves the main line pointing the same way (kink ${kinkIn.toFixed(4)})`],
+    [kinkOut < 0.004, `rejoins it pointing the same way (kink ${kinkOut.toFixed(4)})`],
     [peak < 8, "stays within the rendered world"],
     [span > b.length, "branch is physically shorter than what it replaces"],
     [b.from < b.to, "entry comes before exit"],

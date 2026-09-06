@@ -44,9 +44,53 @@ function AK.Math.RoadHeight(track, distance)
   return y
 end
 
---- How wide the road is here, as a multiple of the nominal width. Corners can
---- pinch and straights can open out, which is one of the strongest tools a
---- circuit layout has.
+-- A FORK HAS TO ACTUALLY GO SOMEWHERE.
+--
+-- A branch was pinned to the main line at both ends and given nothing but its
+-- own gentle curvature in between, so it stayed within a couple of metres of
+-- the road it supposedly left. You picked a side, drove for six seconds past
+-- the same scenery and arrived where you would have arrived anyway: "they just
+-- are pick left or right and in a few seconds end up in the same spot".
+--
+-- So a branch now carries a turn of its own at each end -- out at the split,
+-- back at the rejoin -- and it is expressed as CURVATURE, in the same units a
+-- layout piece is authored in, rather than as an offset painted onto the
+-- ribbon. That matters for three reasons: the renderer integrates curvature to
+-- find where the road is, so the road you drive and the ribbon you were shown
+-- come out in the same place and committing changes nothing; the physics reads
+-- curvature for its centrifugal push, so leaving the main line is something you
+-- have to steer through rather than something that happens to the picture; and
+-- a full sine over the run leaves the heading exactly where it found it, so the
+-- branch ends up displaced without ending up crooked.
+--
+-- 2.4 sits inside the authored range (layouts run 0.6 to 4.6), and at the
+-- default bend gain the pair of turns puts a bit under twenty metres between
+-- the two roads -- a road's width of ground, which is the difference between
+-- somewhere else and the same place with a different texture.
+local FORK_TURN = 2.4
+local FORK_TURN_RUN = 70
+
+--- The branch's own departure from the road it left, as authored curvature.
+--- Zero on the main line, and zero through the middle of a branch: all of it
+--- happens in the opening and closing stretches.
+function AK.Math.ForkTurn(route, distance)
+  if not route or not route.parent then return 0 end
+  local length = route.length or 0
+  local run = math.min(FORK_TURN_RUN, length * 0.4)
+  if run <= 1 then return 0 end
+  local d = distance or 0
+  -- Out at the split. A whole sine, so the heading it adds is given back.
+  if d >= 0 and d <= run then
+    return AK.Math.ForkSide(route) * FORK_TURN * math.sin(2 * math.pi * d / run)
+  end
+  -- And back at the rejoin, the same turn the other way.
+  if d >= length - run and d <= length then
+    return -AK.Math.ForkSide(route) * FORK_TURN
+      * math.sin(2 * math.pi * (d - (length - run)) / run)
+  end
+  return 0
+end
+
 --- Authored corner tightness at a point. Negative turns left.
 function AK.Math.RoadCurve(track, distance)
   local table_ = track.curveTable
@@ -60,7 +104,9 @@ function AK.Math.RoadCurve(track, distance)
   -- Mirror mode flips the centreline, so the corner force has to flip with it
   -- or every bend on a mirrored track would push the wrong way.
   local flip = (AK.db and AK.db.settings.mirror) and -1 or 1
-  return (table_[index] or 0) * flip
+  -- ForkTurn is already mirrored through ForkSide, so it is added after the
+  -- flip rather than through it.
+  return (table_[index] or 0) * flip + AK.Math.ForkTurn(track, distance)
 end
 
 --- Flip an AUTHORED lateral for mirror mode.
@@ -82,6 +128,9 @@ function AK.Math.ForkSide(branch)
   return AK.Math.Mirrored(branch and branch.side or -1)
 end
 
+--- How wide the road is here, as a multiple of the nominal width. Corners can
+--- pinch and straights can open out, which is one of the strongest tools a
+--- circuit layout has.
 function AK.Math.RoadWidth(track, distance)
   if not track.widthTable then return 1 end
   return AK.TrackBuilder:Width(track, distance)

@@ -1399,6 +1399,49 @@ if loadFailures == 0 then
     assert(#hits == 0, #hits .. " controls are misplaced")
   end)
 
+  -- A FORK HAS TO GO SOMEWHERE, AND COME BACK POINTING THE RIGHT WAY.
+  --
+  -- "Forks kind of don't do much -- they just are pick left or right and in a
+  -- few seconds end up in the same spot." They were pinned to the main line at
+  -- both ends and given nothing but their own gentle curvature in between, so
+  -- the two roads never got more than a couple of metres apart.
+  --
+  -- The departure is authored curvature now (AK.Math.ForkTurn), which the
+  -- renderer integrates exactly as it integrates a corner and the physics reads
+  -- exactly as it reads one. Two things have to hold. The heading it adds must
+  -- come back to zero, or the branch ends up crooked and the rejoin is a kink.
+  -- And the offset it buys must be more than a road is wide, or there is no
+  -- second road to speak of -- which is the report.
+  ok("a shortcut goes somewhere and comes back straight", function()
+    local worst, thinnest = 0, math.huge
+    local seen = 0
+    for _, track in ipairs(AK.Tracks) do
+      AK.TrackBuilder:Compile(track)
+      for _, branch in ipairs(track.branches or {}) do
+        seen = seen + 1
+        -- The renderer's own double integral, at the renderer's own gain.
+        local gain, step = 0.010, 2
+        local heading, offset, mid = 0, 0, nil
+        for d = 0, branch.length, step do
+          heading = heading + AK.Math.ForkTurn(branch, d) * gain * step
+          offset = offset + heading * step
+          if not mid and d >= branch.length * 0.5 then mid = math.abs(offset) end
+        end
+        worst = math.max(worst, math.abs(heading))
+        thinnest = math.min(thinnest, mid or 0)
+        assert(math.abs(heading) < 0.02, branch.id
+          .. " ends pointing " .. string.format("%.3f", heading) .. " off the main line")
+        assert(math.abs(offset) < 0.6, branch.id
+          .. " never comes back: " .. string.format("%.1f", offset) .. "m adrift at the exit")
+        assert((mid or 0) > 14, branch.id .. " only gets "
+          .. string.format("%.1f", mid or 0) .. "m from the road it left")
+      end
+    end
+    assert(seen >= 8, "only " .. seen .. " branches were checked")
+    say(("        %d shortcuts, %.1fm clear of the main line at the narrowest, "
+      .. "worst leftover heading %.4f"):format(seen, thinnest, worst))
+  end)
+
   -- THE CUES THAT ASK FOR A KIND OF SOUND HAVE TO GET ONE.
   --
   -- Four rounds of sound work were spent rearranging SOUNDKIT names, and the

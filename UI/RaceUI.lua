@@ -3769,10 +3769,18 @@ end
 --- @param centre the world X the ribbon leaves from -- where the road being
 ---   driven has already bent to by the junction
 --- @param baseY the world height at the junction
---- @param offset how far to the side the ribbon emerges, signed
 --- @param span how much of `route` to draw
 --- @param shown how many fork strips are already in use this frame
-function RaceUI:DrawRibbon(race, route, from, startDz, centre, baseY, offset, span,
+---
+--- NO SIDEWAYS OFFSET ANY MORE. The ribbon used to be shoved a road's width to
+--- the side with a fade of its own, and the road you were driving was not --
+--- so the instant you committed, everything ahead swung across by that width
+--- between one frame and the next. Take the right-hand fork and the world
+--- turns left. A branch's departure is authored curvature now
+--- (AK.Math.ForkTurn), which this integrates along the route exactly as the
+--- main road integrates its own: the ribbon and the road it becomes are the
+--- same curve, so crossing between them costs nothing.
+function RaceUI:DrawRibbon(race, route, from, startDz, centre, baseY, span,
     shown, camX)
   if span <= 2 then return shown end
   local tuning = self.T
@@ -3785,12 +3793,20 @@ function RaceUI:DrawRibbon(race, route, from, startDz, centre, baseY, offset, sp
     local bd = span * (i / (FORK_SEGMENTS - 1))
     local dz = startDz + bd
     if dz > 1.2 then
-      -- Blend the ribbon out of the main road over the first few metres
-      -- so it grows from the tarmac rather than appearing beside it.
-      local emerge = AK.Math.Clamp(bd / 12, 0, 1)
-      -- The ribbon starts where the main road has bent to by the split,
-      -- then accumulates the branch's own curvature from there.
-      local worldX = centre + bend(bd) + offset * emerge
+      -- The ribbon starts where the road being driven has bent to by the
+      -- junction and accumulates its own curvature -- fork turn included --
+      -- from there.
+      local worldX = centre + bend(bd)
+      -- FADED IN BY HOW FAR APART THE TWO ROADS ACTUALLY ARE.
+      --
+      -- At the junction itself a branch and the road it leaves are the same
+      -- piece of tarmac, so the ribbon drew a second road exactly on top of the
+      -- first and painted its bright rails straight across the road the player
+      -- is driving on: standing at the split, that filled the bottom half of
+      -- the screen with green. Measured against whatever road the camera is on
+      -- at the same depth, so it works from either side of the junction.
+      local apart = worldX - self:Bend((self.bendFrom or 0) + dz)
+      local reveal = AK.Math.Clamp(math.abs(apart) / (tuning.roadHalf * 0.8), 0, 1)
       -- Height along the ribbon's own route, hung off the junction's height so
       -- the two roads meet at the same level.
       local worldY = AK.Math.RoadHeight(route, from + bd) - AK.Math.RoadHeight(route, from)
@@ -3859,8 +3875,9 @@ function RaceUI:DrawRibbon(race, route, from, startDz, centre, baseY, offset, sp
         -- The same wash the main road gets. Fogging the ribbon by
         -- brightness alone while the tarmac beside it recedes toward the
         -- horizon made the shortcut read as a decal laid over the scene.
-        strip.road:SetVertexColor(self:Aerial(rampR, rampG, rampB,
-          0.94 * light * (flatRibbon and ROAD_MEAN or 1), dz))
+        local ribR, ribG, ribB = self:Aerial(rampR, rampG, rampB,
+          0.94 * light * (flatRibbon and ROAD_MEAN or 1), dz)
+        strip.road:SetVertexColor(ribR, ribG, ribB, reveal)
         setShown(strip.road, true)
 
         -- Bright rails so the alternate line reads as a road and not as
@@ -3909,12 +3926,12 @@ function RaceUI:DrawRibbon(race, route, from, startDz, centre, baseY, offset, sp
         end
         local travelL = math.abs(farL - nearL)
         local travelR = math.abs(farR - nearR)
-        strip.edgeLeft:SetVertexColor(rr, rg, rb)
+        strip.edgeLeft:SetVertexColor(rr, rg, rb, reveal)
         setEdge(strip.edgeLeft, self.frame,
           nearL + (travelL - rail) * 0.5, previousY,
           farL + (travelL - rail) * 0.5, y, rail + travelL)
         setShown(strip.edgeLeft, true)
-        strip.edgeRight:SetVertexColor(rr, rg, rb)
+        strip.edgeRight:SetVertexColor(rr, rg, rb, reveal)
         setEdge(strip.edgeRight, self.frame,
           nearR - (travelR - rail) * 0.5, previousY,
           farR - (travelR - rail) * 0.5, y, rail + travelR)
@@ -3931,6 +3948,14 @@ function RaceUI:RenderFork(race, player, camX, camZ)
   local track = race.track
   local shown = 0
   local signShown = false
+  -- THE OTHER ROAD, RECORDED FOR EVERYTHING ELSE IN THE FRAME.
+  --
+  -- Rebuilt every frame and cleared when there is no junction in sight, so
+  -- nothing can be placed against a stale one. RenderKarts reads it: a rival
+  -- who took the other side of the fork used to be hidden outright, so the six
+  -- seconds you spend on a shortcut were spent alone and you found out whether
+  -- it worked by reading a number afterwards. Now you can watch them.
+  self.crossRoute = nil
 
   -- FROM THE BRANCH, LOOKING BACK AT THE MAIN LINE.
   --
@@ -3950,18 +3975,23 @@ function RaceUI:RenderFork(race, player, camX, camZ)
     local branch = route
     local toExit = branch.length - player.distance
     if toExit > -tuning.camBack and toExit < REJOIN_NOTICE then
-      local exitDz = toExit + tuning.camBack
-      -- Where the BRANCH has bent to by its own end -- the ribbon has to leave
-      -- from there, because that is where the camera's own road finishes.
-      local exitCentre = self:Bend(branch.length)
-      local exitWidth = AK.Math.RoadWidth(branch, branch.length)
-      -- The main line comes back in from the side the branch left on, so from
-      -- inside the branch it appears on the opposite side.
-      local side = -AK.Math.ForkSide(branch)
-      local offset = side * tuning.roadHalf * exitWidth * 0.92
-      local span = math.max(0, math.min(REJOIN_DRAW, FAR_Z - exitDz))
-      shown = self:DrawRibbon(race, track, branch.exit, exitDz, exitCentre,
-        AK.Math.RoadHeight(branch, branch.length), offset, span, shown, camX)
+      -- DRAWN FROM THE CAMERA, NOT FROM THE EXIT. The main line runs alongside
+      -- the shortcut for its whole closing stretch -- that is what the branch's
+      -- fork turn coming back MEANS -- so starting the ribbon at the junction
+      -- drew the merge and hid the approach to it. Beginning at the camera
+      -- shows the two roads converging, which is the part worth seeing. The
+      -- branch is shorter than the span it replaces, so the main line is walked
+      -- at its own rate: the two only have to agree at the junction itself.
+      local camBranch = player.distance - tuning.camBack
+      local pace = branch.span / math.max(1, branch.length)
+      local mainAtCam = branch.exit - (branch.length - camBranch) * pace
+      local startCentre = self:Bend(camBranch)
+      local span = math.max(0, math.min(REJOIN_DRAW + tuning.camBack, FAR_Z))
+      shown = self:DrawRibbon(race, track, mainAtCam, tuning.camBack, startCentre,
+        AK.Math.RoadHeight(branch, camBranch), span, shown, camX)
+      self.crossRoute = { route = track, from = mainAtCam, dzAt = tuning.camBack,
+        centre = startCentre, bend = bendAlong(track, mainAtCam),
+        baseY = AK.Math.RoadHeight(branch, camBranch) }
     end
   end
 
@@ -3980,10 +4010,10 @@ function RaceUI:RenderFork(race, player, camX, camZ)
       -- The branch's own curvature, accumulated along the branch the same way
       -- the main road is accumulated along itself.
       local branchBend = bendAlong(branch, 0)
-      -- The ribbon leaves from the edge of the main road on its own side, then
-      -- follows wherever the branch was authored to curve.
+      -- The ribbon leaves along the branch's own curvature -- fork turn and all,
+      -- the same curve the road is drawn with once you are on it, so committing
+      -- changes nothing about where the branch appears to be.
       local side = AK.Math.ForkSide(branch)
-      local offset = side * tuning.roadHalf * entryWidth * 0.92
       local span = math.min(branch.length, math.max(0, FAR_Z - entryDz))
       local light = (self.light or 1) * tuning.nightBoost
       local roadColor = track.road or { .34, .34, .38 }
@@ -3994,7 +4024,10 @@ function RaceUI:RenderFork(race, player, camX, camZ)
       -- shortcut ribbon receded toward a SKY that is not there while the tarmac
       -- beside it stayed rock-lit.
       shown = self:DrawRibbon(race, branch, 0, entryDz, entryCentre,
-        AK.Math.RoadHeight(track, branch.entry), offset, span, shown, camX)
+        AK.Math.RoadHeight(track, branch.entry), span, shown, camX)
+      self.crossRoute = { route = branch, from = 0, dzAt = entryDz,
+        centre = entryCentre, bend = bendAlong(branch, 0),
+        baseY = AK.Math.RoadHeight(track, branch.entry) }
       -- The sign, planted on the branch's side of the split.
       --
       -- NOTICED AT A FIXED DISTANCE, not at the draw distance. Both the gate
@@ -5360,6 +5393,33 @@ function RaceUI:BoxShatter()
   end
 end
 
+--- Where something on the OTHER side of a junction sits, in this frame's space.
+---
+--- Returns depth, world X and world height, or nil when the thing is not on the
+--- road RenderFork drew this frame. The maths is the ribbon's: start at the
+--- junction, walk that route's own curvature -- fork turn included -- and add
+--- the racer's position across it.
+---
+--- The two roads through a junction are different lengths, so `dz` here is
+--- metres along the OTHER road rather than a shared coordinate. Over the two
+--- hundred metres a junction is on screen for that is the right answer anyway:
+--- what you want to see is whether the kart that took the other line is level
+--- with you, and it is level with you when it has covered the same ground.
+function RaceUI:CrossRoute(entity)
+  local cross = self.crossRoute
+  if not cross or (entity.route or nil) ~= cross.route then return nil end
+  local along = (entity.distance or 0) - cross.from
+  -- A kart commits to a branch a few metres SHORT of the split, so its distance
+  -- along that branch is genuinely negative for a moment. Blinking it out of
+  -- the world for those metres is the flicker this whole pass is about; the
+  -- curvature walk simply starts at zero instead.
+  if along < -12 then return nil end
+  return cross.dzAt + along,
+    cross.centre + cross.bend(math.max(0, along)),
+    AK.Math.RoadHeight(cross.route, entity.distance)
+      - AK.Math.RoadHeight(cross.route, cross.from) + cross.baseY
+end
+
 function RaceUI:RenderKarts(race, player, camX, camZ)
   local tuning = self.T
   for index, vehicle in ipairs(race.vehicles) do
@@ -5377,9 +5437,22 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
     -- backwards up the track. On a rival right beside you that reads as the
     -- game breaking. It is gone while it is out of play, and comes back where
     -- it comes back.
-    if not vehicle.falling
-      and dz > 0.9 and dz < FAR_Z and not vehicle.finished and self:OnRoute(race, vehicle) then
-      local baseX, worldY = self:RoadAt(self.route or race.track, drawZ)
+    -- ON THE OTHER SIDE OF A FORK IS STILL IN THE WORLD.
+    --
+    -- A rival who took the other line was hidden outright, which is most of why
+    -- a shortcut felt like nothing had happened: you drove it alone and found
+    -- out whether it had worked by reading the position number afterwards. When
+    -- RenderFork has a junction on screen, they are drawn on the road they are
+    -- actually on -- alongside, closing or pulling away -- and that is the
+    -- whole point of there being two roads.
+    local baseX, worldY
+    if self:OnRoute(race, vehicle) then
+      baseX, worldY = self:RoadAt(self.route or race.track, drawZ)
+    else
+      dz, baseX, worldY = self:CrossRoute(vehicle)
+    end
+    if not vehicle.falling and dz
+      and dz > 0.9 and dz < FAR_Z and not vehicle.finished and baseX then
       local x, y, pixelsPerMetre = self:Project(dz, baseX + drawLateral * tuning.roadHalf, camX, worldY)
       -- A kart is about 2.2m wide; scale the sprite by the same projection as
       -- the road so near racers loom and distant ones shrink correctly.
