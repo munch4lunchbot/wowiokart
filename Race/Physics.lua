@@ -573,11 +573,25 @@ function Physics:UpdateVehicle(race, vehicle, controls, dt)
       local turnStrength = vehicle.handling * (vehicle.drifting and DRIFT_STEER or 1) * grip
       -- Ice barely slows you but takes away your ability to point the kart;
       -- mud does the opposite. Steering and traction are separate knobs.
+      --
+      -- AND THEY WERE BEING MULTIPLIED TOGETHER AT FULL STRENGTH, which is not
+      -- two knobs, it is one knob squared. Ice reads steering 1.10, traction
+      -- 0.22 -- "you can still point it, you just slide" -- and came out at
+      -- 0.24 of normal: a quarter of the wheel. Measured against the corner
+      -- force on Ironforge, which is 47% ice, full lock lost to a moderate bend
+      -- at almost any speed, so the kart went off and stayed off and the player
+      -- was a passenger. Nine seconds of footage of exactly that is what this
+      -- comment is here for.
+      --
+      -- Traction now enters through a floor: it can take away at most 55% of
+      -- the wheel however slippery the surface is. Tarmac is untouched, ice is
+      -- still comfortably the worst thing to corner on, and the answer to it is
+      -- to carry about seventy per cent pace rather than twenty-five.
       local surface = vehicle.material or AK.Terrain.TYPES.ROAD
       local surfaceBlend = vehicle.materialBlend or 0
       turnStrength = turnStrength
         * AK.Terrain:Mix(surface, "steering", surfaceBlend)
-        * AK.Terrain:Mix(surface, "traction", surfaceBlend)
+        * (0.45 + 0.55 * AK.Terrain:Mix(surface, "traction", surfaceBlend))
       -- A spin-out takes the wheel away for its duration; that is the cost.
       if vehicle.spin > 0 then turnStrength = turnStrength * 0.22 end
       vehicle.lateral = vehicle.lateral + turning * turnStrength * dt

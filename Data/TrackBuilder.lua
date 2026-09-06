@@ -376,7 +376,8 @@ function Builder:AnchorBranch(track, branch)
   -- -- is untouched.
   local width = branch.widthTable
   if width then
-    local run = math.min(70, branch.length * 0.4)
+    -- The same stretch AK.Math.ForkTurn uses; see FORK_TURN_RUN.
+    local run = math.min(95, branch.length * 0.4)
     local mouth = math.max(self:Width(track, branch.entry), self:Width(track, branch.exit))
     for i = 1, samples do
       local d = (i - 1) * STEP

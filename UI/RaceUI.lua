@@ -28,6 +28,21 @@ local TAIL_SEGMENTS = 22
 --- far as the road is; the SIGN and its name are a warning, and a warning has a
 --- range of its own.
 local FORK_NOTICE = 200
+-- HOW FAR THE ALTERNATE ROAD IS DRAWN. Not FAR_Z.
+--
+-- The ribbon used to run to the draw distance -- five hundred and sixty metres
+-- by default -- which puts a second road, twenty metres to the side, one or two
+-- pixels tall, with a rail floored at two and a half pixels so it stays
+-- visible. What that produces is not a road: it is a bright green stripe laid
+-- across the entire horizon, over the treeline, over the rock walls of a
+-- tunnel, straight through the middle of the road you are on. It is in every
+-- frame of the footage and it reads as the renderer being broken.
+--
+-- Two hundred metres is where the SIGN starts, and for the same reason: this
+-- exists so you can decide, and you cannot decide at half a kilometre. The last
+-- fifty of it fades, so it arrives rather than switching on.
+local FORK_DRAW = 210
+local FORK_DRAW_FADE = 55
 --- How far before the end of a branch the main line starts being drawn coming
 --- back in, and how much of it to draw. Shorter than FORK_NOTICE: a rejoin is
 --- not a decision, it is a thing about to happen to you, so it only has to stop
@@ -3331,10 +3346,11 @@ function RaceUI:RenderArches(race, camX, camZ)
   -- swings the road off the side of the screen sooner, so an arch at 149m was
   -- faded away 58% of the time -- spawned into space the road has already left.
   local archFar = reach(125)
-  local first = math.ceil(camZ / spacing)
+  local phase = self:GridPhase(self.route or race.track, spacing)
+  local first = math.ceil((camZ - phase) / spacing)
   for slot, arch in ipairs(self.arches) do
     local index = first + slot - 1
-    local archZ = index * spacing
+    local archZ = index * spacing + phase
     local dz = archZ - camZ
     -- Dropped once you are underneath it, not at 0.6m. An arch is a flat
     -- billboard 17m wide, and its projected size grows without bound as dz
@@ -3362,6 +3378,20 @@ function RaceUI:RenderArches(race, camX, camZ)
 end
 
 --- Marker posts along both verges, from a rolling window ahead of the camera.
+--- Where a route's evenly-spaced roadside furniture starts counting from.
+---
+--- Posts, arches and the crowd are all laid out at whole multiples of their own
+--- spacing measured from the route's zero. A branch's zero is the split, and the
+--- split is at some arbitrary distance along the main line -- so the moment you
+--- committed, every post, arch and spectator ahead of you slid sideways by up
+--- to a whole spacing at once. On top of a forest that changed at the same
+--- instant, that is the "port". Offsetting a branch's grid by where its own
+--- zero falls on the parent keeps every one of them standing still.
+function RaceUI:GridPhase(route, spacing)
+  if not route or not route.parent or not spacing or spacing <= 0 then return 0 end
+  return (route.entry or 0) % spacing
+end
+
 function RaceUI:RenderPosts(race, camX, camZ)
   local tuning = self.T
   local spacing = math.max(2, tuning.postSpacing)
@@ -3372,10 +3402,11 @@ function RaceUI:RenderPosts(race, camX, camZ)
   -- never seen, and the ones that were came in from the side of the display.
   -- The speed cue posts exist for comes from the ones sweeping past inside 40m.
   local postFar = reach(119)
-  local first = math.ceil(camZ / spacing)
+  local phase = self:GridPhase(self.route or race.track, spacing)
+  local first = math.ceil((camZ - phase) / spacing)
   for slot, pair in ipairs(self.posts) do
     local index = first + slot - 1
-    local segZ = index * spacing
+    local segZ = index * spacing + phase
     local dz = segZ - camZ
     if dz > 1 and dz < postFar then
       local worldX, worldY = self:RoadAt(self.route or race.track, segZ)
@@ -3549,12 +3580,13 @@ function RaceUI:RenderSpectators(race, camX, camZ)
   -- exactly once -- a bijection, not a hash with collisions. A given person at
   -- a given spot therefore always draws from the same seat, which means always
   -- the same creature, with no reload anywhere.
-  local first = math.ceil(camZ / SPECTATOR_SPACING)
-  local used = {}
   local route = self.route or race.track
+  local phase = self:GridPhase(route, SPECTATOR_SPACING)
+  local first = math.ceil((camZ - phase) / SPECTATOR_SPACING)
+  local used = {}
   for step = 0, CROWD_SPOTS - 1 do
     local index = first + step
-    local postZ = index * SPECTATOR_SPACING
+    local postZ = index * SPECTATOR_SPACING + phase
     -- How many people are at this spot: one, two or three. Two hashes of
     -- different period summed into three, so the sequence repeats only every
     -- thirty-five spots and all three sizes really do occur -- a pair of
@@ -3770,8 +3802,46 @@ function RaceUI:BuildProps(route, style)
   for i = 1, #name do seed = (seed * 31 + name:byte(i)) % 2147483647 end
   local rng = AK.RNG:New(seed)
   local props = {}
-  local distance = 0
-  while distance < route.length do
+
+  -- THE SCENERY MUST NOT CHANGE THE FRAME YOU TAKE A FORK.
+  --
+  -- Every route grows its own forest from its own seed, so committing to a
+  -- branch replaced every tree, rock and bush within half a kilometre between
+  -- one frame and the next. The ROAD is continuous through the junction now,
+  -- and the world beside it was still cutting -- which is what is left of "they
+  -- just kinda port you somewhere". A junction is a place, and the trees
+  -- standing at it belong to both roads.
+  --
+  -- So the first and last stretch of a branch borrows the parent's props over
+  -- the matching stretch of the main line. They coincide with the road there
+  -- (the fork turn has not opened yet), so this is not a trick: they are the
+  -- same trees, seen from a road that has not left yet.
+  local JUNCTION_BLEND = 130
+  local blend = 0
+  if route.parent then
+    blend = math.min(JUNCTION_BLEND, route.length * 0.35)
+    local shared = self:BuildProps(route.parent, style)
+    for _, prop in ipairs(shared) do
+      -- Into the branch's own distance space, at whichever end it belongs to.
+      local intoEntry = (prop.distance - route.entry) % route.parent.length
+      if intoEntry < blend then
+        local copy = {}
+        for k, v in pairs(prop) do copy[k] = v end
+        copy.distance = intoEntry
+        props[#props + 1] = copy
+      end
+      local beforeExit = (route.exit - prop.distance) % route.parent.length
+      if beforeExit < blend and beforeExit > 0 then
+        local copy = {}
+        for k, v in pairs(prop) do copy[k] = v end
+        copy.distance = route.length - beforeExit
+        props[#props + 1] = copy
+      end
+    end
+  end
+
+  local distance = blend
+  while distance < route.length - blend do
     for _, side in ipairs({ -1, 1 }) do
       -- Skip some slots outright, so the verge has clearings and thickets
       -- rather than a metronome of identical trunks.
@@ -3991,6 +4061,9 @@ function RaceUI:DrawRibbon(race, route, from, startDz, centre, baseY, span,
       -- at the same depth, so it works from either side of the junction.
       local apart = worldX - self:Bend((self.bendFrom or 0) + dz)
       local reveal = AK.Math.Clamp(math.abs(apart) / (tuning.roadHalf * 0.8), 0, 1)
+        -- And out at its own draw limit, so the far end of the ribbon dissolves
+        -- instead of ending in a hard bright line across the world.
+        * AK.Math.Clamp((FORK_DRAW - dz) / FORK_DRAW_FADE, 0, 1)
       -- Height along the ribbon's own route, hung off the junction's height so
       -- the two roads meet at the same level.
       local worldY = AK.Math.RoadHeight(route, from + bd) - AK.Math.RoadHeight(route, from)
@@ -4179,7 +4252,8 @@ function RaceUI:RenderFork(race, player, camX, camZ)
       local pace = branch.span / math.max(1, branch.length)
       local mainAtCam = branch.exit - (branch.length - camBranch) * pace
       local startCentre = self:Bend(camBranch)
-      local span = math.max(0, math.min(REJOIN_DRAW + tuning.camBack, FAR_Z))
+      local span = math.max(0,
+        math.min(REJOIN_DRAW + tuning.camBack, FAR_Z, FORK_DRAW))
       shown = self:DrawRibbon(race, track, mainAtCam, tuning.camBack, startCentre,
         AK.Math.RoadHeight(branch, camBranch), span, shown, camX)
       self.crossRoute = { route = track, from = mainAtCam, dzAt = tuning.camBack,
@@ -4207,7 +4281,8 @@ function RaceUI:RenderFork(race, player, camX, camZ)
       -- the same curve the road is drawn with once you are on it, so committing
       -- changes nothing about where the branch appears to be.
       local side = AK.Math.ForkSide(branch)
-      local span = math.min(branch.length, math.max(0, FAR_Z - entryDz))
+      local span = math.min(branch.length,
+        math.max(0, math.min(FAR_Z, FORK_DRAW) - entryDz))
       local light = (self.light or 1) * tuning.nightBoost
       local roadColor = track.road or { .34, .34, .38 }
       -- The wash comes from RenderRoad, which has already run this frame. It
@@ -4804,11 +4879,17 @@ function RaceUI:RenderRoad(race, player)
         rr, rg, rb = rr * pulse, rg * pulse, rb * pulse
       end
       if onRamp then
-        -- Blazing rails either side of the launch, so it reads from far off.
+        -- Bright rails either side of the launch, so it reads from far off.
         -- Mixed in by coverage like the paint: a rail that switched on and off
         -- with a point test was a pair of hazard-gold dashes blinking in the
         -- far field, which is the most eye-catching kind of wrong.
-        local flash = 0.65 + 0.35 * math.sin(race.elapsed * 12) * flicker(dz)
+        --
+        -- AND THEY DO NOT FLASH ANY MORE. They pulsed at nearly two hertz,
+        -- which up close is a strobe on the two brightest lines in the frame --
+        -- "jumps are like shiny glitchy on the sides". A ramp already announces
+        -- itself: the surface is hazard gold against near-black and the bands
+        -- stream past you as you approach. The rails only have to be bright.
+        local flash = 0.92
         rr = rr + (1.0 * flash - rr) * rampMix
         rg = rg + (0.85 * flash - rg) * rampMix
         rb = rb + (0.25 * flash - rb) * rampMix
@@ -4991,7 +5072,8 @@ function RaceUI:RenderRoad(race, player)
         local nearOut = math.max(1, (previousPPM or pixelsPerMetre) * 0.40)
         local thick = math.max(railOut, nearOut)
         local railTop = math.max(previousY + nearHeight, y + railHeight)
-        local flash = 0.70 + 0.30 * math.sin(race.elapsed * 12) * flicker(dz)
+        -- Steady, for the same reason the kerbs above are. See that note.
+        local flash = 0.90
         local rr2, rg2, rb2 = 0.95 * flash * fog, 0.80 * flash * fog, 0.26 * flash * fog
         -- Indexed rather than `pairs({ [-1] = ..., [1] = ... })`: that built a
         -- fresh table for every strip of every frame -- a hundred and fifty
@@ -5936,13 +6018,20 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
         -- session with no path back, which is the "everyone lost their models
         -- again" report. Attract mode hides every model by design, so this is
         -- reachable on any menu-to-race transition.
+        -- BOUNDED. Retrying forever is worse than the fault it is for: a model
+        -- the client will never report as loaded -- a unit-based one, say --
+        -- was being cleared and re-streamed every second and a half for the
+        -- whole race. Three attempts is a lost load; more than that is a
+        -- disagreement about what "loaded" means, and thrashing the frame will
+        -- not settle it.
         if modelReady then
-          kart.modelStuck = 0
+          kart.modelStuck, kart.modelTries = 0, 0
         else
           kart.modelStuck = (kart.modelStuck or 0) + (race.renderDelta or race.delta or 0)
-          if kart.modelStuck > 1.5 then
+          if kart.modelStuck > 1.5 and (kart.modelTries or 0) < 3 then
             AK.Model:Invalidate(kart.model)
             kart.modelStuck = 0
+            kart.modelTries = (kart.modelTries or 0) + 1
           end
         end
       else
@@ -5959,7 +6048,12 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       -- The driver spins with the kart.
       kart.model:SetFacing(math.pi + lean + spinTurns)
       if kart.model.SetDesaturation then kart.model:SetDesaturation(vehicle.stun > 0 and 1 or 0) end
-      kart.icon:SetShown(not modelReady)
+      -- AND THE ICON GIVES UP. It exists to cover the second or two before a
+      -- model streams in, not to be a portrait glued to the kart for the whole
+      -- race. Once the retries are spent, an empty model frame simply draws
+      -- nothing -- which is a far better picture than a framed photograph of
+      -- the driver mounted on the bonnet.
+      kart.icon:SetShown(not modelReady and (kart.modelTries or 0) < 3)
       kart.icon:SetSize(width * .6, width * .6)
       if kart.iconApplied ~= vehicle.kart.icon then
         kart.iconApplied = vehicle.kart.icon
@@ -6060,7 +6154,18 @@ function RaceUI:RenderKarts(race, player, camX, camZ)
       -- inside EdgeFade's near exemption, but it is the one thing on screen that
       -- must never dim under any circumstances, so it is excluded outright
       -- rather than left to depend on a tuning value staying where it is.
-      kart:SetAlpha(vehicle == player and 1 or self:EdgeFade(drawX, dz))
+      -- UNTOUCHABLE HAS TO LOOK LIKE SOMETHING.
+      --
+      -- `immune` is the strongest defensive state in the game -- it is what
+      -- Boo's getaway is -- and it was drawn identically to being ordinary. A
+      -- player who cannot see it cannot use it, which is half of why the item
+      -- felt like it did nothing. A slow half-fade, so the kart reads as
+      -- present but not quite there.
+      local solid = vehicle == player and 1 or self:EdgeFade(drawX, dz)
+      if (vehicle.immune or 0) > 0 then
+        solid = solid * (0.42 + 0.16 * math.sin(race.elapsed * 9))
+      end
+      kart:SetAlpha(solid)
       setShown(kart, true)
       if vehicle == player then
         self.playerX, self.playerY, self.playerWidth = drawX, y, width

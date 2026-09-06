@@ -63,12 +63,16 @@ end
 -- a full sine over the run leaves the heading exactly where it found it, so the
 -- branch ends up displaced without ending up crooked.
 --
--- 2.4 sits inside the authored range (layouts run 0.6 to 4.6), and at the
--- default bend gain the pair of turns puts a bit under twenty metres between
--- the two roads -- a road's width of ground, which is the difference between
--- somewhere else and the same place with a different texture.
+-- 2.4 sits inside the authored range (layouts run 0.6 to 4.6), so a branch is
+-- no harder to steer through than a corner the circuit already has -- the turn
+-- is simply held for longer. Over 95 metres that puts about 35 metres between
+-- the two roads, which is two road widths: far enough that the line you did not
+-- take leaves the screen through the middle of a shortcut instead of running
+-- alongside it. Twenty metres was one road width, and one road width away is
+-- still "the same place with a different texture", which is what "an illusion
+-- of choice" means.
 local FORK_TURN = 2.4
-local FORK_TURN_RUN = 70
+local FORK_TURN_RUN = 95
 
 --- The branch's own departure from the road it left, as authored curvature.
 --- Zero on the main line, and zero through the middle of a branch: all of it

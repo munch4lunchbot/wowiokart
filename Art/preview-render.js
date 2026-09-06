@@ -902,7 +902,7 @@ for (let r = rows.length - 1; r >= 0; r--) {
     const nearH = Math.max(2, (row.nearPPM || row.ppm) * 1.15);
     const thick = Math.max(1, Math.max(row.ppm, row.nearPPM || row.ppm) * 0.40);
     const top = Math.max(row.h + nearH, railH);
-    const rf = 0.70 + 0.30 * Math.sin(ELAPSED * 12) * flicker(row.dz);
+    const rf = 0.90;
     const c = [0.95 * rf * fog, 0.80 * rf * fog, 0.26 * rf * fog];
     const nl = row.nearX - row.nearHalf, fl = row.farX - row.farHalf;
     const nr = row.nearX + row.nearHalf, fr = row.farX + row.farHalf;
@@ -985,7 +985,9 @@ for (let r = rows.length - 1; r >= 0; r--) {
     // Mirrors RenderRoad: the flash amplitude falls off with distance, because
     // a 1.9Hz strobe on a two-pixel rail two hundred metres away is not a
     // signal, it is noise. Mixed in by ramp coverage as well.
-    const fl = 0.65 + 0.35 * Math.sin(ELAPSED * 12) * flicker(row.dz);
+    // Steady -- mirrors RenderRoad. A near-two-hertz strobe on the two
+    // brightest lines in the frame is "shiny glitchy on the sides".
+    const fl = 0.92;
     rr += (1.0 * fl - rr) * rampMix;
     rg += (0.85 * fl - rg) * rampMix;
     rb += (0.25 * fl - rb) * rampMix;
@@ -1061,7 +1063,7 @@ if (!process.env.NOFORK) {
     // authored curvature, so it belongs here with the rest of the curvature and
     // not as an offset painted onto the ribbon -- the ribbon and the road it
     // becomes then integrate the same curve and committing costs nothing.
-    const FORK_TURN = 2.4, FORK_TURN_RUN = 70;
+    const FORK_TURN = 2.4, FORK_TURN_RUN = 95;
     const forkTurn = d => {
       const run = Math.min(FORK_TURN_RUN, B.length * 0.4);
       if (run <= 1) return 0;
@@ -1097,7 +1099,13 @@ if (!process.env.NOFORK) {
       };
     })();
 
-    const span = Math.min(B.length, Math.max(0, FAR_Z - entryDz));
+    // MIRRORS FORK_DRAW in UI/RaceUI.lua. Run to the draw distance and the
+    // ribbon is a bright green stripe across the whole horizon rather than a
+    // road; two hundred metres is where the sign starts and for the same
+    // reason -- this exists so you can decide, and you cannot decide at half a
+    // kilometre.
+    const FORK_DRAW = 210, FORK_DRAW_FADE = 55;
+    const span = Math.min(B.length, Math.max(0, Math.min(FAR_Z, FORK_DRAW) - entryDz));
     const baseY = roadHeight(branch.entry) - bHeight(0);
     let pX = null, pY = null, pW = null;
     if (span > 2) {
@@ -1112,7 +1120,8 @@ if (!process.env.NOFORK) {
         // ground between the two roads, and painting it before then puts its
         // bright rails straight across the road being driven. Measured against
         // the road the camera is on at the same depth.
-        const reveal = clamp(Math.abs(worldX - bend(dz)) / (T.roadHalf * 0.8), 0, 1);
+        const reveal = clamp(Math.abs(worldX - bend(dz)) / (T.roadHalf * 0.8), 0, 1)
+          * clamp((FORK_DRAW - dz) / FORK_DRAW_FADE, 0, 1);
         const [x, y, ppm] = project(dz, worldX, baseY + bHeight(bd));
         const hwPx = ppm * T.roadHalf * bWidth(bd);
         if (pY !== null && y > pY) {

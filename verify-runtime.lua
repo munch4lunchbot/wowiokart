@@ -254,7 +254,22 @@ function widget:GetNumRegions() return 0 end
 function widget:GetNumChildren() return 0 end
 function widget:IsMouseOver() return false end
 function widget:IsObjectLoaded() return true end
-function widget:GetModelFileID() return 1 end
+-- A MODEL FRAME THAT BEHAVES LIKE A LIVE ONE.
+--
+-- This answered 1 to GetModelFileID unconditionally, so every model in every
+-- check was READY the instant it was asked for and the harness could not see
+-- the one case that actually fails: a model set from a UNIT does not answer
+-- this on a live client and does not fire OnModelLoaded either. "Yourself" is
+-- the racer most players pick, and it was permanently not-ready -- which drew
+-- the fallback portrait over the driver for the whole race and re-streamed the
+-- model every second and a half forever.
+function widget:SetUnit(u) self.akUnit, self.akCreature = u, nil return self end
+function widget:SetCreature(id) self.akCreature, self.akUnit = id, nil return self end
+function widget:ClearModel() self.akUnit, self.akCreature = nil, nil return self end
+function widget:GetModelFileID()
+  if self.akUnit then return nil end
+  return self.akCreature and 1 or nil
+end
 function widget:GetFacing() return 0 end
 function widget:GetTexture() return self.akTexture end
 function widget:SetTexture(t) self.akTexture = t return self end
@@ -1487,6 +1502,152 @@ if loadFailures == 0 then
       spots, counts[1] or 0, counts[2] or 0, counts[3] or 0, people, closest))
   end)
 
+  -- THE DRIVER IS A MODEL, NOT A PHOTOGRAPH OF ONE.
+  --
+  -- Every kart carries a flat portrait icon to cover the second or two before
+  -- its model streams in. A model set from a UNIT never reports itself loaded
+  -- on a live client -- SetUnit does not fire OnModelLoaded and GetModelFileID
+  -- answers nil -- so "Yourself", the racer most players pick, was never ready:
+  -- the icon stayed up for the whole race as a framed picture bolted to the
+  -- bonnet, and the stuck-model retry cleared and re-streamed that model every
+  -- second and a half from lights to flag.
+  ok("a racer riding their own character is a model, not an icon", function()
+    local holder = CreateFrame("Frame", nil, UIParent)
+    holder:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    holder:SetSize(64, 64)
+    local model = AK.Model:New(holder, 64, 64, math.pi, 1)
+    model:SetPoint("CENTER", holder, "CENTER", 0, 0)
+    AK.Model:SetSpec(model, { unit = "player" })
+    assert(AK.Model:IsReady(model),
+      "a model of a unit that exists is never going to report itself loaded")
+    AK.Model:SetSpec(model, { creature = 36648 })
+    assert(AK.Model:IsReady(model), "a creature model came back not ready")
+    -- A unit that is not there falls back to a creature, and that creature has
+    -- to actually load -- otherwise the icon would be covering for nothing.
+    AK.Model:SetSpec(model, { unit = "somebodyelse" })
+    assert(AK.Model:IsReady(model),
+      "a missing unit did not fall back to a creature that loads")
+    -- The retry has to be bounded. Unbounded, it is a reload every 1.5s for the
+    -- length of a race on exactly the racer this check exists for.
+    local src = io.open("UI/RaceUI.lua"):read("*a")
+    assert(src:find("kart.modelTries", 1, true),
+      "the stuck-model retry is unbounded again")
+    say("        unit models ready, creature models ready, missing units not")
+  end)
+
+  -- THE WHEEL HAS TO BE ABLE TO ANSWER THE CORNER.
+  --
+  -- A corner taken flat out is MEANT to push harder than full lock -- that is
+  -- what makes shedding speed the point. What is not meant to happen is for
+  -- that to be true at every speed, which is what a slippery surface did: the
+  -- steering and traction modifiers were multiplied together at full strength,
+  -- so ice -- authored as "you can still point it, you just slide" -- took
+  -- three quarters of the wheel away. On Ironforge, which is half ice, the kart
+  -- went off and stayed off.
+  --
+  -- The rule: at a sensible cornering pace, on the worst surface a circuit
+  -- paints on its own road, full lock must beat the corner. Flat out it need
+  -- not, and on most of them it must not.
+  ok("full lock beats the corner at a sensible pace", function()
+    local worst, worstAt = math.huge, nil
+    local flatOutLost = 0
+    for _, track in ipairs(AK.Tracks) do
+      AK.TrackBuilder:Compile(track)
+      -- A deliberately pessimistic pairing: this circuit's tightest bend
+      -- against the least grip it paints anywhere. The two need not occur at
+      -- the same place, so this is a floor rather than a measurement of one
+      -- corner -- which is what a playability bound should be.
+      local tightest, at = 0, 0
+      for d = 0, track.length - 1, 4 do
+        local c = math.abs(AK.Math.RoadCurve(track, d))
+        if c > tightest then tightest, at = c, d end
+      end
+      local floor = 1
+      for _, zone in ipairs(track.surfaces or {}) do
+        local material = AK.Terrain.TYPES[zone.onRoad or ""]
+        if material then floor = math.min(floor, material.traction or 1) end
+      end
+      local material = { steering = 1, traction = floor }
+      -- The same arithmetic UpdateVehicle does, at 60% of top speed.
+      local function balance(ratio)
+        local grip = (0.30 + 1.55 * ratio - 1.35 * ratio * ratio) * 1.35
+        local turn = 1.33 * grip
+          * AK.Terrain:Mix(material, "steering", 1)
+          * (0.45 + 0.55 * AK.Terrain:Mix(material, "traction", 1))
+        local speed = 52 * ratio
+        local push = tightest * 0.002 * speed * ratio
+          * (AK.db.tuning.curvePush or 4.2) * 0.80
+        return turn / math.max(0.0001, push)
+      end
+      local margin = balance(0.60)
+      if margin < worst then worst, worstAt = margin, track.id end
+      if balance(1.0) < 1 then flatOutLost = flatOutLost + 1 end
+      assert(margin > 1.0, ("%s: at 60%% pace its tightest corner (%.1f) on its "
+        .. "worst surface (traction %.2f) out-pushes full lock %.2f to 1")
+        :format(track.id, tightest, floor, 1 / margin))
+    end
+    -- And the other half: if the wheel won at full speed too, corners would be
+    -- decoration. Most circuits must still punish arriving flat out.
+    assert(flatOutLost >= 6,
+      "only " .. flatOutLost .. " circuits punish taking their tightest corner flat out")
+    say(("        tightest margin at 60%% pace: %.2fx (%s);  %d of %d circuits "
+      .. "still beat full lock when taken flat out"):format(
+      worst, tostring(worstAt), flatOutLost, #AK.Tracks))
+  end)
+
+  -- YOU CAN ALWAYS DRIVE BACK ONTO THE ROAD.
+  --
+  -- Nine seconds of footage on Ironforge with OFF ROAD lit the whole time,
+  -- eighth place, speed falling from 85 to 41 km/h, the road further away every
+  -- second. Going off is meant to be a penalty you drive out of; if it is not,
+  -- one mistake ends the race and the player is a passenger. Nothing measured
+  -- whether the wheel could beat the surface, so nothing noticed.
+  ok("a kart pushed off the road can drive back onto it", function()
+    local worst, worstTrack, slowest = 0, nil, math.huge
+    for _, id in ipairs({ "ironforge", "icecrown", "elwynn", "netherstorm" }) do
+      local field = AK.db.settings.aiCount
+      AK.db.settings.aiCount = 0
+      AK.Race:Start("quick", { track = id })
+      AK.db.settings.aiCount = field
+      local race = AK.Race.current
+      local player = race.player
+      AK.Race.controls.accelerate = true
+      AK.Race.controls.left, AK.Race.controls.right = false, false
+      -- Up to speed on the road first, so this is a kart that went off rather
+      -- than a kart that started there.
+      for _ = 1, math.ceil(6 / FRAME) do AK.Race:Update(FRAME) end
+      -- Shoved onto the verge, just inside the barrier.
+      player.lateral = 1.15
+      player.prevLateral = player.lateral
+      local metres, back = 0, false
+      local from = player.distance
+      for _ = 1, math.ceil(10 / FRAME) do
+        -- Full opposite lock, which is all a player can do.
+        AK.Race.controls.left, AK.Race.controls.right = true, false
+        AK.Race:Update(FRAME)
+        if not AK.Race.current then break end
+        if not player.offroad then
+          back = true
+          metres = player.distance - from
+          break
+        end
+      end
+      AK.Race.controls.left = false
+      assert(back, id .. ": full lock for ten seconds never got back on the road")
+      if metres > worst then worst, worstTrack = metres, id end
+      slowest = math.min(slowest, (player.speed or 0) / math.max(1, player.maxSpeed))
+    end
+    -- 260m is about five seconds at racing pace: a real penalty, and nothing
+    -- like a race-ending one.
+    assert(worst < 260, ("%s took %.0fm of full lock to get back on"):format(
+      tostring(worstTrack), worst))
+    -- And you must not be crawling by the time you do: an exit speed under a
+    -- third of the kart's own top is the flypaper this check exists to catch.
+    assert(slowest > 0.33, ("came back on at %.0f%% of top speed"):format(slowest * 100))
+    say(("        worst recovery %.0fm (%s), slowest exit %.0f%% of top speed")
+      :format(worst, tostring(worstTrack), slowest * 100))
+  end)
+
   -- A FORK IS SOMETHING YOU AIM AT.
   --
   -- The choice used to be taken inside six metres of the split on wherever the
@@ -1639,7 +1800,9 @@ if loadFailures == 0 then
           .. " ends pointing " .. string.format("%.3f", heading) .. " off the main line")
         assert(math.abs(offset) < 0.6, branch.id
           .. " never comes back: " .. string.format("%.1f", offset) .. "m adrift at the exit")
-        assert((mid or 0) > 14, branch.id .. " only gets "
+        -- Two road widths is the bar. One was still "the same place with a
+        -- different texture", which is what an illusion of choice looks like.
+        assert((mid or 0) > 24, branch.id .. " only gets "
           .. string.format("%.1f", mid or 0) .. "m from the road it left")
         -- AND THE MOUTH IS AS WIDE AS THE ROAD IT LEAVES. Turning off an
         -- eighteen metre road onto a twelve metre one, mid fork-turn, having

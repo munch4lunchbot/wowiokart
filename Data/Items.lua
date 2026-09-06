@@ -316,7 +316,12 @@ function AK:FireItem(race, vehicle, id)
     -- whether there was anything to take. `ConsumeItem` already cleared this
     -- vehicle's own slot before FireItem ran, so it is safe to hand the loot
     -- straight into `vehicle.item` here.
-    local target = AK.Race:GetAheadTarget(vehicle)
+    -- WHOEVER AHEAD IS ACTUALLY CARRYING SOMETHING, not merely whoever is
+    -- nearest. An AI spends an item within a second or two of picking it up, so
+    -- asking only the kart directly in front meant the answer was usually "they
+    -- have nothing" and the legendary you were saving did nothing you could
+    -- see.
+    local target = AK.Race:GetLootTarget(vehicle)
     local stolen = target and (target.item or target.held)
     if stolen then
       if target.held == stolen then target.held = nil else target.item, target.itemCount = nil, nil end
@@ -329,7 +334,17 @@ function AK:FireItem(race, vehicle, id)
         AK.RaceUI:Announce("STOLE " .. AK.Items[stolen].name:upper() .. "!", item.color)
       end
     end
-    vehicle.immune = math.max(vehicle.immune or 0, item.immunity or 2.0)
+    -- AND IT ALWAYS DOES SOMETHING. When the whole field really is empty-handed
+    -- the getaway is the entire item, so it lasts longer and says so -- an
+    -- untouchable run through a scrum is worth having, and worth knowing about.
+    if not stolen then
+      vehicle.immune = math.max(vehicle.immune or 0, (item.immunity or 2.0) * 1.9)
+      if isPlayer then
+        AK.RaceUI:Announce("NOTHING TO STEAL -- UNTOUCHABLE", item.color)
+      end
+    else
+      vehicle.immune = math.max(vehicle.immune or 0, item.immunity or 2.0)
+    end
 
   elseif item.effect == "drop" then
     AK.Race:SpawnProjectile(race, vehicle, id, -1)

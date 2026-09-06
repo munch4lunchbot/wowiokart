@@ -947,6 +947,30 @@ function Race:VehicleDistance(first, second)
   return AK.Math.DistanceOnLoop(a, b, length)
 end
 
+--- The nearest racer ahead who is actually holding something.
+---
+--- Boo used to rob the kart directly in front and nobody else, and an AI spends
+--- an item within a second or two of picking it up -- so most of the time the
+--- one racer it looked at had nothing, and the item you had queued for a
+--- legendary pickup did visibly nothing at all. "I use it and never get
+--- anything from it." A ghost that comes back empty-handed is a bug in who it
+--- was sent to look at, not in the idea.
+---
+--- Searches up the road in order, so it still robs the closest victim it can --
+--- the theft stays a theft, it just no longer gives up after one door.
+function Race:GetLootTarget(vehicle)
+  local field = {}
+  for _, other in ipairs(self.current.vehicles) do
+    if other ~= vehicle and not other.finished and (other.item or other.held) then
+      local delta = other.distance - vehicle.distance
+      while delta <= 0 do delta = delta + self.current.track.length end
+      field[#field + 1] = { who = other, gap = delta }
+    end
+  end
+  table.sort(field, function(a, b) return a.gap < b.gap end)
+  return field[1] and field[1].who or nil
+end
+
 function Race:GetAheadTarget(vehicle)
   local best, distance
   for _, other in ipairs(self.current.vehicles) do

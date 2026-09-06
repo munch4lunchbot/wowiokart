@@ -196,9 +196,24 @@ end
 
 --- True once the client actually streamed the model in. Callers fall back to a
 --- flat icon when this stays false (bad creature id, low-detail settings).
+--- Is there anything drawing in this frame?
+---
+--- A MODEL OF A UNIT IS NOT A MODEL OF A FILE. SetUnit does not reliably fire
+--- OnModelLoaded and GetModelFileID answers nil for it on live clients -- so
+--- "Yourself", the one racer most players pick, was permanently NOT READY. That
+--- did two visible things at once: the flat portrait icon, which exists only to
+--- cover the gap before a model streams in, was drawn over the rider for the
+--- whole race -- a framed picture bolted to the bonnet, which is what is in the
+--- footage -- and the stuck-model retry cleared and reloaded that model every
+--- second and a half, forever, which is the grey square that shows up in a
+--- screenshot taken mid-reload.
+---
+--- A unit that exists is a model that will draw. Nothing else to wait for.
 function Model:IsReady(model)
   if not model then return false end
   if model.akLoaded then return true end
+  local spec = model.akSpec
+  if spec and spec.unit and UnitExists(spec.unit) then return true end
   if model.GetModelFileID then return model:GetModelFileID() ~= nil end
   return false
 end
