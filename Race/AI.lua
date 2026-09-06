@@ -112,7 +112,11 @@ local function surfaceGrip(track, distance)
   local painted = AK.Terrain and AK.Terrain.Painted
     and AK.Terrain:Painted(track, distance, 0)
   if not painted then return 1 end
-  return (painted.steering or 1) * (painted.traction or 1)
+  -- THE SAME FLOOR THE PHYSICS APPLIES. Race/Physics.lua lets traction take at
+  -- most 55% of the wheel; multiplying the two knobs at full strength here made
+  -- the field believe ice took three quarters of its steering away, so it
+  -- crawled round Ironforge braking for bends it could have driven.
+  return (painted.steering or 1) * (0.45 + 0.55 * (painted.traction or 1))
 end
 
 local function cornerSpeed(vehicle, curve, ai, drifting, grip)
@@ -129,9 +133,30 @@ local function cornerSpeed(vehicle, curve, ai, drifting, grip)
   -- a drifting player the entire advantage in every turn on the lap.
   local steer = drifting and (AK.DRIFT_STEER or 1.30) or 1
   local bite = drifting and (AK.DRIFT_BITE or 1) or 1
-  local authority = (vehicle.handling or 1) * 0.95 * steer * (grip or 1)
-  local limit = math.sqrt(authority * vehicle.maxSpeed
-    / (CURVE_GAIN * push * weightFactor * curve * bite))
+  -- GRIP FALLS AWAY WITH SPEED, and this model did not know it.
+  --
+  -- The physics scales steering by (0.30 + 1.55r - 1.35r^2) * 1.35 -- 1.33 at
+  -- half pace, 0.68 flat out. That curve is the whole reason shedding speed
+  -- buys a corner, and the AI was solving for its corner speed as though it had
+  -- full authority at any velocity: it therefore believed it could carry twice
+  -- the grip it really had into a fast bend, arrived too quick, and went off.
+  -- Harmless while every corner was gentle; on a circuit with real ones it cost
+  -- four trips into the scenery in a single race at one bend.
+  --
+  -- The equation is no longer closed-form because the authority depends on the
+  -- answer, so it is solved by iterating three times from a sensible guess --
+  -- which converges to within a fraction of a metre per second.
+  local function gripCurve(ratio)
+    return (0.30 + 1.55 * ratio - 1.35 * ratio * ratio) * 1.35
+  end
+  local limit = vehicle.maxSpeed * 0.8
+  for _ = 1, 3 do
+    local ratio = AK.Math.Clamp(limit / math.max(1, vehicle.maxSpeed), 0, 1)
+    local authority = (vehicle.handling or 1) * 0.95 * steer * (grip or 1)
+      * gripCurve(ratio)
+    limit = math.sqrt(authority * vehicle.maxSpeed
+      / (CURVE_GAIN * push * weightFactor * curve * bite))
+  end
   return limit * (0.82 + (ai and ai.precision or 0.8) * 0.16)
 end
 
@@ -162,6 +187,23 @@ local function brakeTarget(race, vehicle, ai)
 end
 
 --- Item decisions by category rather than by name, so a new item slots in.
+--- The closest kart still in the fight, and the signed gap round the loop to
+--- them: positive if they are up the road, negative if they are behind.
+local function nearestRival(race, vehicle)
+  local length = race.track.length
+  local best, bestGap
+  for _, other in ipairs(race.vehicles) do
+    if other ~= vehicle and not other.eliminated and not other.finished then
+      local gap = AK.Math.SignedLoopDistance(vehicle.distance % length,
+        other.distance % length, length)
+      if not best or math.abs(gap) < math.abs(bestGap) then
+        best, bestGap = other, gap
+      end
+    end
+  end
+  return best, bestGap
+end
+
 local function chooseItem(race, vehicle, ai, skill)
   local id = vehicle.held or vehicle.item
   if not id then return false end
@@ -206,21 +248,54 @@ local function chooseItem(race, vehicle, ai, skill)
 
   -- Something already deployed behind us: fire it when a target is reachable.
   if vehicle.held then
+    local heldItem = AK.Items[vehicle.held]
+    -- The spiny goes for whoever is winning. There is nothing to line up and
+    -- nothing to wait for.
+    if heldItem and heldItem.seeksLeader then return true end
+    local homing = heldItem and heldItem.homing
     local ahead = AK.Race:GetAheadTarget(vehicle)
+    local gap
     if ahead then
-      local gap = AK.Math.SignedLoopDistance(vehicle.distance % length,
+      gap = AK.Math.SignedLoopDistance(vehicle.distance % length,
         ahead.distance % length, length)
       -- Fire only when the shot can actually connect: close enough that the
       -- target cannot simply drive out of the way, and lined up. Loosing a
       -- shell down an empty straight at someone 50m away just donates it, and
       -- a good player reads that as the AI being dumb rather than unlucky.
       -- Sharper drivers wait for a better window.
-      local range = 26 + ai.aggression * 16
-      if gap > 0 and gap < range and math.abs(ahead.lateral - vehicle.lateral) < 0.42 then
+      --
+      -- A HOMING SHELL DOES NOT NEED A CLEAR SHOT. It hunts, and at 30 m/s for
+      -- seven seconds it has two hundred metres of hunting in it -- so the rule
+      -- written for a green shell was making every red shell in the field wait
+      -- for a green shell's window, at a fifth of its actual reach and only
+      -- when the target happened to be in the same lane.
+      local range = homing and (95 + ai.aggression * 45) or (26 + ai.aggression * 16)
+      if gap > 0 and gap < range
+        and (homing or math.abs(ahead.lateral - vehicle.lateral) < 0.42) then
         return true
       end
     end
-    -- Otherwise keep holding it as a shield, which is the correct play.
+    -- A SHIELD WITH NOBODY BEHIND IT IS NOT A SHIELD.
+    --
+    -- Holding is the correct play only while somebody can actually hit you.
+    -- Traced through a full race: a kart running seventh and alone trailed the
+    -- same green shell for the last twenty-five seconds of the circuit, on a
+    -- lap where the nearest rival ahead was never once inside forty metres.
+    -- That is not discipline, it is an item removed from the race. With nobody
+    -- on your bumper, a shell up the road is worth more than a shell behind
+    -- you: it might connect, and either way it is something happening.
+    local hunted = false
+    for _, other in ipairs(race.vehicles) do
+      if other ~= vehicle and not other.finished then
+        local behind = AK.Math.SignedLoopDistance(vehicle.distance % length,
+          other.distance % length, length)
+        if behind < 0 and behind > -45 then hunted = true break end
+      end
+    end
+    if not hunted and (race.elapsed - (vehicle.heldSince or 0)) > 5
+      and gap and gap > 0 and gap < 170 then
+      return true
+    end
     return false
   end
 
@@ -306,13 +381,29 @@ function AI:Controls(race, vehicle, dt)
       end
     end
 
-    -- Ease away from whoever is alongside, so the field separates instead of
-    -- grinding down the road in one lump.
-    for _, other in ipairs(race.vehicles) do
-      if other ~= vehicle and not other.finished
-        and math.abs(other.distance - vehicle.distance) < 9
-        and math.abs(other.lateral - vehicle.lateral) < .30 then
-        target = target + (vehicle.lateral >= other.lateral and .34 or -.34)
+    -- IN AN ARENA YOU DRIVE AT PEOPLE, NOT AROUND THEM.
+    --
+    -- Everything below this is race craft: keep your line, leave room, do not
+    -- get tangled up. In a battle that is the opposite of playing -- the only
+    -- thing that scores is a hit, and a kart politely edging out of somebody's
+    -- way is a kart declining the entire mode. So in here the nearest survivor
+    -- IS the racing line: line up on them and stay lined up, which is what
+    -- puts a shell on target and a Star through their side.
+    if race.battle then
+      local rival, gap = nearestRival(race, vehicle)
+      vehicle.huntRival, vehicle.huntGap = rival, gap
+      if rival and gap and math.abs(gap) < 55 then
+        target = rival.lateral
+      end
+    else
+      -- Ease away from whoever is alongside, so the field separates instead of
+      -- grinding down the road in one lump.
+      for _, other in ipairs(race.vehicles) do
+        if other ~= vehicle and not other.finished
+          and math.abs(other.distance - vehicle.distance) < 9
+          and math.abs(other.lateral - vehicle.lateral) < .30 then
+          target = target + (vehicle.lateral >= other.lateral and .34 or -.34)
+        end
       end
     end
 
@@ -380,6 +471,30 @@ function AI:Controls(race, vehicle, dt)
     if not ai.wasBraking then ai.stats.brakes = ai.stats.brakes + 1 end
     ai.stats.brakeTime = ai.stats.brakeTime + dt
   end
+  -- AND WHEN NOTHING IS HAPPENING, SOMEBODY GIVES UP THE ROAD.
+  --
+  -- Two karts at the same pace on opposite sides of a loop never meet, however
+  -- hard they steer. The obvious fix -- brake whenever the gap behind you is
+  -- bigger than X -- is worse than the problem: it hands the field a spacing to
+  -- hold, and the arena locks into a perfectly ordered convoy that can circle
+  -- forever. Measured, that made stalls MORE common, not less.
+  --
+  -- So there is no gap to settle at. Once the fight has gone quiet, whoever is
+  -- in front of their nearest rival simply comes off the throttle, and keeps
+  -- coming off it until they are caught: with no equilibrium the pair has to
+  -- meet. The closest two karts on the loop are always each other's nearest, so
+  -- one of them is always yielding -- there is no cycle in which everybody runs
+  -- and nobody waits.
+  --
+  -- Nothing here fires while balloons are actually coming off; `battleUrge`
+  -- sits at zero for the forty seconds after every pop.
+  local urge = race.battle and (race.battleUrge or 0) or 0
+  if urge > 0.25 and not vehicle.eliminated and (vehicle.huntGap or 0) < 0 then
+    controls.throttleAware = true
+    controls.accelerate = false
+    if urge > 0.7 then controls.brake = true end
+  end
+
   ai.wasBraking = controls.brake or false
 
   -- DRIFTING. Hold through anything sustained enough to bank a mini-turbo,

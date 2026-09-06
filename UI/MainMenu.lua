@@ -651,7 +651,7 @@ local MODES = {
   { "TIME TRIAL", "you against your ghost", function() AK.Race:Start("time_trial") end,
     "No rivals and no items. Beat your own recorded lap." },
   { "BATTLE", "three balloons each", function() AK.Race:StartBattle() end,
-    "An arena, not a circuit. Last kart with a balloon wins." },
+    "One of three arenas, drawn at random. Last kart with a balloon wins." },
   { "MULTIPLAYER", "your party or raid", function() AK.Menu:ShowMultiplayer() end,
     "Race other people who have the addon, over WoW's own addon channel." },
   { "PRACTICE", "no clock, no pressure", function() AK.Race:Start("practice") end,
@@ -1049,7 +1049,7 @@ function Menu:UpdateSummary()
   for index, bar in ipairs(self.previewBars) do bar:Set(combined[index]) end
   self.previewStats:SetText(("%s  --  %s\n%s"):format(
     track.subtitle, track.theme, track.shortcut))
-  self.previewCareer:SetText(("TOKENS |cff%s%d|r     WINS |cff%s%d|r     RACES |cff%s%d|r")
+  self.previewCareer:SetText(("POINTS |cff%s%d|r     WINS |cff%s%d|r     RACES |cff%s%d|r")
     :format(AK:ColorHex(AK.COLORS.gold), AK.db.progress.coins,
       AK:ColorHex(AK.COLORS.gold), AK.db.progress.wins,
       AK:ColorHex(AK.COLORS.gold), AK.db.progress.races))
@@ -1625,7 +1625,7 @@ function Menu:BuildAchievements(page)
     summary:SetText(("%d of %d earned"):format(have, #order))
     local trophies = 0
     for _ in pairs(progress.trophies or {}) do trophies = trophies + 1 end
-    stats:SetText(("RACES %d      WINS %d      PODIUMS %d      CUPS %d      TOKENS %d")
+    stats:SetText(("RACES %d      WINS %d      PODIUMS %d      CUPS %d      POINTS %d")
       :format(progress.races or 0, progress.wins or 0, progress.podiums or 0,
         trophies, progress.coins or 0))
   end

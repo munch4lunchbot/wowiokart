@@ -440,7 +440,7 @@ panel(OX + CW - M - previewW, OY + 66, previewW, PREVIEW_H, PANEL, 0.98);
   // the circuit above them.
   const careerY = py + PREVIEW_H - 12 - 12;
   for (let x = bx; x < panelRight; x++) { blend(x, careerY - 9, 1, 0.78, 0.30, 0.20); blend(x, careerY - 8, 1, 0.78, 0.30, 0.20); }
-  label(px, careerY, "TOKENS 240     WINS 12     RACES 42", 12, [.86, .92, 1], "center");
+  label(px, careerY, "POINTS 240     WINS 12     RACES 42", 12, [.86, .92, 1], "center");
   if (foot > careerY - 14) {
     throw new Error("preview-ui: the setup panel's circuit block runs into the career line by "
       + Math.ceil(foot - (careerY - 14)) + "px");
@@ -893,7 +893,7 @@ if (process.env.SCREEN === "trophies") {
     }
   });
   label(OX + CW / 2, OY - 40 + CH - 30,
-    "RACES 42      WINS 12      PODIUMS 25      CUPS 2      TOKENS 240",
+    "RACES 42      WINS 12      PODIUMS 25      CUPS 2      POINTS 240",
     13, MUTED, "center");
   if (lowest > OY - 40 + CH - 44) {
     throw new Error("preview-ui: the trophy grid runs into the career line by "
@@ -983,7 +983,7 @@ if (process.env.SCREEN === "results") {
     let lx = stx + BLOCK / 2 - wsum / 2;
     for (const [t, c] of parts) { label(lx, sty + 38, t, 10, c); lx += textWidth(t, 10); }
   }
-  label(W / 2, sty + 78, "+49 RACE TOKENS   /   GARAGE TOTAL: 289", 12, LIME, "center");
+  label(W / 2, sty + 78, "+49 POINTS   /   CAREER 289", 12, LIME, "center");
 
   const by2 = sty + 106;
   slice(tex.btn, Math.round(W / 2 - 132 - 120), by2, 240, 44, [0.20, 0.32, 0.46], 1);

@@ -281,7 +281,7 @@ local BOOST_FOV = 0.075
 -- and it is what makes the crowd HOLD STILL. See the note in RenderSpectators:
 -- a person's identity is their seat, and their seat is their position, so the
 -- arithmetic below has to be a bijection or people change face as you drive.
-local SPECTATOR_SPACING = 46
+local SPECTATOR_SPACING = 34
 local CROWD_PER_SPOT = 3
 local CROWD_SPOTS = 3
 local SPECTATOR_SLOTS = CROWD_PER_SPOT * CROWD_SPOTS
@@ -1881,7 +1881,8 @@ function RaceUI:Build()
   -- discoverable. Sits under the buttons so it never covers the road.
   self.controlHint = UI:NewText(self.controlBar,
     "W / UP  GAS      S / DOWN  BRAKE      A D  or  LEFT RIGHT  STEER      "
-    .. "SPACE  DRIFT      SHIFT  ITEM      ESC  PAUSE", 11, AK.COLORS.muted, "CENTER")
+    .. "SPACE  HOP / DRIFT      SHIFT  ITEM      Q  AIM BACK      ESC  PAUSE",
+    11, AK.COLORS.muted, "CENTER")
   self.controlHint:SetPoint("BOTTOM", 0, 8)
 
   -- A mouse route out, for anyone driving without a keyboard. It used to be
@@ -2042,6 +2043,12 @@ local SKYLINE = {
   grotto        = { mtn = { h = .17, tint = { .12, .20, .26 }, a = 1.0 },
                     hill = { h = .08, tint = { .08, .15, .20 } },
                     treeArt = "spire.tga", treeTint = { .20, .30, .36 } },
+  -- Open sky over the jungle: a low, hazy ridge a long way off and a close
+  -- wall of palms, so the pit reads as outdoors -- the one thing that tells it
+  -- apart from the other two arenas at a glance.
+  gurubashi     = { mtn = { h = .10, tint = { .44, .58, .56 }, a = .78 },
+                    hill = { h = .10, tint = { .18, .38, .24 } },
+                    treeTint = { .20, .44, .25 } },
 }
 
 --- Re-anchor everything pinned to the horizon. Called whenever the tuned
@@ -3342,10 +3349,11 @@ function RaceUI:RenderArches(race, camX, camZ)
   -- Further out than the posts, because an arch is a 17m structure you drive
   -- through and want to see coming -- but nothing like the 297m it used to use,
   -- where the road is on screen only 40% of a lap.
-  -- Pulled in from 0.45 when the circuits got firmer corners. A tighter lap
-  -- swings the road off the side of the screen sooner, so an arch at 149m was
-  -- faded away 58% of the time -- spawned into space the road has already left.
-  local archFar = reach(125)
+  -- Pulled in twice as the circuits got firmer corners. A tighter lap swings
+  -- the road off the side of the screen sooner, so an arch spawned at 149m was
+  -- faded away 58% of the time -- put into space the road has already left. At
+  -- 92m it is still a second and a half of warning, and it is on screen.
+  local archFar = reach(92)
   local phase = self:GridPhase(self.route or race.track, spacing)
   local first = math.ceil((camZ - phase) / spacing)
   for slot, arch in ipairs(self.arches) do
@@ -3395,13 +3403,13 @@ end
 function RaceUI:RenderPosts(race, camX, camZ)
   local tuning = self.T
   local spacing = math.max(2, tuning.postSpacing)
-  -- 0.36 of the draw distance, the same band the pickups use, because it is the
-  -- same question: how far ahead is the road still ON SCREEN? Measured, the
-  -- worst track keeps it there 63% of the lap at 119m and 42% at the 264m these
-  -- were drawn to -- so well over half of every post spawned out there was
-  -- never seen, and the ones that were came in from the side of the display.
-  -- The speed cue posts exist for comes from the ones sweeping past inside 40m.
-  local postFar = reach(119)
+  -- The same band the pickups use, because it is the same question: how far
+  -- ahead is the road still ON SCREEN? Measured, the worst track keeps it there
+  -- 93% of the lap at 88m and 42% at the 264m these were drawn to -- so well
+  -- over half of every post spawned out there was never seen, and the ones that
+  -- were came in from the side of the display. The speed cue posts exist for
+  -- comes from the ones sweeping past inside 40m.
+  local postFar = reach(88)
   local phase = self:GridPhase(self.route or race.track, spacing)
   local first = math.ceil((camZ - phase) / spacing)
   for slot, pair in ipairs(self.posts) do
@@ -3459,10 +3467,10 @@ function RaceUI:RenderFinish(race, camX, camZ)
   -- not decoration -- but pulled in from 248m, where it was on screen under
   -- half the lap and arrived by sliding in from the edge.
   -- Same reason as the arches, and the same measurement: at 0.55 the gantry sat
-  -- 182m out and was readable on only 39% of a lap. 132m is a little over two
-  -- seconds of warning at racing pace, for a landmark the lap counter and the
-  -- map have both already told you about.
-  local finishFar = reach(132)
+  -- 182m out and was readable on only 39% of a lap. 92m is still a second and a
+  -- half of warning at racing pace, for a landmark the lap counter and the map
+  -- have both already told you about.
+  local finishFar = reach(92)
   if dz < 0.5 or dz > finishFar then
     setShown(finish, false)
     return
@@ -3563,7 +3571,7 @@ function RaceUI:RenderSpectators(race, camX, camZ)
   -- The crowd is decoration, so it gets the shortest range of the scenery: a
   -- spectator at the old 205m was a faded speck off the side of the screen
   -- half the time, and these are MODELS -- the most expensive thing per head.
-  local crowdFar = reach(132)
+  local crowdFar = reach(90)
   -- WHY THE SEAT IS PICKED BY POSITION AND NOT BY LOOP ORDER.
   --
   -- Each seat holds one creature for the whole race, because a model reload
@@ -3776,6 +3784,13 @@ local PROP_KINDS = {
     { art = "spire.tga", w = 0.38, h = 1.00, tint = { 0.28, 0.40, 0.46 }, min = 3.5, max = 9.0 },
     { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.22, 0.32, 0.36 }, min = 1.4, max = 3.4 },
     { art = "sporecap.tga", w = 1.00, h = 1.00, tint = { 0.34, 0.56, 0.62 }, min = 1.8, max = 4.2 },
+  },
+  -- An open-air pit in the jungle: palms over the wall, and the torch posts the
+  -- corner is named for.
+  gurubashi = {
+    { art = "tree.tga",  w = 0.60, h = 1.05, tint = { 0.20, 0.44, 0.24 }, min = 6.0, max = 14.0 },
+    { art = "spire.tga", w = 0.30, h = 0.80, tint = { 0.52, 0.34, 0.20 }, min = 2.6, max = 6.0 },
+    { art = "boulder.tga", w = 1.50, h = 1.00, tint = { 0.56, 0.46, 0.30 }, min = 1.3, max = 3.2 },
   },
   default = {
     { art = "tree.tga",  w = 0.55, h = 1.00, tint = { 0.26, 0.48, 0.28 }, min = 4.5, max = 11.0 },
@@ -5236,7 +5251,7 @@ function RaceUI:RenderObjects(race, player, camX, camZ)
   -- distance: how far ahead the road stays on screen is a property of the bend
   -- model, and winding the See-ahead slider out must not start flinging
   -- pickups back off the edges again.
-  local objectFar = reach(119)
+  local objectFar = reach(88)
   -- ANYTHING BEHIND THE KART IS BEHIND THE KART.
   --
   -- `dz` is measured from the CAMERA, which trails the kart by camBack -- so a
@@ -5428,7 +5443,7 @@ function RaceUI:RenderHazards(race, camX, camZ)
   -- Same shortened draw distance as the trackside objects, for the same reason:
   -- past it the road has bent off-screen and a hazard out there is a creature
   -- model floating at the display edge. See RenderObjects for the measurements.
-  local hazardFar = reach(119)
+  local hazardFar = reach(92)
   local hFadeFrom = hazardFar * 0.70
 
   local hCount = 0
@@ -6477,9 +6492,18 @@ function RaceUI:Render(race)
       -- the documented way to ask, and this was the only place that asked.
       local count = slot and AK:ItemCount(player) or 1
       -- The icon already says WHAT it is. The label carries the only thing an
-      -- icon cannot: how many are left.
-      self.itemLabel:SetText(count > 1 and ("x" .. count) or "")
-      self.itemLabel:SetTextColor(unpack(AK.COLORS.gold))
+      -- icon cannot: how many are left -- and, while the aim is reversed, which
+      -- WAY it is about to go. A shell fired behind you is the whole defensive
+      -- half of the item game and there was nothing on screen that said it was
+      -- possible, let alone that it was currently armed.
+      local back = AK.Race.controls.aimBack or AK.Race.controls.brake
+      if back and shown.effect == "projectile" then
+        self.itemLabel:SetText(count > 1 and ("<< x" .. count) or "<< BACK")
+        self.itemLabel:SetTextColor(unpack(AK.COLORS.lime))
+      else
+        self.itemLabel:SetText(count > 1 and ("x" .. count) or "")
+        self.itemLabel:SetTextColor(unpack(AK.COLORS.gold))
+      end
     else
       -- An empty box is an empty box. It used to print "NO ITEM" in it, which
       -- is a form field telling you what you can already see.

@@ -408,7 +408,9 @@ function Results:Show(race)
   end
   self.splits:SetText(#splits > 0 and ("LAPS   " .. table.concat(splits, "     ")) or "")
   self.reward:SetTextColor(unpack(AK.COLORS.lime))
-  self.reward:SetText(("+%d RACE TOKENS   /   GARAGE TOTAL: %d"):format(
+  -- "GARAGE TOTAL" promised a shop. There is no shop, and nothing anywhere
+  -- spends these -- they are a career score, so they say so.
+  self.reward:SetText(("+%d POINTS   /   CAREER %d"):format(
     race.rewardCoins or 0, AK.db.progress.coins))
 
   if race.grandPrix then

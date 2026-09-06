@@ -2672,6 +2672,99 @@ if loadFailures == 0 then
     say("")
   end)
 
+  -- HOW OFTEN SOMETHING HAPPENS TO YOU.
+  --
+  -- Every other measurement in this repo is about whether the game is correct.
+  -- This one is about whether it is worth playing. A kart racer is a string of
+  -- small events -- a box, a shell, a jump, a mini-turbo banked, a place taken
+  -- -- and the thing that makes one boring is not a bad corner, it is a long
+  -- quiet stretch where the player is holding the throttle and nothing is
+  -- happening to them. That interval is invisible from inside the code and no
+  -- amount of reading finds it.
+  --
+  -- So the player's own timeline is recorded, frame by frame, and the gaps
+  -- between events are reported. Only things the PLAYER would notice count: a
+  -- rival being hit on the far side of the circuit is not an event, and neither
+  -- is the scenery.
+  ok("a race never goes quiet on the player for long", function()
+    if QUICK then return end
+    local worst = {}
+    for _, id in ipairs({ "oribos", "elwynn", "netherstorm" }) do
+      AK.db.settings.difficulty = "Normal"
+      AK.Race:Start("quick", { track = id })
+      local race = AK.Race.current
+      race.player.ai = race.player.ai or AK.AI:CreatePersonality(9)
+      local player = race.player
+      -- `last` starts at the green light, not at zero: the grid and the
+      -- countdown are not a quiet stretch of racing, and counting them made
+      -- the first gap of every race four seconds longer than it was.
+      local last, gaps, events, racing = nil, {}, {}, false
+      local was = { item = nil, held = nil, slow = 0, air = 0, boost = 0,
+        place = nil, lap = 0 }
+      local worstAt = 0
+      local function mark(what)
+        local now = race.elapsed
+        if last and now - last > 0.35 then
+          gaps[#gaps + 1] = now - last
+          if now - last > (gaps.worst or 0) then gaps.worst, worstAt = now - last, now end
+        end
+        events[what] = (events[what] or 0) + 1
+        last = now
+      end
+      local guard = 0
+      while race.state ~= AK.RACE_STATES.FINISHED and guard < math.ceil(300 / FRAME) do
+        local wanted = AK.AI:Controls(race, player, FRAME)
+        wipe(AK.Race.controls)
+        for k, v in pairs(wanted) do AK.Race.controls[k] = v end
+        AK.Race.controls.accelerate = true
+        AK.Race.controls.throttleAware = true
+        AK.Race:Update(FRAME)
+        guard = guard + 1
+        if race.state == AK.RACE_STATES.RACING then
+          if not racing then racing, last = true, race.elapsed end
+          if player.item and not was.item then mark("box") end
+          if was.item and not player.item then mark("fired") end
+          if (player.slow or 0) > (was.slow or 0) then mark("hit") end
+          if (player.air or 0) > (was.air or 0) + 0.05 then mark("jump") end
+          -- A boost that appears out of nowhere is a mini-turbo or a pad; the
+          -- ones that come from an item are already counted as "fired".
+          if (player.boostTime or 0) > (was.boost or 0) + 0.05 and not was.item then
+            mark("boost")
+          end
+          local place = race.positions[player]
+          if was.place and place and place ~= was.place then mark("place") end
+          if (player.lap or 0) > was.lap then mark("lap") end
+          was.item, was.slow, was.air = player.item, player.slow or 0, player.air or 0
+          was.boost, was.place, was.lap = player.boostTime or 0, place, player.lap or 0
+        end
+      end
+      assert(race.state == AK.RACE_STATES.FINISHED, id .. " never finished")
+      table.sort(gaps, function(a, b) return a > b end)
+      local total, count = 0, 0
+      for _, g in ipairs(gaps) do total = total + g; count = count + 1 end
+      local order, parts = { "box", "fired", "hit", "boost", "jump", "place", "lap" }, {}
+      for _, key in ipairs(order) do
+        if events[key] then parts[#parts + 1] = ("%s x%d"):format(key, events[key]) end
+      end
+      say(("        %-12s %5.1fs of racing, %3d moments, longest quiet %4.1fs (at %.0fs), mean %4.1fs")
+        :format(id, race.elapsed, count, gaps[1] or 0, worstAt, count > 0 and total / count or 0))
+      say(("                     %s"):format(table.concat(parts, ",  ")))
+      worst[#worst + 1] = { id = id, quiet = gaps[1] or 0,
+        mean = count > 0 and total / count or 99 }
+      AK.Race:Stop(true)
+    end
+    -- THE BARS. Twelve seconds is the length of a whole lap of the shortest
+    -- circuit: going that long with nothing happening to you is the complaint
+    -- these numbers exist to catch. The mean is the texture rather than the
+    -- worst case, and four seconds is roughly one thing per corner sequence.
+    for _, r in ipairs(worst) do
+      assert(r.quiet < 12,
+        r.id .. ": " .. ("%.1f"):format(r.quiet) .. "s in which nothing happened to the player")
+      assert(r.mean < 4.0,
+        r.id .. ": a moment only every " .. ("%.1f"):format(r.mean) .. "s")
+    end
+  end)
+
   -- WHERE THE FRAME GOES.
   --
   -- A single number for widget traffic says a frame is expensive; it does not

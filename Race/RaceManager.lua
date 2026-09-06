@@ -438,6 +438,7 @@ function Race:StartBattle()
     vehicle.distance = (index - 1) * spacing
     vehicle.lateral = ((index % 3) - 1) * 0.4
   end
+  race.lastPop, race.battleUrge, race.suddenDeath = 0, 0, false
   self.current = race
   AK.Menu:Hide()
   AK.Results:Hide()
@@ -451,6 +452,8 @@ end
 function Race:PopBalloon(race, vehicle, attacker)
   if not race.battle or vehicle.eliminated then return false end
   vehicle.balloons = math.max(0, (vehicle.balloons or AK.BATTLE_BALLOONS) - 1)
+  -- Something landed, so the arena is patient again.
+  race.lastPop, race.suddenDeath, race.battleUrge = race.elapsed, false, 0
   if vehicle == race.player then
     AK.RaceUI:Announce(("BALLOON POPPED  %d LEFT"):format(vehicle.balloons), AK.COLORS.danger)
     AK.RaceUI:Flash(AK.COLORS.danger, .28)
@@ -468,6 +471,34 @@ function Race:PopBalloon(race, vehicle, attacker)
     return true
   end
   return false
+end
+
+--- HOW LONG SINCE ANYTHING HAPPENED, on a scale of nought to one.
+---
+--- A battle can deadlock. The arena is a loop, so two survivors running the
+--- same pace on opposite sides of it never see each other again -- measured,
+--- two arenas in fourteen ran past five minutes with nobody knocked out, and
+--- one of the rest took a hundred and fifty-nine seconds. Nobody is going to
+--- sit through that, and it is not a fight, it is two people commuting.
+---
+--- So the arena grows impatient. This number rises from 0 to 1 over the
+--- `BATTLE_PATIENCE` seconds since the last balloon came off, and the AI reads
+--- it as how far it should go out of its way to find somebody (see the hunting
+--- rules in Race/AI.lua). At full urge the field is actively closing on each
+--- other and a fight is unavoidable.
+AK.BATTLE_PATIENCE = 40
+
+function Race:UpdateBattlePressure(race)
+  race.lastPop = race.lastPop or 0
+  race.battleUrge = AK.Math.Clamp(
+    (race.elapsed - race.lastPop) / AK.BATTLE_PATIENCE, 0, 1)
+  -- Said once, when it starts to bite, so the player knows why the field has
+  -- suddenly turned round and come looking.
+  if race.battleUrge >= 1 and not race.suddenDeath then
+    race.suddenDeath = true
+    AK.RaceUI:Announce("SUDDEN DEATH -- THEY ARE COMING FOR YOU", AK.COLORS.danger)
+    if AK.PlaySfx then AK:PlaySfx("spinyWarn") end
+  end
 end
 
 --- Battle ends when one racer is left standing.
@@ -590,6 +621,16 @@ function Race:OnKey(key, down)
   elseif key == "A" or key == "LEFT" then self:SetControl("left", down)
   elseif key == "D" or key == "RIGHT" then self:SetControl("right", down)
   elseif key == "SPACE" then self:SetControl("drift", down)
+  -- FIRE BACKWARDS, ON A KEY OF ITS OWN.
+  --
+  -- Data/Items.lua has read `controls.aimBack` since shells were written and
+  -- nothing has ever set it, so the only way to throw a shell behind you was to
+  -- hold the BRAKE -- which is undiscoverable, and which makes every defensive
+  -- shot cost you speed at the exact moment somebody is on your bumper. Being
+  -- able to defend without slowing down is half of what makes shells a tool
+  -- rather than a lottery. Q is next to the wheel and free; the brake still
+  -- works for anyone who has learned it.
+  elseif key == "Q" then self:SetControl("aimBack", down)
   elseif (key == "LSHIFT" or key == "RSHIFT") and down then self:UseItem() end
 end
 
@@ -1464,10 +1505,32 @@ function Race:CheckObjects(race, dt)
             elseif object.kind == "box" then
               if not vehicle.item then
                 local pos = race.positions[vehicle] or 1
-                vehicle.item = AK:RollItem(pos, #race.vehicles, vehicle.racer.luck,
-                  race.rngItems, vehicle.gapAhead, vehicle.gapBehind)
+                vehicle.item = race.battle
+                  and AK:RollBattleItem(vehicle.balloons, race.rngItems)
+                  or AK:RollItem(pos, #race.vehicles, vehicle.racer.luck,
+                    race.rngItems, vehicle.gapAhead, vehicle.gapBehind)
                 vehicle.itemCount = AK.Items[vehicle.item] and AK.Items[vehicle.item].quantity or 1
-                object.hidden, object.respawn = true, 7
+                -- A BOX IS BACK BEFORE THE BACK OF THE FIELD ARRIVES.
+                --
+                -- Eight karts cross a five-box gate inside about two seconds of
+                -- each other, and a box that stays gone for seven of them is a
+                -- box only the front half of the grid ever sees. Measured over
+                -- three full races: the player crossed twenty gates and came
+                -- away with five items -- one every twenty-six seconds, in a
+                -- game whose drama is almost entirely made of items. Nothing
+                -- about that is a comeback structure; it is the leaders eating
+                -- first and the rest driving.
+                --
+                -- One and a half seconds, not three. Traced frame by frame: the
+                -- player ran eleven seconds in fourth place through two whole
+                -- gates empty-handed, because the three karts ahead had taken
+                -- those boxes a second and a half earlier and they were still
+                -- gone. A box cannot be taken twice by the same kart anyway --
+                -- it sits at a fixed distance and you only ever pass it going
+                -- forwards -- so a short respawn costs nothing and is the only
+                -- thing standing between the back of a train and an item.
+                object.hidden, object.respawn = true, 1.5
+
                 if vehicle == race.player then AK.RaceUI:Announce(AK.Items[vehicle.item].name .. " acquired!", AK.COLORS.lime) end
                 break
               end
@@ -1498,7 +1561,37 @@ function Race:CheckCollisions(race)
       -- Running over a shrunk racer. A full-size kart flattens them and drives
       -- straight on; the tiny one loses everything for a moment.
       local firstSmall, secondSmall = (first.shrunk or 0) > 0, (second.shrunk or 0) > 0
-      if not first.finished and not second.finished and firstSmall ~= secondSmall
+      -- A STAR RUN KNOCKS PEOPLE OVER.
+      --
+      -- Invincibility was purely defensive: it shrugged off projectiles and
+      -- hazards and did nothing whatsoever on contact, so driving through the
+      -- pack while glowing shoved rivals sideways exactly as hard as a gnome
+      -- would have. Half the point of the item in the genre is the carnage on
+      -- the way past -- and in an arena it is the only weapon you steer.
+      local firstStar = (first.star or 0) > 0
+      local secondStar = (second.star or 0) > 0
+      if not first.finished and not second.finished and firstStar ~= secondStar
+        and self:VehicleDistance(first, second) < 7
+        and math.abs(first.lateral - second.lateral) < .28 then
+        local runner = firstStar and first or second
+        local hit = firstStar and second or first
+        if (hit.immune or 0) <= 0 and (hit.flattened or 0) <= 0 then
+          self:SlowVehicle(hit, 1.25, "RUN DOWN!", "launch")
+          -- A beat of grace, or the same pass takes every balloon they have.
+          hit.immune = math.max(hit.immune or 0, 1.1)
+          if race.battle then
+            self:PopBalloon(race, hit, runner)
+            self:CheckBattleEnd(race)
+          end
+          if runner == race.player then
+            AK.RaceUI:Shake(10)
+            AK.RaceUI:HitConfirmed()
+            if AK.PlayStinger then AK:PlayStinger("hitConfirm", 2, 0.05) end
+          elseif AK.PlaySfxNear then
+            AK:PlaySfxNear("bump", race, hit)
+          end
+        end
+      elseif not first.finished and not second.finished and firstSmall ~= secondSmall
         and self:VehicleDistance(first, second) < 7 and math.abs(first.lateral - second.lateral) < .30 then
         local squashed = firstSmall and first or second
         if (squashed.flattened or 0) <= 0 then
@@ -1514,6 +1607,13 @@ function Race:CheckCollisions(race)
           -- Two rivals flattening each other on the far side of the circuit
           -- sounded exactly like being flattened yourself.
           if AK.PlaySfxNear then AK:PlaySfxNear("bump", race, squashed) end
+          -- In an arena, running over somebody the lightning left tiny is what
+          -- the lightning was FOR. Without this, Bolt could not take a balloon
+          -- off anybody and drawing one was a wasted box.
+          if race.battle then
+            self:PopBalloon(race, squashed, squashed == first and second or first)
+            self:CheckBattleEnd(race)
+          end
         end
       elseif not first.finished and not second.finished and self:VehicleDistance(first, second) < 7 and math.abs(first.lateral - second.lateral) < .20 then
         -- Weight decides who gets moved. A fixed shove made a heavy kart and a
@@ -1587,6 +1687,7 @@ end
 
 function Race:UpdateRacing(race, dt)
   race.elapsed = race.elapsed + dt
+  if race.battle then self:UpdateBattlePressure(race) end
   local hostOrSolo = not race.network or race.network.isHost
   for _, vehicle in ipairs(race.vehicles) do
     if not vehicle.finished then

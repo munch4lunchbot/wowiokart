@@ -74,16 +74,35 @@ const SPAN = +(BUILD.match(/local span = (\d+)/) || [, 15])[1];
 // on road. Its "easy" 1.6 sweepers are decisive corners; reporting them as
 // scenery would have had me flattening the one track whose whole idea is that
 // gentle corners become lethal.
+//
+// TRACTION ENTERS THROUGH A FLOOR, and this sheet had the old maths. Steering
+// and traction used to be multiplied at full strength, which is one knob
+// squared rather than two knobs: ice came out at 0.24 of normal and full lock
+// lost to a moderate bend at almost any speed. Race/Physics.lua now lets
+// traction take at most 55% of the wheel; a harness still using the product
+// reports Ironforge's sweepers as decisive when they are merely hard, which is
+// exactly the reading that would have had me flattening them.
 const TERRAIN_TABLE = require("./Art/terrain-table.js").readTerrain(ADDON);
 const MATERIALS = {};
 for (const [id, mat] of Object.entries(TERRAIN_TABLE))
-  MATERIALS[id] = mat.steering * mat.traction;
+  MATERIALS[id] = mat.steering * (0.45 + 0.55 * mat.traction);
 if (!MATERIALS.ICE) throw new Error("could not read the terrain table");
 
 const src = fs.readFileSync(path.join(ADDON, "Data", "Tracks.lua"), "utf8");
 const starts = [];
 const re = /\n  \{\n    id = "(\w+)"/g;
 let m; while ((m = re.exec(src))) starts.push({ id: m[1], at: m.index });
+
+// The authored pieces of one circuit's MAIN layout, with whether each one is a
+// ramp -- compile() throws the ramp flag away because it only wants curvature.
+function piecesOf(body) {
+  const ls = body.indexOf("layout = {"), le = body.indexOf("\n    },", ls);
+  return [...body.slice(ls, le).matchAll(/\{ len = ([\d.]+),([^}]*)\}/g)].map(x => ({
+    len: +x[1],
+    curve: +((x[2].match(/curve = (-?[\d.]+)/) || [, 0])[1]),
+    ramp: /ramp = true/.test(x[2]),
+  }));
+}
 
 function compile(body) {
   const length = +(body.match(/length = (\d+), laps/) || [, 2600])[1];
@@ -127,7 +146,7 @@ console.log("  A corner is DECISIVE when the push at full throttle beats full lo
 console.log("  must brake or drift. It is WORK at half that. Below that the wheel wins");
 console.log("  outright and the bend is scenery you steer through without thinking.");
 console.log("");
-console.log("track             arrives   decisive   work   free   driftable   flat run   painted");
+console.log("track             arrives   decisive   work   free   driftable   flat run   nothing   painted");
 
 let flat = [];
 const rows = [];
@@ -148,12 +167,38 @@ for (let i = 0; i < starts.length; i++) {
     else { run += STEP; if (run > longestRun) longestRun = run; }
     if (Math.abs(c) >= Math.min(DRIFT_FULL, AI_CORNER)) driftable++;
   }
+  // HOW LONG YOU CAN GO WITH NOTHING TO DO, measured on the authored pieces.
+  //
+  // `longestRun` above is the longest stretch the wheel wins outright, which
+  // includes gentle corners -- and a gentle corner is still a line to hold. The
+  // number that decides whether a lap is boring is the longest stretch with no
+  // input required at all, and it has to count a RAMP as content: a jump is the
+  // most eventful thing on most of these circuits.
+  //
+  // Measured across the lap seam, because that is where every one of them was
+  // wrong: a finishing straight running into a starting straight gave 440 to
+  // 680 metres of holding the throttle, three times a race, on all ten tracks.
+  let nothing = 0;
+  {
+    const pieces = piecesOf(body);
+    const total = pieces.reduce((a, p) => a + p.len, 0) || 1;
+    const scale = t.length / total;
+    let dead = 0;
+    const twice = pieces.concat(pieces);
+    for (let k = 0; k < twice.length; k++) {
+      const p = twice[k], prev = twice[k - 1];
+      const busy = Math.abs(p.curve) >= 0.9 || p.ramp || (prev && prev.ramp);
+      if (busy) dead = 0;
+      else { dead += p.len * scale; if (dead > nothing) nothing = dead; }
+    }
+  }
   const n = t.smooth.length;
   const row = {
     id: starts[i].id, authoredPeak, arrivedPeak,
     decisive: decisive / n * 100, work: work / n * 100,
     free: (n - decisive - work) / n * 100, longestRun, length: t.length,
     driftable: driftable / n * 100, slippery: iced / n * 100,
+    nothing: Math.round(nothing),
   };
   rows.push(row);
   if (row.decisive < 4) flat.push(row.id);
@@ -164,6 +209,7 @@ for (let i = 0; i < starts.length; i++) {
     (row.free.toFixed(0) + "%").padStart(7) +
     (row.driftable.toFixed(0) + "%").padStart(12) +
     (longestRun + "m").padStart(11) +
+    (row.nothing + "m").padStart(10) +
     (row.slippery > 0.5 ? (row.slippery.toFixed(0) + "%") : "-").padStart(10));
 }
 
@@ -187,8 +233,15 @@ console.log("");
 // A beginner circuit is ALLOWED to have only one corner that forces a decision --
 // Luigi Raceway does. What no circuit may be is a lap with nothing to do: too
 // little worth drifting, or a flat-out run that eats a fifth of it.
-const tooFlat = rows.filter(r => r.driftable < 18 || r.decisive < 2).map(r => r.id);
-const tooLong = rows.filter(r => r.longestRun > 520).map(r => r.id);
+// RAISED, because the old bars passed a game where half of every lap was
+// scenery. 18% driftable and 2% decisive would let a circuit be one bend and a
+// motorway; 520m of free road is ten seconds of nothing. The numbers below are
+// what the circuits actually do now, with room to move: under 30% driftable the
+// drift button -- most of the game -- has nowhere to be used, under 20%
+// decisive nothing has to be braked for, and 340m is the longest stretch a lap
+// may go without asking for an input at all.
+const tooFlat = rows.filter(r => r.driftable < 30 || r.decisive < 20).map(r => r.id);
+const tooLong = rows.filter(r => r.nothing > 340).map(r => r.id);
 for (const r of rows.filter(x => tooFlat.includes(x.id)))
   console.log("  " + r.id + ": " + (r.decisive < 2
     ? "not one corner on this lap forces a decision"

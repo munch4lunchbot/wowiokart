@@ -17,6 +17,7 @@ const path = require("path");
 
 const ADDON = __dirname;
 const tuneSrc = fs.readFileSync(path.join(ADDON, "Tuning.lua"), "utf8");
+const RACEUI = fs.readFileSync(path.join(ADDON, "UI", "RaceUI.lua"), "utf8");
 const def = key => {
   const m = tuneSrc.match(new RegExp('key = "' + key + '"[^}]*?default = (-?[\\d.]+)'));
   return m ? +m[1] : null;
@@ -192,11 +193,16 @@ console.log("  element        range      readable at that range");
 // raising the draw distance flung the furniture back out to where the road has
 // already left the screen, which is the exact fault the ranges exist to stop.
 const CLASSES = [
-  { name: "objects", far: 119 },
-  { name: "posts", far: 119 },
-  { name: "spectators", far: 132 },
-  { name: "arches", far: 125 },
-  { name: "finish", far: 132 },
+  // READ FROM THE RENDERER, not written down here. These were five hardcoded
+  // numbers, so pulling the ranges in after the circuits got real corners
+  // changed the game and left this sheet reporting the old ones -- a harness
+  // that cannot see the fix it asked for is worse than no harness.
+  ...[["objects", "objectFar"], ["posts", "postFar"], ["spectators", "crowdFar"],
+      ["arches", "archFar"], ["finish", "finishFar"]].map(([name, local]) => {
+    const m = RACEUI.match(new RegExp("local " + local + " = reach\\((\\d+)\\)"));
+    if (!m) throw new Error("verify-render: cannot find " + local + " in UI/RaceUI.lua");
+    return { name, far: +m[1] };
+  }),
 ];
 
 const tracks = [];

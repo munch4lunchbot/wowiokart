@@ -41,28 +41,37 @@ AK.Tracks = {
       { from = 1730, to = 1960, onRoad = "BOOST" },
     },
     layout = {
-      { len = 260, curve = 0, name = "Ring of Fates Straight", width = 1.30 },
+      { len = 125, curve = 0, name = "Ring of Fates Straight", width = 1.30 },
       -- Two RIGHT turns in a row: you are driving around the ring.
-      { len = 210, curve = 1.8, name = "Ring Sweep", width = 1.10 },
-      { len = 150, curve = 1.2, name = "Ring Inner", width = 1.06 },
-      { len = 100, curve = -0.4, name = "Enclave Approach", width = 1.12 },
+      { len = 220, curve = 2.3, name = "Ring Sweep", width = 1.10 },
+      { len = 150, curve = 1.7, name = "Ring Inner", width = 1.06 },
+      -- A CORNER THAT TIGHTENS. This was a 0.4 kink -- scenery you steered
+      -- through -- opening onto the only real hairpin on the lap. Given some
+      -- actual bend it becomes the first half of the corner instead of the
+      -- run-up to it, and the hairpin becomes something you have to arrive at
+      -- correctly rather than just brake for.
+      { len = 100, curve = -1.7, name = "Enclave Approach", width = 1.12 },
       -- The only tight corner on the lap.
       { len = 80, curve = -4.0, name = "Attendant Hairpin", width = 0.78 },
-      { len = 180, curve = 0.6, grade = 3.0, name = "Anima Climb", width = 1.04 },
+      -- The climb curves now. It was 180m of holding the throttle uphill in a
+      -- straight line, which on the first circuit anybody plays is 180m of
+      -- being told the game has nothing for you.
+      { len = 180, curve = 1.7, grade = 3.0, name = "Anima Climb", width = 1.04 },
       { len = 55, curve = 0, grade = 6.0, ramp = true, name = "The Leap", width = 1.22 },
       { len = 90, curve = 0, grade = -4.8, name = "Leap Landing", width = 1.16 },
       -- The signature: 320m under the ring. Gentle curve so it is driveable
       -- even though you cannot see anything.
       { len = 130, curve = 0.4, name = "Arcade Entry", width = 1.00, tunnel = true },
       { len = 190, curve = 2.2, name = "Gilded Arcade", width = 0.94, tunnel = true },
-      { len = 100, curve = -0.8, name = "Arcade Exit", width = 1.08 },
+      { len = 100, curve = -1.8, name = "Arcade Exit", width = 1.08 },
       { len = 60, curve = -3.2, name = "Broker Chicane", width = 0.84 },
       { len = 60, curve = 3.2, name = "Broker Chicane II", width = 0.84 },
       -- Long overtaking zone after the technical bit.
-      { len = 280, curve = 0, name = "Vault Straight", width = 1.28 },
-      { len = 200, curve = 2.4, grade = -1.8, name = "Great Vault Curve", width = 0.96 },
-      { len = 140, curve = -1.0, name = "Final Approach", width = 1.10 },
-      { len = 230, curve = 0, name = "Home Straight", width = 1.30 },
+      { len = 180, curve = 0, name = "Vault Straight", width = 1.28 },
+      { len = 90, curve = -3.0, name = "Vault Kink", width = 0.88 },
+      { len = 190, curve = 2.6, grade = -1.8, name = "Great Vault Curve", width = 0.96 },
+      { len = 130, curve = -2.8, name = "Final Approach", width = 0.94 },
+      { len = 135, curve = 0, name = "Home Straight", width = 1.30 },
     },
     hazards = { "Anima Surge", "Broker Crate", "Attendant" },
     shortcut = "Cut the inner ring past the Ring of Fates.",
@@ -114,33 +123,37 @@ AK.Tracks = {
     -- taking, and the home straight is broken by a kink. Nothing here is a
     -- hairpin: Stonefield is still the only hard corner on the lap.
     layout = {
-      { len = 200, curve = 0, name = "Goldshire Straight", width = 1.30 },
+      { len = 105, curve = 0, name = "Goldshire Straight", width = 1.30 },
       -- A long sweep, now firm enough to be worth drifting rather than merely
       -- worth looking at.
-      { len = 200, curve = -1.7, name = "Lion's Pride Sweep", width = 1.14 },
-      { len = 100, curve = 1.5, name = "Mill Lane", width = 1.12 },
+      { len = 170, curve = -2.6, name = "Lion's Pride Sweep", width = 0.96 },
+      { len = 100, curve = 2.4, name = "Mill Lane", width = 0.92 },
       { len = 120, curve = -1.2, grade = 2.4, name = "Hill Road", width = 1.10 },
       { len = 45, curve = 0, grade = 4.0, ramp = true, name = "Bridge Jump", width = 1.20 },
       { len = 80, curve = 0, grade = -3.0, name = "Bridge Landing", width = 1.14 },
-      { len = 100, curve = 1.4, name = "Covered Bridge", width = 0.96, tunnel = true },
-      { len = 240, curve = 1.9, name = "Forest Sweep", width = 1.08 },
+      { len = 100, curve = 2.0, name = "Covered Bridge", width = 0.96, tunnel = true },
+      { len = 200, curve = 2.4, name = "Forest Sweep", width = 1.08 },
       -- Still the one real challenge on the lap.
       { len = 80, curve = 3.6, name = "Stonefield Bend", width = 0.84 },
-      { len = 140, curve = -1.5, name = "Eastvale Run", width = 1.18 },
-      { len = 180, curve = -1.6, grade = -1.2, name = "Crystal Lake", width = 1.12 },
-      { len = 120, curve = 0, name = "Woodland Straight", width = 1.22 },
-      { len = 160, curve = 1.8, name = "Forest Curve", width = 1.10 },
+      { len = 140, curve = -2.4, name = "Eastvale Run", width = 0.96 },
+      { len = 180, curve = -2.2, grade = -1.2, name = "Crystal Lake", width = 1.12 },
+      { len = 90, curve = 0, name = "Woodland Straight", width = 1.22 },
+      { len = 160, curve = 2.6, name = "Forest Curve", width = 0.94 },
       -- The kink that stops the run to the line being a quarter of the lap with
       -- nothing in it.
       { len = 90, curve = -2.2, name = "Smithy Kink", width = 1.00 },
-      { len = 190, curve = 0, name = "Home Straight", width = 1.30 },
+      { len = 125, curve = 0, name = "Home Straight", width = 1.30 },
     },
     hazards = { "Kobold", "Hay Bale", "Defias Bomb" },
     shortcut = "Ford the river for a risky speed strip.",
     branches = {
       {
         id = "river_ford", name = "River Ford", side = 1,
-        from = 0.560, to = 0.700, length = 250, sweep = 2.2,
+        -- Leaves during Forest Sweep, a steady right-hander, so cutting to the
+        -- inside for it is the natural line rather than a fight -- it used to
+        -- open on the last metre of Stonefield Bend, a 3.6 hairpin, where the
+        -- corner throws you the other way and lining up is impossible.
+        from = 0.508, to = 0.660, length = 250, sweep = 2.2,
         offroad = "WATER",
         surfaces = {
           { from = 92, to = 158, onRoad = "MUD" },
@@ -179,31 +192,35 @@ AK.Tracks = {
       { from = 1500, to = 1680, onRoad = "BOOST" },
     },
     layout = {
-      { len = 210, curve = 0, name = "Razor Hill Straight", width = 1.16 },
+      { len = 120, curve = 0, name = "Razor Hill Straight", width = 1.16 },
       -- Immediately into the switchback climb.
       { len = 80, curve = 3.4, name = "Skull Rock Bend", width = 0.78 },
       { len = 70, curve = -4.2, grade = 3.2, name = "Lava Switchback", width = 0.72 },
       { len = 70, curve = 3.8, grade = 2.8, name = "Crater Rim", width = 0.74 },
-      { len = 100, curve = -0.6, grade = 1.4, name = "Scorched Run", width = 0.92 },
+      -- The run-up to the vent bends now, so the launch is aimed rather than
+      -- arrived at: it was a 0.6 drift-through, and the only thing between two
+      -- of the best corners on the lap and the jump that follows them.
+      { len = 100, curve = -1.7, grade = 1.4, name = "Scorched Run", width = 0.92 },
       { len = 55, curve = 0, grade = 6.2, ramp = true, name = "Vent Launch", width = 1.18 },
       { len = 80, curve = 0, grade = -5.0, name = "Vent Landing", width = 1.08 },
       -- Magma Cavern: dark, narrow, blind. The volcano's interior.
       { len = 110, curve = -2.0, name = "Cavern Entry", width = 0.82, tunnel = true },
       { len = 140, curve = 2.8, name = "Magma Cavern", width = 0.76, tunnel = true },
       { len = 80, curve = -1.4, name = "Cavern Mouth", width = 0.90, tunnel = true },
-      { len = 150, curve = 0, name = "Ashen Straight", width = 1.12 },
+      { len = 110, curve = 0, name = "Ashen Straight", width = 1.12 },
       -- Triple esses: three direction changes in quick succession.
       { len = 60, curve = -3.6, name = "Quillboar Kink", width = 0.80 },
       { len = 60, curve = 3.6, name = "Quillboar Kink II", width = 0.80 },
       { len = 60, curve = -3.2, name = "Quillboar Kink III", width = 0.82 },
-      { len = 140, curve = 1.4, grade = 2.4, name = "Ridge Climb", width = 0.96 },
+      { len = 140, curve = 1.8, grade = 2.4, name = "Ridge Climb", width = 0.96 },
       -- THE Deathloop: the tightest hairpin in the game on the narrowest road.
       { len = 90, curve = -4.6, name = "Deathloop Hairpin", width = 0.70 },
-      { len = 120, curve = 0.6, grade = -3.2, name = "Deathloop Descent", width = 0.98 },
+      -- Falling out of the Deathloop into a bend rather than onto a straight.
+      { len = 120, curve = 1.7, grade = -3.2, name = "Deathloop Descent", width = 0.98 },
       { len = 55, curve = 0, grade = 4.4, ramp = true, name = "Chasm Jump", width = 1.16 },
       { len = 90, curve = 0, grade = -3.6, name = "Chasm Landing", width = 1.08 },
-      { len = 150, curve = 2.2, name = "Sen'jin Sweep", width = 0.94 },
-      { len = 200, curve = 0, name = "Valley Run", width = 1.20 },
+      { len = 160, curve = 2.6, name = "Sen'jin Sweep", width = 0.94 },
+      { len = 125, curve = 0, name = "Valley Run", width = 1.20 },
     },
     hazards = { "Quillboar", "Lava Vent", "Goblin Bomb" },
     shortcut = "Ride the red-hot ridge, if you dare.",
@@ -246,28 +263,28 @@ AK.Tracks = {
       { from = 1480, to = 1700, offroad = "WATER" },
     },
     layout = {
-      { len = 240, curve = 0, name = "Booty Bay Straight", width = 1.24 },
+      { len = 125, curve = 0, name = "Booty Bay Straight", width = 1.24 },
       -- Two LEFT turns in a row: winding into the jungle.
       { len = 220, curve = -2.0, name = "Harbour Sweep", width = 1.02 },
-      { len = 170, curve = -1.4, name = "Nesingwary Trail", width = 0.96 },
-      { len = 100, curve = 1.6, name = "Hunter's Run", width = 1.06 },
+      { len = 170, curve = -1.8, name = "Nesingwary Trail", width = 0.96 },
+      { len = 100, curve = 2.4, name = "Hunter's Run", width = 0.94 },
       { len = 80, curve = 3.8, name = "Panther Hairpin", width = 0.78 },
       { len = 140, curve = 1.5, grade = 2.8, name = "Canopy Climb", width = 1.00 },
       -- Under the canopy: 330m of tree cover.
-      { len = 210, curve = 1.4, name = "Canopy Tunnel", width = 0.92, tunnel = true },
+      { len = 190, curve = 1.6, name = "Canopy Tunnel", width = 0.92, tunnel = true },
       { len = 120, curve = -1.8, grade = -2.8, name = "Vine Drop", width = 0.98, tunnel = true },
       { len = 50, curve = 0, grade = 4.6, ramp = true, name = "Ruins Jump", width = 1.18 },
       { len = 80, curve = 0, grade = -3.4, name = "Ruins Landing", width = 1.10 },
       -- Two RIGHT turns in a row: winding around the troll ruins.
-      { len = 240, curve = 1.8, name = "Zul'Gurub Sweep", width = 1.02 },
-      { len = 170, curve = 1.6, name = "Troll Passage", width = 0.98 },
+      { len = 210, curve = 2.4, name = "Zul'Gurub Sweep", width = 1.02 },
+      { len = 170, curve = 1.8, name = "Troll Passage", width = 0.98 },
       { len = 90, curve = -3.6, name = "Gurubashi Hairpin", width = 0.80 },
-      { len = 190, curve = -1.6, name = "River Road", width = 1.16 },
+      { len = 170, curve = -2.0, name = "River Road", width = 1.16 },
       -- Cape Approach was a 0.4 drift-through-nothing, which put 590m of
       -- unbroken flat-out running between it, Cape Run and the Booty Bay
       -- Straight. It is a real corner onto the run to the line now.
-      { len = 140, curve = 1.8, name = "Cape Approach", width = 1.12 },
-      { len = 210, curve = 0, name = "Cape Run", width = 1.26 },
+      { len = 130, curve = 2.8, name = "Cape Approach", width = 0.92 },
+      { len = 125, curve = 0, name = "Cape Run", width = 1.26 },
     },
     hazards = { "Raptor", "Pirate Barrel", "Murloc" },
     shortcut = "A narrow ruin path skips the river bend.",
@@ -322,25 +339,26 @@ AK.Tracks = {
       { from = 1350, to = 1910, onRoad = "ICE" },
     },
     layout = {
-      { len = 260, curve = 0, name = "Great Forge Straight", width = 1.28 },
+      { len = 150, curve = 0, name = "Great Forge Straight", width = 1.28 },
       -- Wide sweeping arc. Easy on dry road, terrifying on ice.
-      { len = 240, curve = 1.6, name = "Anvil Sweep", width = 1.14 },
-      { len = 140, curve = -0.8, name = "Forge Run", width = 1.16 },
+      { len = 200, curve = 1.9, name = "Anvil Sweep", width = 1.14 },
+      { len = 140, curve = -1.6, name = "Forge Run", width = 1.16 },
       -- The Mountain Bore: 480m of blind tunnel. Longest covered section.
-      { len = 140, curve = -0.6, name = "Bore Entry", width = 1.00, tunnel = true },
-      { len = 220, curve = 1.8, name = "Mountain Bore", width = 0.94, tunnel = true },
+      { len = 110, curve = -1.8, name = "Bore Entry", width = 0.90, tunnel = true },
+      { len = 220, curve = 1.9, name = "Mountain Bore", width = 0.94, tunnel = true },
       { len = 120, curve = -0.4, grade = -2.0, name = "Bore Mouth", width = 1.08, tunnel = true },
       -- The one sharp turn on the circuit.
       { len = 100, curve = -3.2, name = "Frostmane Bend", width = 0.88 },
-      { len = 190, curve = 1.2, grade = 1.4, name = "Glacier Climb", width = 1.12 },
+      { len = 190, curve = 1.8, grade = 1.4, name = "Glacier Climb", width = 1.12 },
       { len = 50, curve = 0, grade = 5.0, ramp = true, name = "Ice Jump", width = 1.20 },
       { len = 80, curve = 0, grade = -3.8, name = "Ice Landing", width = 1.14 },
       -- The widest, longest straight. Flat out on ice.
-      { len = 280, curve = 0, name = "Coldridge Straight", width = 1.26 },
-      { len = 170, curve = -1.4, name = "Gnomeregan Curve", width = 1.08 },
+      { len = 170, curve = 0, name = "Coldridge Straight", width = 1.26 },
+{ len = 80, curve = 3.2, name = "Coldridge Kink", width = 0.88 },
+      { len = 150, curve = -2.0, name = "Gnomeregan Curve", width = 0.94 },
       { len = 50, curve = 0, grade = 4.2, ramp = true, name = "Tram Jump", width = 1.18 },
       { len = 70, curve = 0, grade = -3.2, name = "Tram Landing", width = 1.12 },
-      { len = 220, curve = 0.6, name = "Hall Run", width = 1.24 },
+      { len = 130, curve = 2.0, name = "Hall Run", width = 0.94 },
     },
     hazards = { "Mine Cart", "Ice Patch", "Steam Valve" },
     shortcut = "A frozen tunnel is fast but very slippery.",
@@ -393,7 +411,7 @@ AK.Tracks = {
       { from = 950, to = 1125, onRoad = "WATER" },
     },
     layout = {
-      { len = 180, curve = 0, name = "Cutting Straight", width = 1.10 },
+      { len = 105, curve = 0, name = "Cutting Straight", width = 1.10 },
       { len = 70, curve = -2.4, name = "Foreman's Turn", width = 0.90 },
       -- SHAFT 1.
       { len = 120, curve = -1.8, name = "Number One Shaft", width = 0.86, tunnel = true },
@@ -411,15 +429,15 @@ AK.Tracks = {
       { len = 45, curve = 0, grade = 5.0, ramp = true, name = "Powder Jump", width = 1.16 },
       { len = 70, curve = 0, grade = -4.0, name = "Powder Landing", width = 1.08 },
       -- Brief wide section at the dock.
-      { len = 160, curve = 0, name = "Ironclad Straight", width = 1.18 },
+      { len = 110, curve = 0, name = "Ironclad Straight", width = 1.18 },
       { len = 55, curve = 3.4, name = "Dock Esses", width = 0.84 },
       { len = 55, curve = -3.4, name = "Dock Esses II", width = 0.84 },
       -- SHAFT 4: exit tunnel.
-      { len = 85, curve = 1.4, name = "Exit Tunnel", width = 0.88, tunnel = true },
+      { len = 85, curve = 1.9, name = "Exit Tunnel", width = 0.88, tunnel = true },
       { len = 75, curve = -1.0, name = "Tunnel Mouth", width = 0.94, tunnel = true },
       { len = 70, curve = -3.8, name = "Goblin Hairpin", width = 0.76 },
       { len = 120, curve = 2.0, name = "Cannon Sweep", width = 0.94 },
-      { len = 160, curve = 0, name = "Harbour Run", width = 1.14 },
+      { len = 95, curve = 0, name = "Harbour Run", width = 1.14 },
     },
     hazards = { "Falling Rock", "Mine Cart", "Powder Keg" },
     shortcut = "Blast through the unstable side shaft.",
@@ -473,21 +491,22 @@ AK.Tracks = {
     -- now arrives through a kink, which is the classic overtaking spot.
     layout = {
       -- 360m straight. The longest in the game. Full speed.
-      { len = 360, curve = 0, name = "Manaforge Straight", width = 1.32 },
-      { len = 260, curve = 1.9, name = "Arcane Sweep", width = 1.16 },
-      { len = 100, curve = -1.6, name = "Ley Run", width = 1.20 },
+      { len = 170, curve = 0, name = "Manaforge Straight", width = 1.32 },
+      { len = 210, curve = 2.5, name = "Arcane Sweep", width = 1.16 },
+      { len = 100, curve = -2.3, name = "Ley Run", width = 1.20 },
       { len = 80, curve = -4.0, name = "Nexus Hairpin", width = 0.78 },
-      { len = 140, curve = 1.5, grade = 2.8, name = "Rise to the Ring", width = 1.06 },
+      { len = 140, curve = 2.0, grade = 2.8, name = "Rise to the Ring", width = 1.06 },
       -- Conduit Tube: fast tunnel, and now a bend worth drifting through it.
-      { len = 250, curve = 1.7, name = "Conduit Tube", width = 0.96, tunnel = true },
-      { len = 100, curve = -1.8, name = "Tube Exit", width = 1.08, tunnel = true },
+      { len = 210, curve = 2.1, name = "Conduit Tube", width = 0.96, tunnel = true },
+      { len = 100, curve = -2.4, name = "Tube Exit", width = 1.08, tunnel = true },
       { len = 60, curve = 0, grade = 6.0, ramp = true, name = "Void Leap", width = 1.22 },
       { len = 95, curve = 0, grade = -4.8, name = "Void Landing", width = 1.14 },
-      { len = 240, curve = 0, name = "Ethereum Straight", width = 1.30 },
-      { len = 200, curve = -2.0, name = "Sparkfly Sweep", width = 1.08 },
+      { len = 140, curve = 0, name = "Ethereum Straight", width = 1.30 },
+{ len = 90, curve = 3.0, name = "Ethereum Kink", width = 0.88 },
+      { len = 170, curve = -2.6, name = "Sparkfly Sweep", width = 1.08 },
       { len = 120, curve = 2.8, name = "Kirin'Var Bend", width = 0.90 },
-      { len = 220, curve = -1.7, name = "Farahlon Sweep", width = 1.12 },
-      { len = 150, curve = 0, name = "Turbo Run", width = 1.32 },
+      { len = 190, curve = -2.2, name = "Farahlon Sweep", width = 1.12 },
+      { len = 120, curve = 0, name = "Turbo Run", width = 1.32 },
       { len = 90, curve = 2.6, name = "Voidshard Kink", width = 1.04 },
     },
     hazards = { "Mana Storm", "Void Spark", "Arcane Mine" },
@@ -538,25 +557,26 @@ AK.Tracks = {
       { from = 1400, to = 1580, onRoad = "BOOST" },
     },
     layout = {
-      { len = 280, curve = 0, name = "Freewind Straight", width = 1.30 },
+      { len = 125, curve = 0, name = "Freewind Straight", width = 1.30 },
       { len = 90, curve = -3.4, name = "Mesa Switchback", width = 0.86 },
-      { len = 140, curve = 1.2, grade = 4.0, name = "Rise to the Plateau", width = 1.05 },
+      { len = 140, curve = 1.8, grade = 4.0, name = "Rise to the Plateau", width = 1.05 },
       -- First leap: the canyon gap that gives the track its name.
       { len = 55, curve = 0, grade = 6.5, ramp = true, name = "Canyon Leap", width = 1.20 },
       { len = 100, curve = 0, grade = -5.5, name = "Canyon Landing", width = 1.10 },
-      { len = 160, curve = 2.0, name = "Plateau Sweep", width = 1.08 },
+      { len = 160, curve = 2.4, name = "Plateau Sweep", width = 1.08 },
       -- Narrowest point on the lap; no ramp here, just nerve.
       { len = 70, curve = 0, grade = 1.2, name = "Rope Crossing", width = 0.68 },
       { len = 80, curve = -2.8, name = "Grimtotem Bend", width = 0.84 },
-      { len = 200, curve = 0, name = "Mirage Straight", width = 1.26 },
+      { len = 110, curve = 0, name = "Mirage Straight", width = 1.26 },
+      { len = 70, curve = -2.8, name = "Mirage Kink", width = 0.90 },
       { len = 55, curve = 0, grade = 5.8, ramp = true, name = "Second Leap", width = 1.18 },
       { len = 85, curve = 0, grade = -4.6, name = "Second Landing", width = 1.10 },
       { len = 120, curve = 3.0, name = "Naga Coil", width = 0.92 },
-      { len = 90, curve = -1.4, grade = -2.6, name = "Descent Run", width = 1.00 },
+      { len = 90, curve = -2.2, grade = -2.6, name = "Descent Run", width = 1.00 },
       { len = 60, curve = 0, grade = 5.0, ramp = true, name = "Final Leap", width = 1.16 },
       { len = 80, curve = 0, grade = -3.8, name = "Final Landing", width = 1.08 },
-      { len = 170, curve = 1.6, name = "Highland Curve", width = 1.10 },
-      { len = 240, curve = 0, name = "Home Straight", width = 1.28 },
+      { len = 150, curve = 2.6, name = "Highland Curve", width = 0.94 },
+      { len = 125, curve = 0, name = "Home Straight", width = 1.28 },
     },
     hazards = { "Rockslide", "Naga Ambush", "Harpy" },
     shortcut = "Cut across the canyon rim and hope the wind is with you.",
@@ -604,30 +624,33 @@ AK.Tracks = {
       { from = 1980, to = 2080, onRoad = "MUD" },
     },
     layout = {
-      { len = 250, curve = 0, name = "Telredor Straight", width = 1.26 },
-      { len = 190, curve = 1.6, name = "Sporeggar Sweep", width = 1.10 },
-      { len = 120, curve = -1.0, name = "Bog Road", width = 1.06 },
+      { len = 125, curve = 0, name = "Telredor Straight", width = 1.26 },
+      { len = 175, curve = 2.3, name = "Sporeggar Sweep", width = 1.10 },
+      { len = 120, curve = -1.9, name = "Bog Road", width = 1.06 },
       { len = 90, curve = -3.2, name = "Marsh Hairpin", width = 0.82 },
-      { len = 160, curve = 0.8, name = "Fen Crossing", width = 1.04 },
-      { len = 130, curve = 1.4, grade = 2.2, name = "Cap Climb", width = 1.00 },
+      { len = 160, curve = 1.6, name = "Fen Crossing", width = 1.04 },
+      { len = 130, curve = 1.9, grade = 2.2, name = "Cap Climb", width = 1.00 },
       -- Under a giant mushroom cap rather than through rock.
-      { len = 180, curve = -1.2, name = "Under the Cap", width = 0.94, tunnel = true },
+      { len = 180, curve = -2.0, name = "Under the Cap", width = 0.94, tunnel = true },
       { len = 110, curve = 0.6, grade = -2.0, name = "Cap Exit", width = 1.02, tunnel = true },
       { len = 50, curve = 0, grade = 4.4, ramp = true, name = "Root Launch", width = 1.18 },
       { len = 85, curve = 0, grade = -3.4, name = "Root Landing", width = 1.10 },
-      { len = 210, curve = 2.0, name = "Serpent Lake", width = 1.06 },
-      { len = 140, curve = -1.6, name = "Lagoon Bend", width = 1.08 },
+      { len = 210, curve = 2.4, name = "Serpent Lake", width = 1.06 },
+      { len = 140, curve = -2.2, name = "Lagoon Bend", width = 1.08 },
       { len = 70, curve = 3.4, name = "Reed Kink", width = 0.84 },
       { len = 70, curve = -3.4, name = "Reed Kink II", width = 0.84 },
-      { len = 180, curve = 0.8, name = "Umbrafen Run", width = 1.14 },
-      { len = 240, curve = 0, name = "Home Straight", width = 1.28 },
+      { len = 150, curve = -2.6, name = "Umbrafen Run", width = 0.94 },
+      { len = 135, curve = 0, name = "Home Straight", width = 1.28 },
     },
     hazards = { "Spore Cloud", "Marsh Strider", "Naga Patrol" },
     shortcut = "Wade the shallows instead of going round the lagoon.",
     branches = {
       {
         id = "the_shallows", name = "The Shallows", side = -1,
-        from = 0.550, to = 0.680, length = 225, sweep = 1.6,
+        -- Opens on Cap Exit and skips the Root Launch. It used to open eleven
+        -- metres INTO that ramp: the kart is airborne there, steering is gone,
+        -- and the choice was decided by wherever the launch left you.
+        from = 0.535, to = 0.680, length = 225, sweep = 1.6,
         offroad = "WATER",
         surfaces = {
           { from = 0, to = 225, onRoad = "WATER" },
@@ -667,31 +690,34 @@ AK.Tracks = {
       { from = 1470, to = 1690, onRoad = "ICE" },
     },
     layout = {
-      { len = 260, curve = 0, name = "Ramparts Straight", width = 1.26 },
+      { len = 130, curve = 0, name = "Ramparts Straight", width = 1.26 },
       -- First fall: 320m of descent, on ice.
-      { len = 150, curve = -1.8, grade = -2.6, name = "First Descent", width = 1.10 },
-      { len = 170, curve = -1.2, grade = -3.0, name = "Falling Ramp", width = 1.06 },
+      { len = 150, curve = -2.4, grade = -2.6, name = "First Descent", width = 1.10 },
+      { len = 170, curve = -1.9, grade = -3.0, name = "Falling Ramp", width = 1.06 },
       { len = 80, curve = 3.6, name = "Gargoyle Hairpin", width = 0.80 },
       { len = 130, curve = 0.6, grade = 4.2, name = "Spire Climb", width = 1.00 },
-      { len = 190, curve = 1.4, name = "Frozen Arches", width = 0.94, tunnel = true },
+      { len = 170, curve = 2.2, name = "Frozen Arches", width = 0.94, tunnel = true },
       { len = 120, curve = -0.8, grade = -2.4, name = "Arch Exit", width = 1.02, tunnel = true },
       { len = 55, curve = 0, grade = 5.2, ramp = true, name = "Saronite Jump", width = 1.18 },
       { len = 95, curve = 0, grade = -4.4, name = "Saronite Landing", width = 1.10 },
       -- Second fall, and the longest single descent in the game.
-      { len = 220, curve = -1.6, grade = -2.2, name = "The Long Fall", width = 1.12 },
+      { len = 200, curve = -2.2, grade = -2.2, name = "The Long Fall", width = 1.12 },
       { len = 60, curve = -3.8, name = "Crypt Kink", width = 0.80 },
       { len = 60, curve = 3.8, name = "Crypt Kink II", width = 0.80 },
-      { len = 175, curve = 1.2, grade = 3.4, name = "Return Climb", width = 1.04 },
-      { len = 140, curve = -1.0, name = "Upper Terrace", width = 1.10 },
-      { len = 90, curve = 2.8, name = "Throne Bend", width = 0.88 },
-      { len = 250, curve = 0, name = "The Approach", width = 1.24 },
+      { len = 175, curve = 1.8, grade = 3.4, name = "Return Climb", width = 1.04 },
+      { len = 140, curve = -2.2, name = "Upper Terrace", width = 1.10 },
+      { len = 110, curve = 3.0, name = "Throne Bend", width = 0.88 },
+      { len = 130, curve = 0, name = "The Approach", width = 1.24 },
     },
     hazards = { "Gargoyle", "Ice Shard", "Saronite Chunk" },
     shortcut = "Drop down the broken stair instead of taking the terrace.",
     branches = {
       {
         id = "broken_stair", name = "Broken Stair", side = 1,
-        from = 0.240, to = 0.370, length = 220, sweep = 1.5,
+        -- Opens on Falling Ramp and skips the Gargoyle Hairpin, which is the
+        -- shortcut it always wanted to be -- it used to open halfway THROUGH
+        -- that hairpin, on ice, at 3.6 of curvature.
+        from = 0.222, to = 0.370, length = 220, sweep = 1.5,
         offroad = "SNOW",
         surfaces = {
           { from = 60, to = 150, onRoad = "ICE" },

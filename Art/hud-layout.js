@@ -14,6 +14,28 @@ const { textWidth, textHeight } = require("./hud-font.js");
 
 const SRC = fs.readFileSync(path.join(__dirname, "..", "UI", "RaceUI.lua"), "utf8");
 
+// THE CONTROL LEGEND, READ OUT OF THE ADDON rather than retyped here.
+//
+// This was a hand-kept copy, and it drifted the moment a key was added: the
+// game bound Q to firing backwards and started saying "SPACE HOP / DRIFT", and
+// every offline screenshot went on advertising the old strip. A mirror that
+// shows controls the game does not have is worse than no mirror -- it is the
+// one thing a preview is FOR, and the fault is invisible precisely because the
+// picture looks fine.
+const CONTROL_HINT = (() => {
+  const at = SRC.indexOf("self.controlHint = UI:NewText(");
+  if (at === -1) throw new Error("hud-layout: no controlHint in UI/RaceUI.lua");
+  // The Lua builds it from concatenated string literals across several lines.
+  // Take every literal up to the size argument that ends the call's text.
+  // Stop AT the size argument, not at the end of its line: the alignment
+  // string on the same line is a literal too, and "...ESC PAUSECENTER" is
+  // what including it looks like.
+  const call = SRC.slice(at, SRC.indexOf("11, AK.COLORS", at));
+  const parts = [...call.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+  if (parts.length === 0) throw new Error("hud-layout: controlHint has no text");
+  return parts.join("");
+})();
+
 const HUD = (() => {
   const table = SRC.slice(SRC.indexOf("local HUD = {"), SRC.indexOf("local HUD_PANEL"));
   const entry = /(\w+)\s*=\s*\{\s*point\s*=\s*"(\w+)"\s*,\s*x\s*=\s*(-?[\d.]+)\s*,\s*y\s*=\s*(-?[\d.]+)\s*,\s*w\s*=\s*(-?[\d.]+)\s*,\s*h\s*=\s*(-?[\d.]+)\s*\}/g;
@@ -196,10 +218,7 @@ function rects(W, H, sample) {
     [edge - pitch * 2, "GAS"], [edge - pitch, "DRIFT"], [edge, "ITEM"]];
   for (const [dx, str] of labels)
     put("control." + str, "button", HW + u(dx) - u(CTRL_W) / 2, btnY, u(CTRL_W), u(c.h), { text: str });
-  text("control.hint",
-    "W / UP  GAS      S / DOWN  BRAKE      A D  or  LEFT RIGHT  STEER      "
-    + "SPACE  DRIFT      SHIFT  ITEM      ESC  PAUSE",
-    HW, H - u(8), u(11), MUTED, "CENTER", "BOTTOM");
+  text("control.hint", CONTROL_HINT, HW, H - u(8), u(11), MUTED, "CENTER", "BOTTOM");
 
   const quit = box("quit");
   put("quit", "button", quit.x, quit.y, quit.w, quit.h, { text: "QUIT" });

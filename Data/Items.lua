@@ -204,6 +204,53 @@ local function gapNeed(position, gapAhead, gapBehind)
   return AK.Math.Clamp(((gapAhead or 3) - 2.5) / 14, -0.08, 0.16)
 end
 
+--- AN ARENA DRAWS FROM ITS OWN BOX.
+---
+--- The race table is built round a comeback structure -- the tail of the field
+--- gets the race-changers -- and a battle has no field order for that to mean
+--- anything against. Worse, half of what it hands out cannot take a balloon
+--- off anybody: a Mushroom is a lap-time item, and Boo steals a weapon rather
+--- than using one. A kart on its last balloon was being handed Bolt, Star, Boo
+--- and Triple Mushroom out of a five-entry tier -- four ways to draw nothing
+--- and drive on.
+---
+--- So the arena has its own box: weapons, overwhelmingly, with the last-balloon
+--- tier leaning on the ones that hit somebody who is not perfectly lined up.
+--- Star and Bolt stay in because in here they ARE weapons (see the contact
+--- rules in Race/RaceManager.lua) -- a Star holder pops whoever they run into,
+--- and a kart flattened while shrunk loses a balloon for it.
+AK.BATTLE_ITEM_TABLE = {
+  -- Still holding balloons: a spread you have to aim.
+  full = {
+    { value = "green_shell", weight = 26 }, { value = "red_shell", weight = 22 },
+    { value = "banana", weight = 16 }, { value = "bomb", weight = 14 },
+    { value = "fake_box", weight = 8 }, { value = "triple_green_shell", weight = 8 },
+    { value = "mushroom", weight = 6 },
+  },
+  -- Down to the last one: heavier, and harder to dodge.
+  last = {
+    { value = "red_shell", weight = 24 }, { value = "bomb", weight = 20 },
+    { value = "star", weight = 16 }, { value = "triple_red_shell", weight = 14 },
+    { value = "green_shell", weight = 12 }, { value = "bolt", weight = 8 },
+    { value = "triple_banana", weight = 6 },
+  },
+}
+
+--- Draw for a kart in an arena. `balloons` is what they have left.
+function AK:RollBattleItem(balloons, stream)
+  local weights = ((balloons or 3) <= 1)
+    and self.BATTLE_ITEM_TABLE.last or self.BATTLE_ITEM_TABLE.full
+  if stream then return stream:Weighted(weights) end
+  local total = 0
+  for _, e in ipairs(weights) do total = total + e.weight end
+  local roll = math.random() * total
+  for _, e in ipairs(weights) do
+    roll = roll - e.weight
+    if roll <= 0 then return e.value end
+  end
+  return "green_shell"
+end
+
 function AK:RollItem(position, total, luck, stream, gapAhead, gapBehind)
   local trailing = (position - 1) / math.max(1, total - 1)
   -- Luck nudges you one notch further down the table, no more.
@@ -267,6 +314,9 @@ function AK:TriggerItem(race, vehicle)
     -- Multi-activation items deploy one at a time and keep the rest banked.
     self:ConsumeItem(vehicle)
     vehicle.held = id
+    -- WHEN it went out, so the AI can tell a shield it is using from one it has
+    -- simply forgotten about (see the holding rules in Race/AI.lua).
+    vehicle.heldSince = race.elapsed
     vehicle.itemCooldown = .22
     if vehicle == race.player then
       local item = self.Items[id]
@@ -334,16 +384,23 @@ function AK:FireItem(race, vehicle, id)
         AK.RaceUI:Announce("STOLE " .. AK.Items[stolen].name:upper() .. "!", item.color)
       end
     end
+    vehicle.immune = math.max(vehicle.immune or 0, item.immunity or 2.0)
     -- AND IT ALWAYS DOES SOMETHING. When the whole field really is empty-handed
-    -- the getaway is the entire item, so it lasts longer and says so -- an
-    -- untouchable run through a scrum is worth having, and worth knowing about.
+    -- the ghost still drags you forward -- a short boost rather than a longer
+    -- getaway.
+    --
+    -- The getaway was the consolation for one build and it broke Battle Mode
+    -- outright: everyone is packed into a short arena, everyone draws Boo, and
+    -- almost nobody is holding an item to steal -- so the whole field stood at
+    -- nearly four seconds of untouchable each and no balloon could be taken off
+    -- anybody. Five minutes of fighting and nobody was knocked out. Immunity is
+    -- the strongest defensive state in the game and it must not be handed out
+    -- for a miss.
     if not stolen then
-      vehicle.immune = math.max(vehicle.immune or 0, (item.immunity or 2.0) * 1.9)
+      vehicle.boostTime = math.max(vehicle.boostTime or 0, 1.0)
       if isPlayer then
-        AK.RaceUI:Announce("NOTHING TO STEAL -- UNTOUCHABLE", item.color)
+        AK.RaceUI:Announce("NOTHING TO STEAL -- TAKE A RUN AT THEM", item.color)
       end
-    else
-      vehicle.immune = math.max(vehicle.immune or 0, item.immunity or 2.0)
     end
 
   elseif item.effect == "drop" then

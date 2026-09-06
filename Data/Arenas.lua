@@ -93,6 +93,40 @@ AK.Arenas = {
       { len = 55, curve = 3.2, name = "Right Fang II", width = 1.02 },
     },
   },
+  {
+    -- THE THIRD STAGE, and the one everybody already knows. Gurubashi is the
+    -- free-for-all pit in Stranglethorn -- the game's own battle arena, gong
+    -- and all -- so it needs no explaining to anyone who has played WoW.
+    --
+    -- It is also deliberately the odd one out. Anvilmar and the Grotto are
+    -- both symmetric: two identical halves, so wherever you are on the loop
+    -- the fight is shaped the same, and the second one you play teaches you
+    -- nothing the first did not. This one is a lopsided ring -- one long open
+    -- side you can line a shell up down, one hairpin tight enough that anyone
+    -- who follows you into it is committed, and two bends in between -- so
+    -- WHERE you meet somebody decides how the meeting goes.
+    --
+    -- Every curve is the same sign, as it must be: a closed ring turns through
+    -- a full circle, and a piece bending the other way is a piece the loop has
+    -- to bend twice as hard elsewhere to pay for. The variety is in how hard
+    -- each one turns and how wide the road is while it does, not in direction.
+    id = "gurubashi", name = "Gurubashi Pit", subtitle = "The gong has already rung", theme = "STRANGLETHORN",
+    arena = true,
+    sweep = 2.4, length = 340, laps = 999,
+    color = { 0.20, 0.30, 0.16 }, road = { 0.62, 0.52, 0.34 },
+    skyTop = { 0.16, 0.34, 0.44 }, skyLow = { 0.66, 0.74, 0.52 }, glow = { 1.00, 0.90, 0.60 },
+    weather = "none", light = 1.00,
+    offroad = "SAND",
+    shortcut = "There isn't one. There is only the long side and the hairpin.",
+    layout = {
+      { len = 72, curve = 0.6, name = "The Long Side", width = 1.36 },
+      { len = 40, curve = 4.2, name = "Blood Corner", width = 1.02 },
+      { len = 52, curve = 1.2, name = "The Bleachers", width = 1.26 },
+      { len = 44, curve = 3.6, name = "Torch Turn", width = 1.06 },
+      { len = 62, curve = 1.0, name = "Chest Run", width = 1.30 },
+      { len = 44, curve = 3.8, name = "Gong Bend", width = 1.04 },
+    },
+  },
 }
 
 function AK:GetArena(id)

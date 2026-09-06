@@ -471,7 +471,12 @@ const sameLookingItems = [];
   const file = path.join(ADDON, "Data", "Items.lua");
   if (fs.existsSync(file)) {
     const src = fs.readFileSync(file, "utf8");
-    const block = src.slice(src.indexOf("AK.Items = {"));
+    // BOUNDED AT ITS OWN CLOSING BRACE. Slicing to the end of the file swept
+    // in every table declared after AK.Items, so the arena's item weights --
+    // `full = {` and `last = {` -- were read as two items with no icon and
+    // reported as a pair the player cannot tell apart.
+    const itemsAt = src.indexOf("AK.Items = {");
+    const block = src.slice(itemsAt, src.indexOf("\n}", itemsAt));
     const seen = new Map();
     const heads = [...block.matchAll(/^  (\w+) = \{$/gm)];
     for (let i = 0; i < heads.length; i++) {

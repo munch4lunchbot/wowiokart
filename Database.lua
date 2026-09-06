@@ -29,7 +29,11 @@ local defaults = {
   -- race total already lives in progress.bestTimes.
   records = { bestLap = {}, ghosts = {} },
   selection = { racer = "you", kart = "mechano", track = "oribos", cup = "eastern" },
-  progress = { coins = 0, races = 0, wins = 0, podiums = 0, bestTimes = {}, achievements = {}, unlockedRacers = {}, unlockedKarts = {}, trophies = {} },
+  -- `unlockedRacers` and `unlockedKarts` were here from the first commit and were
+  -- never written or read by anything: every racer and every kart is available
+  -- from the start, which is the right call for a game this size. Two empty
+  -- tables saved to disk forever are a promise the game does not keep.
+  progress = { coins = 0, races = 0, wins = 0, podiums = 0, bestTimes = {}, achievements = {}, trophies = {} },
 }
 
 local function merge(target, source)

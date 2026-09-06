@@ -7,6 +7,14 @@ const fs = require("fs"), zlib = require("zlib"), path = require("path");
 
 const ART = process.argv[2], OUT = process.argv[3];
 const PLAYER_DIST = parseFloat(process.argv[4] || "300");
+// The track is chosen with TRACK=, not by an argument -- and passing its id
+// here instead sets the distance to NaN, which surfaces two thousand lines
+// later as "cannot read properties of undefined" inside the minimap. Say what
+// is actually wrong, at the point it is wrong.
+if (!Number.isFinite(PLAYER_DIST))
+  throw new Error("preview-render: distance " + JSON.stringify(process.argv[4]) +
+    " is not a number. The circuit is chosen with TRACK=<id>, e.g. " +
+    "TRACK=elwynn node Art/preview-render.js Art out.png 300");
 // The projection scales with half-width, so a preview rendered at a different
 // resolution than the player's client genuinely does not match their game --
 // which is exactly how "your screenshots don't look like mine" happens.
