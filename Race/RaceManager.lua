@@ -873,7 +873,12 @@ function Race:UpdateProjectiles(race, dt)
                 -- pushes you; hitting someone is quick, bright and costs you
                 -- nothing. If the two ever feel alike, neither reads.
                 AK.RaceUI:HitConfirmed()
-                if AK.PlaySfx then AK:PlaySfx("hitConfirm") end
+                -- TWO LAYERS. Landing a shot on somebody is the best moment the
+                -- genre has and it was one blip, the same weight as a coin. The
+                -- client gives no volume control, so layering the same sample a
+                -- few milliseconds apart is the only way to make one thing
+                -- louder than another -- and this is the thing.
+                if AK.PlayStinger then AK:PlayStinger("hitConfirm", 2, 0.05) end
               end
               -- In battle a clean hit costs a balloon, which is the entire mode.
               if race.battle then

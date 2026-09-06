@@ -1399,6 +1399,30 @@ if loadFailures == 0 then
     assert(#hits == 0, #hits .. " controls are misplaced")
   end)
 
+  -- NO CUE MAY COME OUT SILENT.
+  --
+  -- "So many sounds are blank." A cue that resolves to nothing is indoor
+  -- plumbing: it has a name, a priority and a cooldown, it is wired to a real
+  -- event, and it makes no noise -- and nothing anywhere said so. Every one of
+  -- them is asked to resolve here, and any that cannot is named.
+  ok("every cue actually resolves to a sound", function()
+    local silent, fromLibrary, fromList = {}, 0, 0
+    for _, entry in ipairs(AK:CueList()) do
+      AK:PreviewCue(entry.cue)
+      local info = AK:CueInfo(entry.cue)
+      if not info.source or info.source == "none" then
+        silent[#silent + 1] = entry.cue
+      elseif info.via == "match" then
+        fromLibrary = fromLibrary + 1
+      else
+        fromList = fromList + 1
+      end
+    end
+    assert(#silent == 0, "silent: " .. table.concat(silent, ", "))
+    say(("        %d cues: %d found in the client's library, %d off the list")
+      :format(fromLibrary + fromList, fromLibrary, fromList))
+  end)
+
   -- THE CROWD HAS TO HOLD STILL WHILE YOU DRIVE PAST IT.
   --
   -- Every seat holds one creature for the whole race, because a model reload

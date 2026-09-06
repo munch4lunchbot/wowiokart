@@ -67,17 +67,17 @@ local CUES = {
   -- physical, and drawn from the parts of the library that are not checkbox
   -- ticks. If a name does not exist on a given client, nothing breaks, the next
   -- one is tried, and `/kart sfxreport` says what actually resolved.
-  item        = { kit = { "UI_TOYBOX_TABS", "UI_EPICLOOT_TOAST", "IG_BACKPACK_COIN_UP" }, pri = PRI.HIGH, cd = 0.20 },
-  itemUse     = { kit = { "IG_SPELLBOOK_CLOSE", "UI_TRANSMOG_ITEM_CLICK" }, pri = PRI.HIGH, cd = 0.20 },
+  item        = { match = { "PICKUP", "LOOT_" }, kit = { "UI_TOYBOX_TABS", "UI_EPICLOOT_TOAST", "IG_BACKPACK_COIN_UP" }, pri = PRI.HIGH, cd = 0.20 },
+  itemUse     = { match = { "ACTIVATE", "SPELLCAST" }, kit = { "IG_SPELLBOOK_CLOSE", "UI_TRANSMOG_ITEM_CLICK" }, pri = PRI.HIGH, cd = 0.20 },
   throw       = { match = { "SWOOSH", "WHOOSH", "THROW" }, kit = { "UI_PVP_KILLBLOW", "IG_MAINMENU_OPEN" }, pri = PRI.NORMAL },
   throwHoming = { match = { "MISSILE", "SWOOSH", "WHOOSH" }, kit = { "GS_CHARACTER_SELECTION_ENTER_WORLD", "UI_WORLDQUEST_START" }, pri = PRI.NORMAL },
   throwHeavy  = { match = { "CANNON", "SIEGE", "HEAVY" }, kit = { "IG_MAINMENU_QUIT", "UI_RAID_BOSS_DEFEATED" }, pri = PRI.NORMAL },
   drop        = { match = { "DROP", "PLACE" }, kit = { "IG_BACKPACK_COIN_DOWN", "UI_ETHEREAL_WINDOW_CLOSE" }, pri = PRI.NORMAL },
-  deploy      = { kit = { "UI_VOID_STORAGE_UNLOCK", "IG_CHARACTER_INFO_TAB" }, pri = PRI.NORMAL },
-  starPower   = { kit = { "UI_LEGENDARY_LOOT_TOAST", "UI_EPICLOOT_TOAST", "LEVELUPSOUND" }, pri = PRI.HIGH },
+  deploy      = { match = { "TRAP", "PLACE" }, kit = { "UI_VOID_STORAGE_UNLOCK", "IG_CHARACTER_INFO_TAB" }, pri = PRI.NORMAL },
+  starPower   = { match = { "EMPOWER", "POWERUP" }, kit = { "UI_LEGENDARY_LOOT_TOAST", "UI_EPICLOOT_TOAST", "LEVELUPSOUND" }, pri = PRI.HIGH },
   -- The shell has locked onto you. CRITICAL: this is the one warning in the
   -- game where being crowded out costs the player the chance to react.
-  spinyWarn   = { kit = { "READY_CHECK", "RAID_WARNING" }, pri = PRI.CRITICAL },
+  spinyWarn   = { match = { "ALERT", "ALARM" }, kit = { "READY_CHECK", "RAID_WARNING" }, pri = PRI.CRITICAL },
   -- Landing a shot on somebody is the best moment the genre has. It had no cue
   -- at all, because every hit sound was played to the VICTIM.
   hitConfirm  = { match = { "KILLBLOW", "CRIT", "IMPACT" }, kit = { "UI_RAID_BOSS_DEFEATED", "LOOT_WINDOW_COIN_SOUND" }, pri = PRI.HIGH, cd = 0.25 },
@@ -126,13 +126,13 @@ local CUES = {
   collision    = { match = { "CRASH", "IMPACT", "KILLBLOW" }, kit = { "IG_PLAYER_INVITE_DECLINE", "UI_PVP_KILLBLOW" }, pri = PRI.NORMAL, cd = 0.70 },
   blocked      = { match = { "DEFLECT", "SHIELD", "BLOCK" }, kit = { "IG_CHARACTER_NPC_SELECT", "UI_VOID_STORAGE_UNLOCK" }, pri = PRI.LOW, cd = 1.50 },
   offroad      = { match = { "GRAVEL", "DIRT", "GRASS", "ROUGH" }, kit = { "IG_MAINMENU_OPTION" }, pri = PRI.LOW, cd = 1.60 },
-  surfaceEnter = { kit = { "IG_MAINMENU_OPTION_CHECKBOX_OFF" }, pri = PRI.LOW, cd = 1.40 },
-  overtake     = { kit = { "UI_WORLDQUEST_COMPLETE", "LOOT_WINDOW_COIN_SOUND", "IG_BACKPACK_COIN_UP" }, pri = PRI.NORMAL, cd = 0.80 },
+  surfaceEnter = { match = { "SPLASH", "SLOSH" }, kit = { "IG_MAINMENU_OPTION_CHECKBOX_OFF" }, pri = PRI.LOW, cd = 1.40 },
+  overtake     = { match = { "ACHIEVEMENT", "LEVELUP" }, kit = { "UI_WORLDQUEST_COMPLETE", "LOOT_WINDOW_COIN_SOUND", "IG_BACKPACK_COIN_UP" }, pri = PRI.NORMAL, cd = 0.80 },
   -- Losing a place was completely silent -- the banner changed colour and that
   -- was all. Gaining one and losing one are the two halves of the same beat and
   -- a race where only the good half is audible reads as though nothing is at
   -- stake. Deliberately duller and lower than `overtake`.
-  passed       = { kit = { "IG_CHARACTER_INFO_CLOSE", "IG_QUEST_FAILED" }, pri = PRI.NORMAL, cd = 0.80 },
+  passed       = { match = { "DENIED", "NEGATIVE" }, kit = { "IG_CHARACTER_INFO_CLOSE", "IG_QUEST_FAILED" }, pri = PRI.NORMAL, cd = 0.80 },
   -- A green shell ricocheting off the verge. It happens constantly and made no
   -- noise at all, so a shell you fired simply vanished from the world.
   shellBounce  = { match = { "RICOCHET", "BOUNCE", "DEFLECT" }, kit = { "IG_MAINMENU_CLOSE", "IG_ABILITY_ICON_DROP" }, pri = PRI.LOW, cd = 0.45 },
@@ -275,14 +275,33 @@ end
 --- sound" never found anything.
 ---
 --- A non-zero handle means the client started a sound. Nothing else does.
+--- PlaySound's THIRD ARGUMENT IS forceNoDuplicates AND IT DEFAULTS TO TRUE.
+---
+--- That one default is most of "so many sounds are blank". With it on, the
+--- client refuses to start a sound that is already playing and answers
+--- willPlay = false -- so any cue asked for twice inside its own duration is
+--- simply dropped. Interface blips are ten milliseconds long and never noticed
+--- it. A real library sound is half a second to two seconds, which is longer
+--- than the gap between two bumps, two shell bounces, two drift rungs, or --
+--- worst of all -- two engine notes at 0.24s apart, so the moment this file
+--- started resolving cues to real sounds, most of them stopped being audible in
+--- exactly the busy moments they exist for.
+---
+--- Passing false explicitly says what is actually wanted: layering. Two hits in
+--- quick succession are two hits.
 local function emit(source, id)
-  local fn = source == "file" and PlaySoundFile or PlaySound
-  local ok, willPlay, handle = pcall(fn, id, "SFX")
+  local ok, willPlay, handle
+  if source == "file" then
+    ok, willPlay, handle = pcall(PlaySoundFile, id, "SFX")
+  else
+    ok, willPlay, handle = pcall(PlaySound, id, "SFX", false)
+  end
   -- Remembered so the bench can stop it. Some library entries run for minutes.
   if ok and handle and handle ~= 0 then AK.lastSoundHandle = handle end
   -- Retry with no channel argument: some calls reject an explicit channel and
   -- answer with nothing, which is indistinguishable from a bad id.
   if not (ok and willPlay and handle and handle ~= 0) then
+    local fn = source == "file" and PlaySoundFile or PlaySound
     ok, willPlay, handle = pcall(fn, id)
   end
   return (ok and willPlay and handle and handle ~= 0) and true or false
@@ -299,7 +318,13 @@ local function playCue(cue, def)
   if override == 0 then return false end
 
   local hit = chosen[cue]
-  if hit then return emit(hit.source, hit.id) end
+  if hit and hit.source == "none" and hit.retryAt and GetTime() >= hit.retryAt then
+    hit, chosen[cue] = nil, nil
+  end
+  if hit then
+    if hit.source == "none" then return false end
+    return emit(hit.source, hit.id)
+  end
 
   -- An override is tried as a SOUNDKIT id FIRST, then as a file id.
   --
@@ -358,7 +383,15 @@ local function playCue(cue, def)
 
   -- Nothing resolved. Cache the failure so a dead cue is not re-probed every
   -- time it fires; that probing is itself audible when a partial match exists.
-  chosen[cue] = { source = "none", id = 0 }
+  --
+  -- WITH AN EXPIRY, because a permanent one is how a cue goes quiet for a whole
+  -- session over a transient. Every "no" here comes from the client answering
+  -- willPlay = false, and it does that for reasons that have nothing to do with
+  -- the id: sound switched off in the client's own options and switched back
+  -- on, the mixer briefly out of voices in a crowded moment, or -- until this
+  -- pass -- the same sound simply still ringing. One of those during the
+  -- countdown used to silence a cue until you reloaded.
+  chosen[cue] = { source = "none", id = 0, retryAt = GetTime() + 20 }
   return false
 end
 
@@ -632,7 +665,10 @@ function AK:TrySoundFile(id)
   -- Nearly everything that has ever actually worked in this addon is a SOUNDKIT
   -- id, so a file miss is worth one try through the kit path -- and the kit
   -- space is named, so a hit there can say what it found.
-  local kitOk, _, kitHandle = pcall(PlaySound, id, "SFX")
+  -- forceNoDuplicates = false, for the same reason emit() passes it: with the
+  -- default, auditioning the same id twice reports the second press as "nothing
+  -- plays at" a perfectly good sound.
+  local kitOk, _, kitHandle = pcall(PlaySound, id, "SFX", false)
   if kitOk and kitHandle and kitHandle ~= 0 then
     self.lastSoundHandle = kitHandle
     local name = self:SoundName(id)
@@ -811,7 +847,9 @@ end
 --- handle makes a probe near-silent, and a dead id has no handle to stop
 --- anyway. Returns the handle, or nil.
 local function probe(id)
-  local ok, willPlay, handle = pcall(PlaySound, id, "SFX")
+  -- forceNoDuplicates = false: a scan that walks a run of ids will meet the
+  -- same sound twice, and with the default the second one is reported dead.
+  local ok, willPlay, handle = pcall(PlaySound, id, "SFX", false)
   if ok and willPlay and handle and handle ~= 0 then
     if StopSound then pcall(StopSound, handle) end
     return handle
@@ -839,7 +877,7 @@ function AK:NextAvailableSound(cue, from)
       -- Anything already ringing is cut first, so stepping quickly does not
       -- stack half a dozen overlapping sounds on top of each other.
       self:StopPreview()
-      local _, _, handle = pcall(PlaySound, id, "SFX")
+      local _, _, handle = pcall(PlaySound, id, "SFX", false)
       lastPreview = handle
       return id, self:SoundName(id)
     end
@@ -896,6 +934,13 @@ function AK:TestSound(id)
   local ok, a = pcall(PlaySoundFile, id)
   self:Print(("  PlaySoundFile (no channel) -> ok=%s  willPlay=%s"):format(
     tostring(ok), tostring(a)))
+  -- The third argument is forceNoDuplicates and it DEFAULTS TO TRUE, which is
+  -- why the line above this one can say willPlay=false for a sound that is
+  -- perfectly good and merely still ringing. Everything in this file passes
+  -- false; this prints the difference so a report from a player shows it.
+  local dupOk, dupWill, dupHandle = pcall(PlaySound, id, "SFX", false)
+  self:Print(("  PlaySound (allow duplicates) -> ok=%s  willPlay=%s  handle=%s")
+    :format(tostring(dupOk), tostring(dupWill), tostring(dupHandle)))
 
   self:Print(("  addon sfx setting: %s"):format(tostring(AK.db.settings.sfx)))
   self:Print(("  SOUNDKIT table: %s"):format(SOUNDKIT and "present" or "MISSING"))
