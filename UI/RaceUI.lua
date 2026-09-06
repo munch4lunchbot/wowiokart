@@ -162,8 +162,21 @@ local function towardMean(r, g, b, r2, g2, b2, keep)
   return mr + (r - mr) * keep, mg + (g - mg) * keep, mb + (b - mb) * keep
 end
 local BOOST_FOV = 0.075
-local SPECTATOR_SPACING = 42
-local SPECTATOR_SLOTS = 6
+-- THE CROWD COMES IN GROUPS, AND A GROUP HAS A PLACE.
+--
+-- SPOTS are places along the road where people gather; CROWD_PER_SPOT frames
+-- are reserved at each, and how many of them are actually used varies, so some
+-- spots hold three people, some two and some one person on their own. Anything
+-- evenly spaced reads as fence posts however varied the figures are.
+--
+-- SPECTATOR_SLOTS must stay CROWD_PER_SPOT times the number of spots in view,
+-- and it is what makes the crowd HOLD STILL. See the note in RenderSpectators:
+-- a person's identity is their seat, and their seat is their position, so the
+-- arithmetic below has to be a bijection or people change face as you drive.
+local SPECTATOR_SPACING = 46
+local CROWD_PER_SPOT = 3
+local CROWD_SPOTS = 3
+local SPECTATOR_SLOTS = CROWD_PER_SPOT * CROWD_SPOTS
 -- Metres of clear ground between the edge of the tarmac and a spectator. A
 -- model is drawn about its own centre and is roughly a metre and a half across,
 -- so anything under about two puts an elbow over the kerb.
@@ -3393,67 +3406,111 @@ function RaceUI:RenderSpectators(race, camX, camZ)
   -- spectator at the old 205m was a faded speck off the side of the screen
   -- half the time, and these are MODELS -- the most expensive thing per head.
   local crowdFar = reach(132)
+  -- WHY THE SEAT IS PICKED BY POSITION AND NOT BY LOOP ORDER.
+  --
+  -- Each seat holds one creature for the whole race, because a model reload
+  -- costs a stutter. The seats were then handed out in loop order to a window
+  -- of posts that rolls forward as you drive -- so every forty-two metres the
+  -- window advanced by one and every post got the SEAT NEXT DOOR, which is a
+  -- different person. Stand still and the crowd was fine; drive past it and
+  -- each figure cycled through the whole roster: "spectators kind of cycle
+  -- through people over and over as you pass by them... a random thing that
+  -- keeps glitching into something else".
+  --
+  -- The window is exactly SPECTATOR_SLOTS people wide, so numbering people
+  -- globally and taking that number modulo the slot count hits every seat
+  -- exactly once -- a bijection, not a hash with collisions. A given person at
+  -- a given spot therefore always draws from the same seat, which means always
+  -- the same creature, with no reload anywhere.
   local first = math.ceil(camZ / SPECTATOR_SPACING)
-  for slot, seat in ipairs(self.spectators) do
-    local index = first + slot - 1
-    local dz = index * SPECTATOR_SPACING - camZ
-    if dz > 4 and dz < crowdFar then
-      local route = self.route or race.track
-      local postZ = index * SPECTATOR_SPACING
-      -- OFF THE ROAD, WHICH IS NOT A CONSTANT WIDTH.
-      --
-      -- The offset was roadHalf plus 1.8m -- the NOMINAL half-width, ignoring
-      -- the width multiplier every circuit varies along its length. Elwynn's
-      -- ramp is 1.22 and Deadmines' gallery is wide too, so on exactly the
-      -- sections a crowd is worth having the tarmac reached 8.5m and the
-      -- spectators stood at 8.8: on the kerb, and with the model drawn about
-      -- its own centre, half of them overhanging the racing line. In the video
-      -- there is a tauren standing on the road.
-      --
-      -- Measured against the road's ACTUAL half-width here, with enough
-      -- clearance for the body -- and the jitter pushes further out, never in.
-      local roadEdge = tuning.roadHalf * AK.Math.RoadWidth(route, postZ)
-      -- Clusters rather than a metronome. Strict alternation put one on each
-      -- side every forty-two metres for the whole lap, which reads as fence
-      -- posts; a hash gives runs of two and three on the same side.
-      -- No division in here on purpose: check.js treats a local computed with
-      -- one as world-locked, and `side` is read again by the fork sign's
-      -- texcoords further down, where that would read as a tiling bug.
-      local side = ((index * 3) % 7 < 3) and -1 or 1
-      local lateral = side * (roadEdge + CROWD_CLEAR + ((index * 37) % 23) * 0.11)
-      local baseX, worldY = self:RoadAt(route, postZ)
-      local x, y, pixelsPerMetre = self:Project(dz, baseX + lateral, camX, worldY)
-      -- A crowd is not one height. Same person, different build, decided by
-      -- the post so a given spot is always the same on every lap.
-      local build = 0.86 + ((index * 53) % 29) * 0.011
-      local size = AK.Math.Clamp(pixelsPerMetre * tuning.specScale * build, 14, 300)
-      seat:ClearAllPoints()
-      -- Anchored by CENTRE: a model renders about its own origin, so anchoring
-      -- the frame's bottom to the road buries the lower half of the body.
-      seat:SetPoint("CENTER", self.frame, "CENTER", x, y + size * 0.34)
-      seat:SetSize(size * 2.2, size * 2.2)
-      seat:SetFrameLevel(self.frame:GetFrameLevel() + 2 + depthBucket(dz) * 2)
-      seat:SetAlpha(self:DepthFade(dz, crowdFar) * self:EdgeFade(x, dz))
-      seat.model.akZoom = tuning.specZoom / math.max(0.01, tuning.modelZoom)
-      AK.Model:Reframe(seat.model)
-      -- Turned toward the road, but not all to exactly the same degree.
-      seat.model:SetFacing((side > 0 and -1.35 or 1.35)
-        + (((index * 31) % 17) - 8) * 0.035)
-      -- One of four things, decided by WHERE this post is rather than by which
-      -- seat frame happens to be drawing it, so a given spot on the road always
-      -- has the same person doing the same thing however you approach it.
-      local pose = CROWD_POSES[index % #CROWD_POSES + 1]
-      if seat.model.akPose ~= pose then
-        seat.model.akPose, seat.model.akAnim = pose, pose
-        seat.model:SetAnimation(pose)
+  local used = {}
+  local route = self.route or race.track
+  for step = 0, CROWD_SPOTS - 1 do
+    local index = first + step
+    local postZ = index * SPECTATOR_SPACING
+    -- How many people are at this spot: one, two or three. Two hashes of
+    -- different period summed into three, so the sequence repeats only every
+    -- thirty-five spots and all three sizes really do occur -- a pair of
+    -- independent coin flips looks varied and almost never lands on three,
+    -- which is a crowd of ones and twos with the groups quietly missing.
+    local crowd = 1 + (((index * 5) % 7) + ((index * 3) % 5)) % 3
+    -- OFF THE ROAD, WHICH IS NOT A CONSTANT WIDTH.
+    --
+    -- The offset was roadHalf plus 1.8m -- the NOMINAL half-width, ignoring the
+    -- width multiplier every circuit varies along its length. Elwynn's ramp is
+    -- 1.22 and Deadmines' gallery is wide too, so on exactly the sections a
+    -- crowd is worth having the tarmac reached 8.5m and the spectators stood at
+    -- 8.8: on the kerb, and with the model drawn about its own centre, half of
+    -- them overhanging the racing line.
+    --
+    -- Measured against the road's ACTUAL half-width, with enough clearance for
+    -- the body -- and every jitter below pushes further out, never in.
+    local roadEdge = tuning.roadHalf * AK.Math.RoadWidth(route, postZ)
+    -- A group stands together, so the whole spot picks one side. Runs of two
+    -- and three spots on the same side, rather than strict alternation, which
+    -- is the other half of not reading as fence posts.
+    -- No division in here on purpose: check.js treats a local computed with one
+    -- as world-locked, and `side` is read again by the fork sign's texcoords
+    -- further down, where that would read as a tiling bug.
+    local side = ((index * 3) % 7 < 3) and -1 or 1
+    for member = 0, CROWD_PER_SPOT - 1 do
+      local person = index * CROWD_PER_SPOT + member
+      local seat = self.spectators[person % SPECTATOR_SLOTS + 1]
+      used[seat] = true
+      -- Spread along the road as well as across it, so a group of three is a
+      -- knot of people rather than a rank.
+      local slip = ((person * 13) % 9 - 4) * 0.95
+      local dz = postZ + slip - camZ
+      if member < crowd and dz > 4 and dz < crowdFar then
+        local lateral = side * (roadEdge + CROWD_CLEAR
+          + member * 1.45 + ((person * 37) % 23) * 0.11)
+        local baseX, worldY = self:RoadAt(route, postZ + slip)
+        local x, y, pixelsPerMetre = self:Project(dz, baseX + lateral, camX, worldY)
+        -- A crowd is not one height. Keyed by the PERSON, so two people
+        -- standing together are two different builds, and so that a given spot
+        -- is always the same on every lap.
+        local build = 0.86 + ((person * 53) % 29) * 0.011
+        local size = AK.Math.Clamp(pixelsPerMetre * tuning.specScale * build, 14, 300)
+        -- Who this is and how much clear ground they have, recorded so the
+        -- harness can drive past a crowd and check that nobody changes face and
+        -- nobody is standing on the tarmac. Both were shipped bugs.
+        seat.akPerson, seat.akClear = person, math.abs(lateral) - roadEdge
+        seat:ClearAllPoints()
+        -- Anchored by CENTRE: a model renders about its own origin, so anchoring
+        -- the frame's bottom to the road buries the lower half of the body.
+        seat:SetPoint("CENTER", self.frame, "CENTER", x, y + size * 0.34)
+        seat:SetSize(size * 2.2, size * 2.2)
+        seat:SetFrameLevel(self.frame:GetFrameLevel() + 2 + depthBucket(dz) * 2)
+        seat:SetAlpha(self:DepthFade(dz, crowdFar) * self:EdgeFade(x, dz))
+        seat.model.akZoom = tuning.specZoom / math.max(0.01, tuning.modelZoom)
+        AK.Model:Reframe(seat.model)
+        -- Turned toward the road, but not all to exactly the same degree, and
+        -- people in a group are not all facing the same way as each other.
+        seat.model:SetFacing((side > 0 and -1.35 or 1.35)
+          + (((person * 31) % 17) - 8) * 0.035)
+        -- One of four things, decided by WHO this is rather than by which seat
+        -- frame happens to be drawing them, so a given person at a given spot
+        -- always does the same thing however you approach it -- and two people
+        -- standing together are not doing it in unison.
+        local pose = CROWD_POSES[person % #CROWD_POSES + 1]
+        if seat.model.akPose ~= pose then
+          seat.model.akPose, seat.model.akAnim = pose, pose
+          seat.model:SetAnimation(pose)
+        end
+        -- Shown regardless of load state, for the same reason the karts are: a
+        -- hidden PlayerModel never streams in, so gating on IsReady kept the
+        -- crowd permanently invisible.
+        setShown(seat, true)
+      else
+        setShown(seat, false)
       end
-      -- Shown regardless of load state, for the same reason the karts are: a
-      -- hidden PlayerModel never streams in, so gating on IsReady kept the
-      -- crowd permanently invisible.
-      setShown(seat, true)
-    else
-      setShown(seat, false)
     end
+  end
+  -- A seat the window did not reach this frame. It cannot happen while the
+  -- arithmetic above is a bijection, and saying so in code is cheaper than
+  -- finding a figure frozen at the roadside if it ever stops being one.
+  for _, seat in ipairs(self.spectators) do
+    if not used[seat] then setShown(seat, false) end
   end
 end
 

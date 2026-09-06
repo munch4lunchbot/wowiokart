@@ -1399,6 +1399,70 @@ if loadFailures == 0 then
     assert(#hits == 0, #hits .. " controls are misplaced")
   end)
 
+  -- THE CROWD HAS TO HOLD STILL WHILE YOU DRIVE PAST IT.
+  --
+  -- Every seat holds one creature for the whole race, because a model reload
+  -- costs a stutter -- and the seats were handed out in loop order to a window
+  -- of roadside spots that rolls forward as you drive. Every forty-two metres
+  -- the window advanced by one and every spot got the seat next door, which is
+  -- a different person: "spectators kind of cycle through people over and over
+  -- as you pass by them... a random thing that keeps glitching into something
+  -- else". Standing still it looked fine, which is why it shipped.
+  --
+  -- So: drive the camera past a crowd and watch. A person is identified by
+  -- where they stand, and the seat drawing them must never change. While the
+  -- camera is there, check the other thing that was wrong out here too -- that
+  -- every one of them is on the grass and not on the tarmac.
+  ok("the crowd holds still, and stands off the road", function()
+    AK.Race:Start("quick", { track = "elwynn" })
+    local race = AK.Race.current
+    local RaceUI = AK.RaceUI
+    RaceUI:Build()
+    RaceUI.route = race.track
+    RaceUI:SeatTheCrowd(race)
+    local seatOf, sizes, closest, people = {}, {}, math.huge, 0
+    for camZ = 20, 700, 3 do
+      RaceUI:BuildBend(race.track, camZ)
+      RaceUI:RenderSpectators(race, 0, camZ)
+      local here = {}
+      for _, seat in ipairs(RaceUI.spectators) do
+        if not seat.akHidden and seat.akPerson then
+          local who = seat.akPerson
+          assert(not here[who], "two seats are drawing person " .. who)
+          here[who] = true
+          if seatOf[who] and seatOf[who] ~= seat then
+            error(("person %d changed face at camZ %d"):format(who, camZ))
+          end
+          seatOf[who] = seat
+          closest = math.min(closest, seat.akClear)
+          people = people + 1
+          -- DISTINCT people per spot, not draws. The camera passes each spot
+          -- over many steps, so counting draws counts the sweep.
+          local spot = math.floor(who / 3)
+          sizes[spot] = sizes[spot] or {}
+          sizes[spot][who] = true
+        end
+      end
+    end
+    assert(people > 200, "only " .. people .. " spectator draws were seen")
+    assert(closest >= 2, ("somebody is standing %.2fm from the road edge")
+      :format(closest))
+    -- A crowd of identical groups is the same fault in a different costume.
+    local counts, spots = {}, 0
+    for _, who in pairs(sizes) do
+      local n = 0
+      for _ in pairs(who) do n = n + 1 end
+      counts[n] = (counts[n] or 0) + 1
+      spots = spots + 1
+    end
+    assert(counts[1] and counts[3],
+      ("every gathering is the same size: %d alone, %d pairs, %d groups of three")
+        :format(counts[1] or 0, counts[2] or 0, counts[3] or 0))
+    say(("        %d spots (%d alone, %d pairs, %d threes), %d draws, "
+      .. "nobody closer than %.2fm to the tarmac"):format(
+      spots, counts[1] or 0, counts[2] or 0, counts[3] or 0, people, closest))
+  end)
+
   -- A FORK HAS TO GO SOMEWHERE, AND COME BACK POINTING THE RIGHT WAY.
   --
   -- "Forks kind of don't do much -- they just are pick left or right and in a
